@@ -3110,7 +3110,7 @@ function ProductManager({ products, showToast }) {
           "public",
           "data",
           "products",
-          productToDelete,
+          productToDelete.id,
         ),
       );
       showToast("Produto excluído com sucesso!");
@@ -3323,7 +3323,7 @@ function ProductManager({ products, showToast }) {
                       <Edit size={18} />
                     </button>
                     <button
-                      onClick={() => setProductToDelete(p.id)}
+                      onClick={() => setProductToDelete(p)}
                       className="text-rose-400 hover:text-rose-600 p-2 hover:bg-rose-50 rounded transition-colors"
                       title="Excluir Produto"
                     >
@@ -3346,11 +3346,13 @@ function ProductManager({ products, showToast }) {
 
       <ConfirmModal
         isOpen={!!productToDelete}
-        title="Excluir Produto"
-        message="Tem certeza que deseja excluir este produto do catálogo? Esta ação não poderá ser desfeita."
+        title="Excluir Produto do Catálogo"
+        message={`Você está prestes a excluir "${productToDelete?.name || "este produto"}". Esta ação não poderá ser desfeita.`}
         onConfirm={executeDeleteProduct}
         onCancel={() => setProductToDelete(null)}
         confirmText="Excluir Produto"
+        cancelText="Manter Produto"
+        confirmStyle="bg-rose-600 hover:bg-rose-700"
       />
     </div>
   );
