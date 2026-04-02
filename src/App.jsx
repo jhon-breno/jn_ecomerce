@@ -89,7 +89,12 @@ const appConfig = {
 const app = initializeApp(appConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const appId = typeof __app_id !== "undefined" ? __app_id : "loja-virtual-app";
+const appId = "minha-loja-oficial"; // Este será o ID fixo da sua base de dados
+
+// const app = initializeApp(appConfig);
+// const auth = getAuth(app);
+// const db = getFirestore(app);
+// const appId = typeof __app_id !== "undefined" ? __app_id : "loja-virtual-app";
 
 // --- Utilitários de Máscara ---
 const maskCEP = (value) => {
