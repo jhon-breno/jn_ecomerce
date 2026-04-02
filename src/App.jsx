@@ -93,6 +93,42 @@ const maskPhone = (value) => {
   return v.replace(/(\d{2})(\d{5})(\d{4}).*/, "($1) $2-$3");
 };
 
+// --- Componente Global de Confirmação ---
+function ConfirmModal({
+  isOpen,
+  title,
+  message,
+  onConfirm,
+  onCancel,
+  confirmText = "Confirmar",
+  cancelText = "Cancelar",
+  confirmStyle = "bg-rose-600 hover:bg-rose-700",
+}) {
+  if (!isOpen) return null;
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm p-6 animate-slide-up border border-slate-100">
+        <h3 className="text-xl font-bold text-slate-800 mb-2">{title}</h3>
+        <p className="text-sm text-slate-600 mb-6 leading-relaxed">{message}</p>
+        <div className="flex justify-end gap-3">
+          <button
+            onClick={onCancel}
+            className="px-5 py-2.5 font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition-colors"
+          >
+            {cancelText}
+          </button>
+          <button
+            onClick={onConfirm}
+            className={`px-5 py-2.5 font-bold text-white rounded-xl shadow-md transition-all ${confirmStyle}`}
+          >
+            {confirmText}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // --- Main Application Component ---
 export default function App() {
   const [user, setUser] = useState(null);
@@ -282,17 +318,23 @@ export default function App() {
         />
       )}
 
-      {/* Toast Notification */}
+      {/* Toast Notification (Totalmente Responsivo) */}
       {toast && (
-        <div
-          className={`fixed bottom-4 right-4 p-4 rounded-lg shadow-lg text-white flex items-center gap-2 z-[100] transition-all animate-bounce print:hidden ${toast.type === "success" ? "bg-emerald-500" : "bg-red-500"}`}
-        >
-          {toast.type === "success" ? (
-            <CheckCircle2 size={20} />
-          ) : (
-            <X size={20} />
-          )}
-          {toast.message}
+        <div className="fixed top-4 left-0 right-0 z-[100] flex justify-center px-4 pointer-events-none print:hidden">
+          <div
+            className={`pointer-events-auto w-full md:w-auto max-w-md p-4 md:px-6 md:py-4 rounded-2xl shadow-2xl text-white flex items-center gap-3 transition-all animate-slide-down ${
+              toast.type === "success" ? "bg-emerald-600" : "bg-rose-600"
+            }`}
+          >
+            {toast.type === "success" ? (
+              <CheckCircle2 size={24} className="shrink-0" />
+            ) : (
+              <X size={24} className="shrink-0" />
+            )}
+            <span className="font-semibold text-sm md:text-base leading-tight break-words flex-1">
+              {toast.message}
+            </span>
+          </div>
         </div>
       )}
 
@@ -305,6 +347,12 @@ export default function App() {
         }
         .hide-scrollbar::-webkit-scrollbar { display: none; }
         .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        
+        @keyframes slide-down {
+          from { transform: translateY(-150%); opacity: 0; }
+          to { transform: translateY(0); opacity: 1; }
+        }
+        .animate-slide-down { animation: slide-down 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
       `}</style>
     </div>
   );
@@ -610,9 +658,9 @@ function StoreFront({ products, user, showToast, storeSettings }) {
 
                 {/* Imagem Proporção Vertical (Moda/Geral) */}
                 <div className="relative aspect-[4/5] overflow-hidden bg-slate-50">
-                  {product.image ? (
+                  {product.images?.[0] || product.image ? (
                     <img
-                      src={product.image}
+                      src={product.images?.[0] || product.image}
                       alt={product.name}
                       className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700 ease-out"
                     />
@@ -723,14 +771,22 @@ function ProductModal({ product, close, addToCart }) {
         .filter(Boolean)
     : [];
 
+  const images =
+    product.images?.length > 0
+      ? product.images
+      : product.image
+        ? [product.image]
+        : [];
+
   const [selectedVariation, setSelectedVariation] = useState(
     variations.length > 0 ? variations[0] : "",
   );
   const [qty, setQty] = useState(1);
+  const [currentImgIndex, setCurrentImgIndex] = useState(0);
 
   const handleAdd = () => {
     if (variations.length > 0 && !selectedVariation) return;
-    addToCart({ ...product, selectedVariation }, qty);
+    addToCart({ ...product, selectedVariation, image: images[0] || "" }, qty);
     close();
   };
 
@@ -740,28 +796,49 @@ function ProductModal({ product, close, addToCart }) {
         {/* Botão Fechar */}
         <button
           onClick={close}
-          className="absolute top-4 right-4 z-10 bg-white/50 backdrop-blur-md p-2 rounded-full hover:bg-white transition-colors shadow-sm"
+          className="absolute top-4 right-4 z-20 bg-white/80 backdrop-blur-md p-2 rounded-full hover:bg-white transition-colors shadow-sm"
         >
           <X size={20} className="text-slate-600" />
         </button>
 
-        {/* Imagem do Produto */}
-        <div className="w-full md:w-1/2 bg-slate-100 relative aspect-square md:aspect-auto">
-          {product.image ? (
-            <img
-              src={product.image}
-              alt={product.name}
-              className="w-full h-full object-cover"
-            />
-          ) : (
-            <div className="w-full h-full flex items-center justify-center text-slate-300">
-              <ImageIcon size={64} />
+        {/* Imagem do Produto e Galeria */}
+        <div className="w-full md:w-1/2 bg-slate-100 relative flex flex-col">
+          <div className="relative w-full aspect-square md:aspect-auto md:flex-1 bg-slate-50">
+            {images.length > 0 ? (
+              <img
+                src={images[currentImgIndex]}
+                alt={product.name}
+                className="w-full h-full object-cover absolute inset-0"
+              />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center text-slate-300 absolute inset-0">
+                <ImageIcon size={64} />
+              </div>
+            )}
+            {product.category && (
+              <span className="absolute top-4 left-4 bg-white/90 backdrop-blur-md text-indigo-700 text-xs font-black px-3 py-1.5 rounded-xl border border-white shadow-sm uppercase tracking-wider z-10">
+                {product.category}
+              </span>
+            )}
+          </div>
+
+          {/* Miniaturas da Galeria */}
+          {images.length > 1 && (
+            <div className="flex gap-2 p-4 bg-white border-t border-slate-100 overflow-x-auto hide-scrollbar shrink-0">
+              {images.map((img, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => setCurrentImgIndex(idx)}
+                  className={`w-16 h-16 shrink-0 rounded-lg overflow-hidden border-2 transition-all ${currentImgIndex === idx ? "border-indigo-600 shadow-md" : "border-transparent opacity-70 hover:opacity-100"}`}
+                >
+                  <img
+                    src={img}
+                    className="w-full h-full object-cover"
+                    alt={`Thumb ${idx}`}
+                  />
+                </button>
+              ))}
             </div>
-          )}
-          {product.category && (
-            <span className="absolute top-4 left-4 bg-white/90 backdrop-blur-md text-indigo-700 text-xs font-black px-3 py-1.5 rounded-xl border border-white shadow-sm uppercase tracking-wider">
-              {product.category}
-            </span>
           )}
         </div>
 
@@ -1202,9 +1279,9 @@ function CartModal({
                 className="flex gap-4 items-center bg-white border rounded-xl p-3 shadow-sm"
               >
                 <div className="w-16 h-16 rounded-lg bg-slate-100 overflow-hidden shrink-0">
-                  {item.image ? (
+                  {item.images?.[0] || item.image ? (
                     <img
-                      src={item.image}
+                      src={item.images?.[0] || item.image}
                       className="w-full h-full object-cover"
                     />
                   ) : (
@@ -2070,42 +2147,60 @@ function StatCard({ title, value, icon, color }) {
 function ProductManager({ products, showToast }) {
   const [isAdding, setIsAdding] = useState(false);
   const [editingId, setEditingId] = useState(null); // NOVO
+  const [productToDelete, setProductToDelete] = useState(null); // Estado para o modal de confirmação
   const [formData, setFormData] = useState({
     name: "",
     price: "",
     category: "",
     description: "",
     stock: "",
-    image: "",
+    images: [],
     variations: "",
   });
 
-  const handleImageChange = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement("canvas");
-        const MAX_WIDTH = 500;
-        let width = img.width,
-          height = img.height;
-        if (width > MAX_WIDTH) {
-          height = height * (MAX_WIDTH / width);
-          width = MAX_WIDTH;
-        }
-        canvas.width = width;
-        canvas.height = height;
-        canvas.getContext("2d").drawImage(img, 0, 0, width, height);
-        setFormData({
-          ...formData,
-          image: canvas.toDataURL("image/jpeg", 0.8),
-        });
-      };
-      img.src = event.target.result;
-    };
-    reader.readAsDataURL(file);
+  const handleImageChange = async (e) => {
+    const files = Array.from(e.target.files);
+    if (!files.length) return;
+
+    const newImages = [];
+    for (let file of files) {
+      const base64 = await new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          const img = new Image();
+          img.onload = () => {
+            const canvas = document.createElement("canvas");
+            const MAX_WIDTH = 600;
+            let width = img.width,
+              height = img.height;
+            if (width > MAX_WIDTH) {
+              height = height * (MAX_WIDTH / width);
+              width = MAX_WIDTH;
+            }
+            canvas.width = width;
+            canvas.height = height;
+            canvas.getContext("2d").drawImage(img, 0, 0, width, height);
+            resolve(canvas.toDataURL("image/jpeg", 0.8));
+          };
+          img.src = event.target.result;
+        };
+        reader.readAsDataURL(file);
+      });
+      newImages.push(base64);
+    }
+
+    setFormData((prev) => ({
+      ...prev,
+      images: [...(prev.images || []), ...newImages],
+    }));
+  };
+
+  const removeImage = (index) => {
+    setFormData((prev) => {
+      const newImages = [...(prev.images || [])];
+      newImages.splice(index, 1);
+      return { ...prev, images: newImages };
+    });
   };
 
   const handleSubmit = async (e) => {
@@ -2115,6 +2210,7 @@ function ProductManager({ products, showToast }) {
         ...formData,
         price: Number(formData.price),
         stock: Number(formData.stock),
+        image: formData.images?.[0] || "", // Mantém compatibilidade com dados antigos
       };
 
       if (editingId) {
@@ -2144,11 +2240,32 @@ function ProductManager({ products, showToast }) {
       category: product.category || "",
       description: product.description || "",
       stock: product.stock || "",
-      image: product.image || "",
+      images: product.images || (product.image ? [product.image] : []),
       variations: product.variations || "",
     });
     setEditingId(product.id);
     setIsAdding(true);
+  };
+
+  const executeDeleteProduct = async () => {
+    if (!productToDelete) return;
+    try {
+      await deleteDoc(
+        doc(
+          db,
+          "artifacts",
+          appId,
+          "public",
+          "data",
+          "products",
+          productToDelete,
+        ),
+      );
+      showToast("Produto excluído com sucesso!");
+    } catch (error) {
+      showToast("Erro ao excluir produto", "error");
+    }
+    setProductToDelete(null);
   };
 
   const closeForm = () => {
@@ -2160,7 +2277,7 @@ function ProductManager({ products, showToast }) {
       category: "",
       description: "",
       stock: "",
-      image: "",
+      images: [],
       variations: "",
     });
   };
@@ -2177,24 +2294,46 @@ function ProductManager({ products, showToast }) {
           </button>
         </div>
         <form onSubmit={handleSubmit} className="space-y-4">
-          <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-xl cursor-pointer bg-slate-50 hover:bg-slate-100 transition relative overflow-hidden">
-            {formData.image ? (
-              <img
-                src={formData.image}
-                className="w-full h-full object-contain"
-              />
-            ) : (
-              <div className="text-slate-400 text-sm font-medium">
-                Clique para Adicionar Imagem
-              </div>
-            )}
-            <input
-              type="file"
-              className="hidden"
-              accept="image/*"
-              onChange={handleImageChange}
-            />
-          </label>
+          <div className="flex flex-col gap-3">
+            <label className="text-sm font-bold text-slate-700">
+              Imagens do Produto
+            </label>
+            <div className="flex flex-wrap gap-3">
+              {(formData.images || []).map((imgBase64, idx) => (
+                <div
+                  key={idx}
+                  className="relative w-24 h-24 sm:w-32 sm:h-32 rounded-xl overflow-hidden border border-slate-200 shadow-sm group"
+                >
+                  <img
+                    src={imgBase64}
+                    alt={`Upload ${idx}`}
+                    className="w-full h-full object-cover"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeImage(idx)}
+                    className="absolute top-1 right-1 bg-rose-500 text-white p-1 rounded-md opacity-0 group-hover:opacity-100 transition-opacity shadow-md"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              ))}
+
+              <label className="flex flex-col items-center justify-center w-24 h-24 sm:w-32 sm:h-32 border-2 border-dashed border-slate-300 hover:border-indigo-400 rounded-xl cursor-pointer bg-slate-50 hover:bg-indigo-50 transition-colors text-slate-400 hover:text-indigo-500 shrink-0">
+                <Plus size={24} className="mb-1" />
+                <span className="text-[10px] font-medium px-2 text-center uppercase tracking-wider">
+                  Add Imagem
+                </span>
+                <input
+                  type="file"
+                  multiple
+                  className="hidden"
+                  accept="image/*"
+                  onChange={handleImageChange}
+                />
+              </label>
+            </div>
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <input
               required
@@ -2304,9 +2443,9 @@ function ProductManager({ products, showToast }) {
               <tr key={p.id} className="hover:bg-slate-50 transition-colors">
                 <td className="p-4 font-medium flex items-center gap-3">
                   <div className="w-10 h-10 bg-slate-100 rounded overflow-hidden shrink-0">
-                    {p.image && (
+                    {(p.images?.[0] || p.image) && (
                       <img
-                        src={p.image}
+                        src={p.images?.[0] || p.image}
                         className="w-full h-full object-cover"
                       />
                     )}
@@ -2332,19 +2471,7 @@ function ProductManager({ products, showToast }) {
                       <Edit size={18} />
                     </button>
                     <button
-                      onClick={() =>
-                        deleteDoc(
-                          doc(
-                            db,
-                            "artifacts",
-                            appId,
-                            "public",
-                            "data",
-                            "products",
-                            p.id,
-                          ),
-                        )
-                      }
+                      onClick={() => setProductToDelete(p.id)}
                       className="text-rose-400 hover:text-rose-600 p-2 hover:bg-rose-50 rounded transition-colors"
                       title="Excluir Produto"
                     >
@@ -2364,6 +2491,15 @@ function ProductManager({ products, showToast }) {
           </tbody>
         </table>
       </div>
+
+      <ConfirmModal
+        isOpen={!!productToDelete}
+        title="Excluir Produto"
+        message="Tem certeza que deseja excluir este produto do catálogo? Esta ação não poderá ser desfeita."
+        onConfirm={executeDeleteProduct}
+        onCancel={() => setProductToDelete(null)}
+        confirmText="Excluir Produto"
+      />
     </div>
   );
 }
@@ -2495,8 +2631,11 @@ function PointOfSale({ products, showToast }) {
               className="bg-white p-3 rounded-xl border text-left hover:border-indigo-400 transition disabled:opacity-50 flex flex-col h-full"
             >
               <div className="w-full h-20 bg-slate-100 rounded-lg mb-2 overflow-hidden shrink-0">
-                {p.image ? (
-                  <img src={p.image} className="w-full h-full object-cover" />
+                {p.images?.[0] || p.image ? (
+                  <img
+                    src={p.images?.[0] || p.image}
+                    className="w-full h-full object-cover"
+                  />
                 ) : (
                   <ImageIcon className="w-full h-full p-4 text-slate-300" />
                 )}
@@ -2689,28 +2828,27 @@ function OrdersList({ orders }) {
 // 2.X Aba Carrinhos Abandonados
 function AbandonedCartsList({ carts, showToast }) {
   const [viewingCart, setViewingCart] = useState(null);
+  const [cartToDelete, setCartToDelete] = useState(null); // Estado para o modal de confirmação
 
-  const handleDeleteCart = async (cartId) => {
-    if (
-      window.confirm("Tem certeza que deseja excluir este carrinho abandonado?")
-    ) {
-      try {
-        await deleteDoc(
-          doc(
-            db,
-            "artifacts",
-            appId,
-            "public",
-            "data",
-            "abandoned_carts",
-            cartId,
-          ),
-        );
-        showToast("Carrinho removido com sucesso!");
-      } catch (error) {
-        showToast("Erro ao remover carrinho.", "error");
-      }
+  const executeDeleteCart = async () => {
+    if (!cartToDelete) return;
+    try {
+      await deleteDoc(
+        doc(
+          db,
+          "artifacts",
+          appId,
+          "public",
+          "data",
+          "abandoned_carts",
+          cartToDelete,
+        ),
+      );
+      showToast("Carrinho removido com sucesso!");
+    } catch (error) {
+      showToast("Erro ao remover carrinho.", "error");
     }
+    setCartToDelete(null);
   };
 
   return (
@@ -2806,7 +2944,7 @@ function AbandonedCartsList({ carts, showToast }) {
                         <Eye size={18} />
                       </button>
                       <button
-                        onClick={() => handleDeleteCart(cart.id)}
+                        onClick={() => setCartToDelete(cart.id)}
                         className="text-rose-400 hover:text-rose-600 p-2 hover:bg-rose-50 rounded transition-colors"
                         title="Excluir Carrinho"
                       >
@@ -2827,6 +2965,15 @@ function AbandonedCartsList({ carts, showToast }) {
           </tbody>
         </table>
       </div>
+
+      <ConfirmModal
+        isOpen={!!cartToDelete}
+        title="Excluir Carrinho Abandonado"
+        message="Tem certeza que deseja excluir os registros deste carrinho ativo? Esta ação não pode ser desfeita."
+        onConfirm={executeDeleteCart}
+        onCancel={() => setCartToDelete(null)}
+        confirmText="Excluir Carrinho"
+      />
 
       {/* Modal para Visualizar Carrinho */}
       {viewingCart && (
@@ -2896,9 +3043,9 @@ function AbandonedCartsList({ carts, showToast }) {
                       className="flex items-center gap-4 p-4 border border-slate-100 bg-slate-50 rounded-xl"
                     >
                       <div className="w-16 h-16 bg-white rounded-lg overflow-hidden shrink-0 border border-slate-100">
-                        {item.image ? (
+                        {item.images?.[0] || item.image ? (
                           <img
-                            src={item.image}
+                            src={item.images?.[0] || item.image}
                             alt={item.name}
                             className="w-full h-full object-cover"
                           />
