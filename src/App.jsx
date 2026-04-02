@@ -55,6 +55,8 @@ import {
   getFirestore,
   collection,
   onSnapshot,
+  query,
+  where,
   addDoc,
   deleteDoc,
   doc,
@@ -480,10 +482,12 @@ function StoreFront({ products, user, showToast, storeSettings }) {
   const [cart, setCart] = useState([]);
   const [cartLoaded, setCartLoaded] = useState(false);
   const [userProfile, setUserProfile] = useState(null);
+  const [myOrders, setMyOrders] = useState([]);
 
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
+  const [isAccountOpen, setIsAccountOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("Todas");
   const [selectedProduct, setSelectedProduct] = useState(null);
@@ -502,6 +506,38 @@ function StoreFront({ products, user, showToast, storeSettings }) {
       return () => unsub();
     }
   }, [user]);
+
+  // Buscar pedidos do cliente logado
+  useEffect(() => {
+    if (!isRealUser || !user?.uid) return;
+
+    const ordersQuery = query(
+      collection(db, "artifacts", appId, "public", "data", "orders"),
+      where("customerId", "==", user.uid),
+    );
+
+    const unsub = onSnapshot(
+      ordersQuery,
+      (snapshot) => {
+        const docs = snapshot.docs.map((orderDoc) => ({
+          id: orderDoc.id,
+          ...orderDoc.data(),
+        }));
+        setMyOrders(
+          docs.sort(
+            (a, b) =>
+              (b.createdAt?.toMillis?.() || 0) -
+              (a.createdAt?.toMillis?.() || 0),
+          ),
+        );
+      },
+      (error) => {
+        console.error("Erro ao carregar pedidos do cliente:", error);
+      },
+    );
+
+    return () => unsub();
+  }, [isRealUser, user]);
 
   // Carregar carrinho salvo
   useEffect(() => {
@@ -684,6 +720,14 @@ function StoreFront({ products, user, showToast, storeSettings }) {
                 <span className="text-sm font-bold text-slate-700 hidden md:block">
                   Olá, {user.email ? user.email.split("@")[0] : "Usuário"}
                 </span>
+                <button
+                  onClick={() => setIsAccountOpen(true)}
+                  className="flex items-center gap-2 text-slate-700 hover:text-indigo-600 font-bold text-sm transition bg-slate-200 hover:bg-slate-300 px-4 py-2 rounded-full"
+                  title="Minha Conta"
+                >
+                  <FileText size={18} />
+                  <span className="hidden sm:inline">Minha Conta</span>
+                </button>
                 <button
                   onClick={() => signOut(auth)}
                   className="text-slate-500 hover:text-rose-500 transition"
@@ -884,6 +928,15 @@ function StoreFront({ products, user, showToast, storeSettings }) {
           showToast={showToast}
         />
       )}
+      {isAccountOpen && isRealUser && (
+        <CustomerAccountModal
+          user={user}
+          userProfile={userProfile}
+          orders={myOrders}
+          close={() => setIsAccountOpen(false)}
+          showToast={showToast}
+        />
+      )}
       {isCheckoutOpen && (
         <CheckoutFlow
           cart={cart}
@@ -895,6 +948,258 @@ function StoreFront({ products, user, showToast, storeSettings }) {
           clearCart={() => setCart([])}
         />
       )}
+    </div>
+  );
+}
+
+function CustomerAccountModal({ user, userProfile, orders, close, showToast }) {
+  const [isSaving, setIsSaving] = useState(false);
+  const [formData, setFormData] = useState({
+    firstName: "",
+    lastName: "",
+    phone: "",
+    email: "",
+  });
+
+  useEffect(() => {
+    setFormData({
+      firstName: userProfile?.firstName || "",
+      lastName: userProfile?.lastName || "",
+      phone: userProfile?.phone || "",
+      email: user?.email || userProfile?.email || "",
+    });
+  }, [userProfile, user]);
+
+  const statusCatalog = {
+    pendente_pagamento: {
+      label: "Pendente de Pagamento",
+      color: "bg-amber-100 text-amber-700",
+    },
+    pendente: { label: "Pendente", color: "bg-amber-100 text-amber-700" },
+    separacao: {
+      label: "Em Separação",
+      color: "bg-sky-100 text-sky-700",
+    },
+    enviado: { label: "Enviado", color: "bg-indigo-100 text-indigo-700" },
+    entregue: { label: "Entregue", color: "bg-emerald-100 text-emerald-700" },
+    concluido: {
+      label: "Concluído",
+      color: "bg-emerald-100 text-emerald-700",
+    },
+    estornado: {
+      label: "Estornado",
+      color: "bg-rose-100 text-rose-700",
+    },
+    cancelado: { label: "Cancelado", color: "bg-slate-100 text-slate-700" },
+  };
+
+  const resolveOrderStatus = (order) => {
+    if (order.status) return order.status;
+    return order.type === "online" ? "pendente_pagamento" : "concluido";
+  };
+
+  const saveProfile = async (e) => {
+    e.preventDefault();
+
+    if (!formData.firstName.trim() || !formData.lastName.trim()) {
+      return showToast("Nome e sobrenome são obrigatórios.", "error");
+    }
+
+    setIsSaving(true);
+    try {
+      await setDoc(
+        doc(db, "artifacts", appId, "users", user.uid, "profile", "info"),
+        {
+          firstName: formData.firstName.trim(),
+          lastName: formData.lastName.trim(),
+          phone: maskPhone(formData.phone),
+          email: formData.email || user.email || "",
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true },
+      );
+
+      await setDoc(
+        doc(db, "artifacts", appId, "public", "data", "customers", user.uid),
+        {
+          name: `${formData.firstName.trim()} ${formData.lastName.trim()}`.trim(),
+          phone: maskPhone(formData.phone),
+          email: formData.email || user.email || "",
+          userId: user.uid,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true },
+      );
+
+      showToast("Dados atualizados com sucesso!");
+    } catch (error) {
+      console.error("Erro ao atualizar perfil do cliente:", error);
+      showToast("Erro ao atualizar seus dados.", "error");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 sm:p-6 bg-slate-900/60 backdrop-blur-sm overflow-y-auto print:hidden">
+      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-5xl overflow-hidden animate-slide-up border border-slate-100">
+        <div className="p-5 md:p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+          <h2 className="text-xl md:text-2xl font-black text-slate-800">
+            Minha Conta
+          </h2>
+          <button
+            onClick={close}
+            className="p-2 rounded-full hover:bg-slate-200 transition"
+          >
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-0">
+          <div className="p-5 md:p-6 border-b lg:border-b-0 lg:border-r border-slate-100">
+            <h3 className="font-bold text-slate-800 mb-4">Meus Dados</h3>
+            <form onSubmit={saveProfile} className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider">
+                    Nome
+                  </label>
+                  <input
+                    value={formData.firstName}
+                    onChange={(e) =>
+                      setFormData((prev) => ({
+                        ...prev,
+                        firstName: e.target.value,
+                      }))
+                    }
+                    className="w-full p-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider">
+                    Sobrenome
+                  </label>
+                  <input
+                    value={formData.lastName}
+                    onChange={(e) =>
+                      setFormData((prev) => ({
+                        ...prev,
+                        lastName: e.target.value,
+                      }))
+                    }
+                    className="w-full p-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider">
+                  Telefone
+                </label>
+                <input
+                  value={formData.phone}
+                  onChange={(e) =>
+                    setFormData((prev) => ({
+                      ...prev,
+                      phone: maskPhone(e.target.value),
+                    }))
+                  }
+                  maxLength={15}
+                  className="w-full p-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider">
+                  E-mail
+                </label>
+                <input
+                  value={formData.email}
+                  disabled
+                  className="w-full p-3 border border-slate-200 rounded-xl bg-slate-100 text-slate-500"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={isSaving}
+                className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white py-3 rounded-xl font-bold transition"
+              >
+                {isSaving ? "Salvando..." : "Salvar Dados"}
+              </button>
+            </form>
+          </div>
+
+          <div className="p-5 md:p-6">
+            <h3 className="font-bold text-slate-800 mb-4">Meus Pedidos</h3>
+            <div className="space-y-3 max-h-[420px] overflow-y-auto pr-1">
+              {orders.length === 0 && (
+                <div className="border border-slate-200 rounded-xl p-4 text-sm text-slate-500 bg-slate-50">
+                  Você ainda não possui pedidos registrados.
+                </div>
+              )}
+
+              {orders.map((order) => {
+                const statusCode = resolveOrderStatus(order);
+                const statusMeta =
+                  statusCatalog[statusCode] || statusCatalog.pendente;
+
+                return (
+                  <div
+                    key={order.id}
+                    className="border border-slate-200 rounded-xl p-4 bg-white"
+                  >
+                    <div className="flex items-center justify-between gap-3 mb-3">
+                      <div>
+                        <p className="text-xs text-slate-400">Pedido</p>
+                        <p className="font-bold text-slate-800">
+                          #{order.id.slice(0, 8).toUpperCase()}
+                        </p>
+                      </div>
+                      <span
+                        className={`px-2.5 py-1 rounded-full text-xs font-bold ${statusMeta.color}`}
+                      >
+                        {statusMeta.label}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3 text-xs">
+                      <div>
+                        <p className="text-slate-400">Data</p>
+                        <p className="font-semibold text-slate-700">
+                          {order.createdAt
+                            ? new Date(
+                                order.createdAt.toMillis(),
+                              ).toLocaleString()
+                            : "Recente"}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-slate-400">Total</p>
+                        <p className="font-semibold text-indigo-600">
+                          R$ {Number(order.total || 0).toFixed(2)}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-slate-400">Pagamento</p>
+                        <p className="font-semibold text-slate-700">
+                          {order.paymentMethod || "N/A"}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-slate-400">Rastreio</p>
+                        <p className="font-semibold text-slate-700 break-all">
+                          {order.trackingCode || "Aguardando postagem"}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1759,10 +2064,19 @@ function CheckoutFlow({
         recebedorTelefone: selectedAddress.recebedorTelefone || "",
       };
 
+      const customerName =
+        cleanAddress.recebedorNome?.trim() ||
+        user.displayName?.trim() ||
+        user.email?.split("@")[0] ||
+        "Cliente Online";
+      const customerPhone = cleanAddress.recebedorTelefone?.trim() || "N/A";
+
       const order = {
         type: "online",
         customerId: user.uid,
         customerEmail: user.email || "N/A",
+        customerName,
+        customerPhone,
         items: cleanCart,
         subtotal: cartTotal,
         shipping: cleanShipping,
@@ -2592,7 +2906,9 @@ function AdminDashboard({
           )}
         </div>
         <div className={activeTab !== "orders" ? "print:hidden" : ""}>
-          {activeTab === "orders" && <OrdersList orders={orders} />}
+          {activeTab === "orders" && (
+            <OrdersList orders={orders} showToast={showToast} />
+          )}
         </div>
         <div className={activeTab !== "carts" ? "print:hidden" : ""}>
           {activeTab === "carts" && (
@@ -3712,58 +4028,311 @@ function PointOfSale({ products, showToast, storeSettings }) {
   );
 }
 
-function OrdersList({ orders }) {
+function OrdersList({ orders, showToast }) {
+  const [savingOrderId, setSavingOrderId] = useState(null);
+  const [trackingDrafts, setTrackingDrafts] = useState({});
+
+  const statusCatalog = {
+    pendente_pagamento: {
+      label: "Pendente de Pagamento",
+      color: "bg-amber-100 text-amber-700",
+    },
+    pendente: { label: "Pendente", color: "bg-amber-100 text-amber-700" },
+    separacao: {
+      label: "Em Separação",
+      color: "bg-sky-100 text-sky-700",
+    },
+    enviado: { label: "Enviado", color: "bg-indigo-100 text-indigo-700" },
+    entregue: { label: "Entregue", color: "bg-emerald-100 text-emerald-700" },
+    concluido: {
+      label: "Concluído",
+      color: "bg-emerald-100 text-emerald-700",
+    },
+    estornado: {
+      label: "Estornado",
+      color: "bg-rose-100 text-rose-700",
+    },
+    cancelado: { label: "Cancelado", color: "bg-slate-100 text-slate-700" },
+  };
+
+  const getOrderStatus = (order) => {
+    if (order.status) return order.status;
+    return order.type === "online" ? "pendente_pagamento" : "concluido";
+  };
+
+  const statusHistoryPush = (order, nextStatus, actionLabel) => {
+    const prevHistory = Array.isArray(order.statusHistory)
+      ? order.statusHistory
+      : [];
+    return [
+      ...prevHistory,
+      {
+        from: getOrderStatus(order),
+        to: nextStatus,
+        action: actionLabel,
+        at: new Date().toISOString(),
+      },
+    ];
+  };
+
+  const getAllowedStatuses = (order) => {
+    if (order.type === "online") {
+      return [
+        "pendente_pagamento",
+        "separacao",
+        "enviado",
+        "entregue",
+        "estornado",
+        "cancelado",
+      ];
+    }
+    return ["pendente_pagamento", "concluido", "estornado", "cancelado"];
+  };
+
+  const handleStatusChange = async (order, nextStatus) => {
+    if (!order?.id || !nextStatus) return;
+    setSavingOrderId(order.id);
+    try {
+      const payload = {
+        status: nextStatus,
+        statusUpdatedAt: serverTimestamp(),
+        statusHistory: statusHistoryPush(order, nextStatus, "status_update"),
+      };
+
+      if (nextStatus === "enviado" && !order.shippedAt) {
+        payload.shippedAt = serverTimestamp();
+      }
+      if (nextStatus === "entregue") {
+        payload.deliveredAt = serverTimestamp();
+      }
+
+      await updateDoc(
+        doc(db, "artifacts", appId, "public", "data", "orders", order.id),
+        payload,
+      );
+      showToast("Status do pedido atualizado com sucesso!");
+    } catch (error) {
+      console.error("Erro ao atualizar status do pedido:", error);
+      showToast("Erro ao atualizar status do pedido", "error");
+    } finally {
+      setSavingOrderId(null);
+    }
+  };
+
+  const handleSaveTracking = async (order) => {
+    if (!order?.id) return;
+    const rawTracking =
+      trackingDrafts[order.id] !== undefined
+        ? trackingDrafts[order.id]
+        : order.trackingCode || "";
+    const trackingCode = String(rawTracking || "").trim();
+
+    if (!trackingCode) {
+      return showToast("Informe um código de rastreio válido", "error");
+    }
+
+    setSavingOrderId(order.id);
+    try {
+      const currentStatus = getOrderStatus(order);
+      const nextStatus =
+        currentStatus === "pendente_pagamento" ||
+        currentStatus === "pendente" ||
+        currentStatus === "separacao"
+          ? "enviado"
+          : currentStatus;
+
+      const payload = {
+        trackingCode,
+        trackingUpdatedAt: serverTimestamp(),
+      };
+
+      if (nextStatus !== currentStatus) {
+        payload.status = nextStatus;
+        payload.shippedAt = serverTimestamp();
+        payload.statusUpdatedAt = serverTimestamp();
+        payload.statusHistory = statusHistoryPush(
+          order,
+          nextStatus,
+          "tracking_attached",
+        );
+      }
+
+      await updateDoc(
+        doc(db, "artifacts", appId, "public", "data", "orders", order.id),
+        payload,
+      );
+      showToast("Código de rastreio salvo!");
+    } catch (error) {
+      console.error("Erro ao salvar rastreio:", error);
+      showToast("Erro ao salvar código de rastreio", "error");
+    } finally {
+      setSavingOrderId(null);
+    }
+  };
+
+  const handleRefund = async (order) => {
+    if (!order?.id) return;
+
+    const confirmed = window.confirm(
+      "Confirmar estorno deste pedido? O status será alterado para ESTORNADO.",
+    );
+    if (!confirmed) return;
+
+    setSavingOrderId(order.id);
+    try {
+      await updateDoc(
+        doc(db, "artifacts", appId, "public", "data", "orders", order.id),
+        {
+          status: "estornado",
+          refundedAt: serverTimestamp(),
+          statusUpdatedAt: serverTimestamp(),
+          refundRequestedBy: "painel_admin",
+          statusHistory: statusHistoryPush(order, "estornado", "refund"),
+        },
+      );
+      showToast("Pedido marcado como estornado.");
+    } catch (error) {
+      console.error("Erro ao estornar pedido:", error);
+      showToast("Erro ao estornar pedido", "error");
+    } finally {
+      setSavingOrderId(null);
+    }
+  };
+
   return (
     <div className="bg-white rounded-2xl shadow-sm border overflow-x-auto">
-      <table className="w-full text-left text-sm min-w-[700px]">
+      <table className="w-full text-left text-sm min-w-[1120px]">
         <thead className="bg-slate-50 border-b">
           <tr>
             <th className="p-4">Data/Hora</th>
             <th className="p-4">Tipo</th>
             <th className="p-4">Cliente</th>
+            <th className="p-4">Status</th>
+            <th className="p-4">Rastreio</th>
             <th className="p-4">Método</th>
             <th className="p-4 text-right">Valor Total</th>
+            <th className="p-4 text-center">Ações</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
-          {orders.map((o) => (
-            <tr key={o.id} className="hover:bg-slate-50">
-              <td className="p-4 font-medium text-slate-700">
-                {o.createdAt
-                  ? new Date(o.createdAt.toMillis()).toLocaleString()
-                  : "Recente"}
-              </td>
-              <td className="p-4">
-                <span
-                  className={`px-2.5 py-1 rounded-full text-xs font-bold flex items-center w-max gap-1 ${o.type === "online" ? "bg-indigo-100 text-indigo-700" : "bg-amber-100 text-amber-700"}`}
-                >
-                  {o.type === "online" ? (
-                    <Smartphone size={12} />
-                  ) : (
-                    <Store size={12} />
-                  )}
-                  {o.type.toUpperCase()}
-                </span>
-              </td>
-              <td className="p-4 text-slate-600">
-                <span className="font-bold">
-                  {o.customerName || "Cliente Anônimo"}
-                </span>
-                {o.customerPhone && (
-                  <span className="block text-xs text-slate-400">
-                    {o.customerPhone}
+          {orders.map((o) => {
+            const status = getOrderStatus(o);
+            const statusMeta = statusCatalog[status] ||
+              statusCatalog.pendente || {
+                label: status,
+                color: "bg-slate-100 text-slate-700",
+              };
+            const allowedStatuses = getAllowedStatuses(o);
+            const isSaving = savingOrderId === o.id;
+            const trackingValue =
+              trackingDrafts[o.id] !== undefined
+                ? trackingDrafts[o.id]
+                : o.trackingCode || "";
+
+            return (
+              <tr key={o.id} className="hover:bg-slate-50 align-top">
+                <td className="p-4 font-medium text-slate-700 whitespace-nowrap">
+                  {o.createdAt
+                    ? new Date(o.createdAt.toMillis()).toLocaleString()
+                    : "Recente"}
+                </td>
+                <td className="p-4">
+                  <span
+                    className={`px-2.5 py-1 rounded-full text-xs font-bold flex items-center w-max gap-1 ${o.type === "online" ? "bg-indigo-100 text-indigo-700" : "bg-amber-100 text-amber-700"}`}
+                  >
+                    {o.type === "online" ? (
+                      <Smartphone size={12} />
+                    ) : (
+                      <Store size={12} />
+                    )}
+                    {o.type.toUpperCase()}
                   </span>
-                )}
-              </td>
-              <td className="p-4 text-slate-500">{o.paymentMethod || "N/A"}</td>
-              <td className="p-4 font-bold text-indigo-600 text-right text-base">
-                R$ {Number(o.total).toFixed(2)}
-              </td>
-            </tr>
-          ))}
+                </td>
+                <td className="p-4 text-slate-600 min-w-[200px]">
+                  <span className="font-bold">
+                    {o.customerName ||
+                      o.address?.recebedorNome ||
+                      "Cliente Anônimo"}
+                  </span>
+                  {(o.customerPhone || o.address?.recebedorTelefone) && (
+                    <span className="block text-xs text-slate-400">
+                      {o.customerPhone || o.address?.recebedorTelefone}
+                    </span>
+                  )}
+                </td>
+                <td className="p-4 min-w-[220px] space-y-2">
+                  <span
+                    className={`px-2.5 py-1 rounded-full text-xs font-bold inline-flex ${statusMeta.color}`}
+                  >
+                    {statusMeta.label}
+                  </span>
+                  <select
+                    value={status}
+                    onChange={(e) => handleStatusChange(o, e.target.value)}
+                    disabled={isSaving}
+                    className="w-full p-2 border border-slate-200 rounded-lg text-xs font-semibold bg-white"
+                  >
+                    {allowedStatuses.map((statusCode) => (
+                      <option key={statusCode} value={statusCode}>
+                        {statusCatalog[statusCode]?.label || statusCode}
+                      </option>
+                    ))}
+                  </select>
+                </td>
+                <td className="p-4 min-w-[230px]">
+                  {o.type === "online" ? (
+                    <div className="space-y-2">
+                      <input
+                        value={trackingValue}
+                        onChange={(e) =>
+                          setTrackingDrafts((prev) => ({
+                            ...prev,
+                            [o.id]: e.target.value,
+                          }))
+                        }
+                        placeholder="Código de rastreio"
+                        className="w-full p-2 border border-slate-200 rounded-lg text-xs"
+                        disabled={isSaving}
+                      />
+                      <button
+                        onClick={() => handleSaveTracking(o)}
+                        disabled={isSaving}
+                        className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white text-xs font-bold py-2 rounded-lg"
+                      >
+                        {isSaving ? "Salvando..." : "Salvar Rastreio"}
+                      </button>
+                    </div>
+                  ) : (
+                    <span className="text-xs text-slate-400">
+                      Não aplicável
+                    </span>
+                  )}
+                </td>
+                <td className="p-4 text-slate-500 whitespace-nowrap">
+                  {o.paymentMethod || "N/A"}
+                </td>
+                <td className="p-4 font-bold text-indigo-600 text-right text-base whitespace-nowrap">
+                  R$ {Number(o.total).toFixed(2)}
+                </td>
+                <td className="p-4 text-center min-w-[150px]">
+                  {o.type === "online" ? (
+                    <button
+                      onClick={() => handleRefund(o)}
+                      disabled={isSaving || status === "estornado"}
+                      className="bg-rose-100 text-rose-700 hover:bg-rose-200 disabled:bg-slate-100 disabled:text-slate-400 text-xs font-bold px-3 py-2 rounded-lg"
+                    >
+                      Estornar
+                    </button>
+                  ) : (
+                    <span className="text-xs text-slate-400">-</span>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
           {orders.length === 0 && (
             <tr>
-              <td colSpan="5" className="p-8 text-center text-slate-400">
+              <td colSpan="8" className="p-8 text-center text-slate-400">
                 Nenhuma venda registrada ainda.
               </td>
             </tr>
