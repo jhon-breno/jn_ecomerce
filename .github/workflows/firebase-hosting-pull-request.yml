@@ -26,11 +26,11 @@ jobs:
           VITE_BACKEND_URL: ${{ secrets.VITE_BACKEND_URL }}
       - name: Validate Firebase service account secret
         env:
-          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_LOJA_MULTIMARCAS }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_LOJA_MULTIMARCAS || secrets.FIREBASE_SERVICE_ACCOUNT }}
         run: |
           set -euo pipefail
           if [[ -z "${FIREBASE_SERVICE_ACCOUNT:-}" ]]; then
-            echo "::error::Secret FIREBASE_SERVICE_ACCOUNT_LOJA_MULTIMARCAS não está definido."
+            echo "::error::Defina um dos secrets: FIREBASE_SERVICE_ACCOUNT_LOJA_MULTIMARCAS ou FIREBASE_SERVICE_ACCOUNT."
             exit 1
           fi
 
@@ -38,6 +38,6 @@ jobs:
       - uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: ${{ secrets.GITHUB_TOKEN }}
-          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_LOJA_MULTIMARCAS }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_LOJA_MULTIMARCAS || secrets.FIREBASE_SERVICE_ACCOUNT }}
           channelId: live
           projectId: loja-multimarcas
