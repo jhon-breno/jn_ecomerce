@@ -72,6 +72,10 @@ const BACKEND_URL = "http://localhost:3000";
 const createIdempotencyKey = (scope) =>
   `${scope}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
+const ADMIN_EMAIL = "admin@jnfutshirt.com.br";
+const ADMIN_PASSWORD = "Joao@2405";
+const ADMIN_SESSION_KEY = "jn_admin_auth_v1";
+
 // Configuração apontando para .env (Ambiente Local/Vite)
 
 const appConfig = {
@@ -226,6 +230,7 @@ export default function App() {
   });
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState(null);
+  const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
 
   // Inicializa o Mercado Pago Globalmente quando a chave estiver disponível (Apenas Localmente se descomentar os imports)
   /*
@@ -249,6 +254,11 @@ export default function App() {
   }, []);
 
   const isAdminRoute = currentRoute === "#/admin";
+
+  useEffect(() => {
+    const savedSession = sessionStorage.getItem(ADMIN_SESSION_KEY);
+    setIsAdminAuthenticated(savedSession === "ok");
+  }, []);
 
   // --- Atualização Dinâmica do Título e Favicon ---
   useEffect(() => {
@@ -398,6 +408,30 @@ export default function App() {
     setTimeout(() => setToast(null), 3000);
   };
 
+  const handleAdminLogin = (email, password) => {
+    const validEmail =
+      String(email || "")
+        .trim()
+        .toLowerCase() === ADMIN_EMAIL;
+    const validPassword = String(password || "") === ADMIN_PASSWORD;
+
+    if (!validEmail || !validPassword) {
+      showToast("Credenciais de administrador inválidas.", "error");
+      return false;
+    }
+
+    sessionStorage.setItem(ADMIN_SESSION_KEY, "ok");
+    setIsAdminAuthenticated(true);
+    showToast("Acesso administrativo liberado.");
+    return true;
+  };
+
+  const handleAdminLogout = () => {
+    sessionStorage.removeItem(ADMIN_SESSION_KEY);
+    setIsAdminAuthenticated(false);
+    showToast("Sessão administrativa encerrada.");
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
@@ -416,6 +450,12 @@ export default function App() {
           showToast={showToast}
           storeSettings={storeSettings}
         />
+      ) : !isAdminAuthenticated ? (
+        <AdminAuthGate
+          onLogin={handleAdminLogin}
+          storeName={storeSettings.storeName}
+          logo={storeSettings.logo}
+        />
       ) : (
         <AdminDashboard
           products={products}
@@ -423,6 +463,7 @@ export default function App() {
           abandonedCarts={abandonedCarts}
           showToast={showToast}
           storeSettings={storeSettings}
+          onAdminLogout={handleAdminLogout}
         />
       )}
 
@@ -476,6 +517,77 @@ export default function App() {
           .print\\:backdrop-blur-none { backdrop-filter: none !important; }
         }
       `}</style>
+    </div>
+  );
+}
+
+function AdminAuthGate({ onLogin, storeName, logo }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    onLogin(email, password);
+  };
+
+  return (
+    <div className="min-h-[calc(100vh-36px)] bg-slate-100 flex items-center justify-center p-4">
+      <div className="w-full max-w-md bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden">
+        <div className="p-6 bg-slate-900 text-white text-center">
+          {logo ? (
+            <img
+              src={logo}
+              alt="Logo"
+              className="h-12 w-auto mx-auto mb-3 object-contain"
+            />
+          ) : (
+            <div className="w-12 h-12 rounded-xl bg-indigo-500/20 text-indigo-300 mx-auto mb-3 flex items-center justify-center">
+              <Store size={24} />
+            </div>
+          )}
+          <h2 className="text-xl font-black">Acesso Administrativo</h2>
+          <p className="text-slate-300 text-sm mt-1">
+            {storeName || "NovaLoja"} - área restrita
+          </p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          <div>
+            <label className="block text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider">
+              E-mail admin
+            </label>
+            <input
+              type="email"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="w-full p-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
+              placeholder="admin@empresa.com"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider">
+              Senha
+            </label>
+            <input
+              type="password"
+              required
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full p-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
+              placeholder="••••••••"
+            />
+          </div>
+
+          <button
+            type="submit"
+            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-3 rounded-xl font-bold transition"
+          >
+            Entrar no Painel
+          </button>
+        </form>
+      </div>
     </div>
   );
 }
@@ -2824,6 +2936,7 @@ function AdminDashboard({
   abandonedCarts,
   showToast,
   storeSettings,
+  onAdminLogout,
 }) {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -2883,6 +2996,14 @@ function AdminDashboard({
             </button>
           ))}
         </nav>
+        <div className="p-4 border-t border-slate-800 relative z-10">
+          <button
+            onClick={onAdminLogout}
+            className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-slate-800 hover:bg-rose-600 text-slate-200 hover:text-white font-bold transition-all"
+          >
+            <LogOut size={18} /> Sair do Admin
+          </button>
+        </div>
       </aside>
 
       {/* Main Content Area */}
