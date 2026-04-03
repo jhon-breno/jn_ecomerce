@@ -303,6 +303,7 @@ export default function App() {
   const [abandonedCarts, setAbandonedCarts] = useState([]);
   const [storeSettings, setStoreSettings] = useState({
     storeName: "NovaLoja",
+    storeTagline: "",
     logo: "",
     banners: [],
     mpPublicKey: "",
@@ -973,9 +974,11 @@ function StoreFront({ products, user, showToast, storeSettings }) {
                 <h1 className="text-lg sm:text-xl md:text-2xl font-black text-slate-900 truncate leading-tight">
                   {storeSettings.storeName || "Aucela Multimarcas"}
                 </h1>
-                <p className="text-xs md:text-sm text-slate-500 font-semibold truncate">
-                  Moda, ofertas e envio rapido para todo Brasil
-                </p>
+                {storeSettings.storeTagline && (
+                  <p className="text-xs md:text-sm text-slate-500 font-semibold truncate">
+                    {storeSettings.storeTagline}
+                  </p>
+                )}
               </div>
             </div>
 
@@ -5235,6 +5238,7 @@ function AbandonedCartsList({ carts, showToast }) {
 function AdminSettings({ showToast, storeSettings }) {
   const [config, setConfig] = useState({
     storeName: "",
+    storeTagline: "",
     logo: "",
     banners: [],
     mpPublicKey: "",
@@ -5584,6 +5588,24 @@ function AdminSettings({ showToast, storeSettings }) {
                 placeholder="Ex: Minha Loja Fantástica"
                 className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
               />
+            </div>
+
+            <div>
+              <label className="block text-sm font-bold mb-2 text-slate-700">
+                Subtítulo da Loja (opcional)
+              </label>
+              <input
+                type="text"
+                value={config.storeTagline || ""}
+                onChange={(e) =>
+                  setConfig({ ...config, storeTagline: e.target.value })
+                }
+                placeholder="Ex: Moda, ofertas e envio para todo Brasil"
+                className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+              />
+              <p className="text-xs text-slate-500 mt-1">
+                Deixe vazio para não exibir nenhuma frase abaixo do nome.
+              </p>
             </div>
 
             <div>
