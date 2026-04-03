@@ -259,6 +259,30 @@ const getProductVariationGroups = (product) => {
   return [{ type: "Opcao", options: legacyVariations }];
 };
 
+const getDiscountMeta = (product) => {
+  const salePrice = Number(product?.price || 0);
+  const priceTag = Number(product?.priceTag || 0);
+
+  if (!Number.isFinite(salePrice) || !Number.isFinite(priceTag)) {
+    return { priceTag: 0, discountPct: 0 };
+  }
+
+  if (priceTag <= salePrice || salePrice <= 0) {
+    return { priceTag: 0, discountPct: 0 };
+  }
+
+  const discountPct = Math.round(((priceTag - salePrice) / priceTag) * 100);
+  return { priceTag, discountPct };
+};
+
+const formatCurrencyBRL = (value) =>
+  Number(value || 0).toLocaleString("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+
 // --- Componente Global de Confirmação ---
 function ConfirmModal({
   isOpen,
@@ -1199,79 +1223,105 @@ function StoreFront({ products, user, showToast, storeSettings }) {
           </div>
         ) : (
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-5 md:gap-8">
-            {sortedProducts.map((product) => (
-              <div
-                key={product.id}
-                onClick={() => setSelectedProduct(product)}
-                className="bg-white rounded-[2rem] shadow-sm border border-slate-200/60 overflow-hidden hover:shadow-2xl hover:shadow-indigo-500/10 hover:border-indigo-300/50 transition-all duration-500 group flex flex-col hover:-translate-y-2 relative cursor-pointer"
-              >
-                {/* Overlay de Hover */}
-                <div className="absolute inset-0 bg-gradient-to-t from-indigo-900/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none z-10"></div>
+            {sortedProducts.map((product) => {
+              const { priceTag, discountPct } = getDiscountMeta(product);
 
-                {/* Imagem Proporção Vertical (Moda/Geral) */}
-                <div className="relative aspect-[4/5] overflow-hidden bg-slate-50">
-                  {product.images?.[0] || product.image ? (
-                    <img
-                      src={product.images?.[0] || product.image}
-                      alt={product.name}
-                      className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700 ease-out"
-                    />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center text-slate-300 bg-slate-100/50">
-                      <ImageIcon size={48} className="drop-shadow-sm" />
-                    </div>
-                  )}
-                  {/* Etiqueta de Categoria */}
-                  {product.category && (
-                    <span className="absolute top-4 left-4 bg-white/90 backdrop-blur-md text-indigo-700 text-[10px] font-black px-3 py-1.5 rounded-xl border border-white shadow-sm uppercase tracking-wider z-20">
-                      {product.subcategory
-                        ? `${product.category} / ${product.subcategory}`
-                        : product.category}
-                    </span>
-                  )}
-                  {/* Etiqueta Esgotado */}
-                  {Number(product.stock) <= 0 && (
-                    <div className="absolute inset-0 bg-white/40 backdrop-blur-[4px] flex items-center justify-center z-20">
-                      <span className="bg-rose-500 text-white px-4 py-2 rounded-full font-black text-xs shadow-xl uppercase tracking-widest border-2 border-white/50">
-                        ESGOTADO
-                      </span>
-                    </div>
-                  )}
-                </div>
+              return (
+                <div
+                  key={product.id}
+                  onClick={() => setSelectedProduct(product)}
+                  className="bg-white rounded-[2rem] shadow-sm border border-slate-200/60 overflow-hidden hover:shadow-2xl hover:shadow-indigo-500/10 hover:border-indigo-300/50 transition-all duration-500 group flex flex-col hover:-translate-y-2 relative cursor-pointer"
+                >
+                  {/* Overlay de Hover */}
+                  <div className="absolute inset-0 bg-gradient-to-t from-indigo-900/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none z-10"></div>
 
-                {/* Informações do Produto */}
-                <div className="p-5 md:p-6 flex flex-col flex-grow relative z-20 bg-white">
-                  <h3 className="font-bold text-sm md:text-base text-slate-800 mb-2 line-clamp-2 leading-snug min-h-[2.75rem] group-hover:text-indigo-600 transition-colors">
-                    {product.name}
-                  </h3>
+                  {/* Imagem Proporção Vertical (Moda/Geral) */}
+                  <div className="relative aspect-[4/5] overflow-hidden bg-slate-50">
+                    {product.images?.[0] || product.image ? (
+                      <img
+                        src={product.images?.[0] || product.image}
+                        alt={product.name}
+                        className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700 ease-out"
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center text-slate-300 bg-slate-100/50">
+                        <ImageIcon size={48} className="drop-shadow-sm" />
+                      </div>
+                    )}
+                    {/* Etiqueta de Categoria */}
+                    {product.category && (
+                      <span className="absolute top-4 left-4 bg-white/90 backdrop-blur-md text-indigo-700 text-[10px] font-black px-3 py-1.5 rounded-xl border border-white shadow-sm uppercase tracking-wider z-20">
+                        {product.subcategory
+                          ? `${product.category} / ${product.subcategory}`
+                          : product.category}
+                      </span>
+                    )}
+                    {discountPct > 0 && (
+                      <span className="absolute top-4 right-4 bg-emerald-500 text-white text-[11px] font-black px-2.5 py-1.5 rounded-xl shadow-md z-20">
+                        -{discountPct}%
+                      </span>
+                    )}
+                    {/* Etiqueta Esgotado */}
+                    {Number(product.stock) <= 0 && (
+                      <div className="absolute inset-0 bg-white/40 backdrop-blur-[4px] flex items-center justify-center z-20">
+                        <span className="bg-rose-500 text-white px-4 py-2 rounded-full font-black text-xs shadow-xl uppercase tracking-widest border-2 border-white/50">
+                          ESGOTADO
+                        </span>
+                      </div>
+                    )}
+                  </div>
 
-                  <div className="flex items-end justify-between mt-auto pt-4 border-t border-slate-100">
-                    <div className="flex flex-col">
-                      <span className="text-[11px] text-slate-400 font-bold uppercase tracking-wider mb-1">
-                        Por apenas
-                      </span>
-                      <span className="text-xl md:text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-purple-600 leading-none">
-                        R$ {Number(product.price).toFixed(2)}
-                      </span>
+                  {/* Informações do Produto */}
+                  <div className="p-5 md:p-6 flex flex-col flex-grow relative z-20 bg-white">
+                    <h3 className="font-bold text-sm md:text-base text-slate-800 mb-2 line-clamp-2 leading-snug min-h-[2.75rem] group-hover:text-indigo-600 transition-colors">
+                      {product.name}
+                    </h3>
+
+                    <div className="flex items-end justify-between mt-auto pt-4 border-t border-slate-100">
+                      <div className="flex flex-col">
+                        {priceTag > 0 ? (
+                          <>
+                            <span className="text-[11px] text-slate-400 font-bold uppercase tracking-wider mb-0.5">
+                              De
+                            </span>
+                            <span className="text-xs text-slate-400 line-through font-semibold mb-0.5">
+                              {formatCurrencyBRL(priceTag)}
+                            </span>
+                            <span className="text-[11px] text-emerald-600 font-black uppercase tracking-wider">
+                              Por
+                            </span>
+                          </>
+                        ) : (
+                          <span className="text-[11px] text-slate-400 font-bold uppercase tracking-wider mb-1">
+                            Valor
+                          </span>
+                        )}
+                        <span className="text-xl md:text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-purple-600 leading-none">
+                          {formatCurrencyBRL(product.price)}
+                        </span>
+                      </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (getProductVariationGroups(product).length > 0) {
+                            setSelectedProduct(product);
+                          } else {
+                            addToCart(product);
+                          }
+                        }}
+                        disabled={Number(product.stock) <= 0}
+                        className="bg-slate-900 group-hover:bg-gradient-to-r group-hover:from-indigo-500 group-hover:to-purple-500 disabled:bg-slate-100 disabled:text-slate-300 text-white w-10 h-10 md:w-12 md:h-12 rounded-full flex items-center justify-center shadow-md hover:shadow-lg hover:shadow-indigo-500/30 transition-all duration-300 hover:scale-110 disabled:hover:scale-100 active:scale-95"
+                      >
+                        <Plus
+                          strokeWidth={3}
+                          className="w-5 h-5 md:w-6 md:h-6"
+                        />
+                      </button>
                     </div>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (getProductVariationGroups(product).length > 0) {
-                          setSelectedProduct(product);
-                        } else {
-                          addToCart(product);
-                        }
-                      }}
-                      disabled={Number(product.stock) <= 0}
-                      className="bg-slate-900 group-hover:bg-gradient-to-r group-hover:from-indigo-500 group-hover:to-purple-500 disabled:bg-slate-100 disabled:text-slate-300 text-white w-10 h-10 md:w-12 md:h-12 rounded-full flex items-center justify-center shadow-md hover:shadow-lg hover:shadow-indigo-500/30 transition-all duration-300 hover:scale-110 disabled:hover:scale-100 active:scale-95"
-                    >
-                      <Plus strokeWidth={3} className="w-5 h-5 md:w-6 md:h-6" />
-                    </button>
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </main>
@@ -1579,6 +1629,7 @@ function CustomerAccountModal({ user, userProfile, orders, close, showToast }) {
 // 1.0.5 Product Details Modal
 function ProductModal({ product, close, addToCart }) {
   const variationGroups = getProductVariationGroups(product);
+  const { priceTag, discountPct } = getDiscountMeta(product);
 
   const images =
     product.images?.length > 0
@@ -1683,8 +1734,18 @@ function ProductModal({ product, close, addToCart }) {
             <h2 className="text-2xl md:text-3xl font-bold text-slate-900 mb-2 leading-tight">
               {product.name}
             </h2>
+            {discountPct > 0 && (
+              <div className="inline-flex items-center mb-2 px-3 py-1 rounded-full bg-emerald-100 text-emerald-700 text-xs font-black uppercase tracking-wider">
+                Desconto de {discountPct}%
+              </div>
+            )}
+            {priceTag > 0 && (
+              <div className="text-sm text-slate-400 line-through font-semibold mb-1">
+                De {formatCurrencyBRL(priceTag)}
+              </div>
+            )}
             <div className="text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-purple-600 mb-6">
-              R$ {Number(product.price).toFixed(2)}
+              {formatCurrencyBRL(product.price)}
             </div>
 
             <div className="prose prose-sm text-slate-600 mb-8">
@@ -3417,6 +3478,7 @@ function ProductManager({ products, showToast, storeSettings }) {
   const [formData, setFormData] = useState({
     name: "",
     price: "",
+    priceTag: "",
     category: "",
     subcategory: "",
     description: "",
@@ -3549,9 +3611,16 @@ function ProductManager({ products, showToast, storeSettings }) {
         .flat()
         .join(", ");
 
+      const parsedPriceTag = Number(formData.priceTag);
+      const normalizedPriceTag =
+        Number.isFinite(parsedPriceTag) && parsedPriceTag > 0
+          ? parsedPriceTag
+          : null;
+
       const productData = {
         ...formData,
         price: Number(formData.price),
+        priceTag: normalizedPriceTag,
         stock: Number(formData.stock),
         subcategory: formData.subcategory || "",
         variationsByType: normalizedVariationMap,
@@ -3583,6 +3652,7 @@ function ProductManager({ products, showToast, storeSettings }) {
     setFormData({
       name: product.name || "",
       price: product.price || "",
+      priceTag: product.priceTag || "",
       category: product.category || "",
       subcategory: product.subcategory || "",
       description: product.description || "",
@@ -3622,6 +3692,7 @@ function ProductManager({ products, showToast, storeSettings }) {
     setFormData({
       name: "",
       price: "",
+      priceTag: "",
       category: "",
       subcategory: "",
       description: "",
@@ -3796,6 +3867,19 @@ function ProductManager({ products, showToast, storeSettings }) {
                 value={formData.price}
                 onChange={(e) =>
                   setFormData({ ...formData, price: e.target.value })
+                }
+                className="p-3 border rounded-lg outline-none focus:border-indigo-400"
+              />
+            </div>
+
+            <div className="flex flex-col">
+              <input
+                type="number"
+                step="0.01"
+                placeholder="Preço Tarja / De (R$)"
+                value={formData.priceTag}
+                onChange={(e) =>
+                  setFormData({ ...formData, priceTag: e.target.value })
                 }
                 className="p-3 border rounded-lg outline-none focus:border-indigo-400"
               />
