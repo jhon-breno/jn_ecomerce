@@ -34,6 +34,8 @@ import {
   UserPlus,
   FileText,
   AlertTriangle,
+  Upload,
+  Download,
 } from "lucide-react";
 
 // ATENÇÃO: Para o ambiente local, instale e importe o SDK do Mercado Pago aqui:
@@ -175,15 +177,27 @@ const buildPixPayload = ({
 };
 
 const DEFAULT_PRODUCT_CATALOG = {
+  sections: [],
   categories: [
-    { name: "Camisetas", subcategories: ["Masculina", "Feminina", "Infantil"] },
-    { name: "Calcas", subcategories: ["Jeans", "Sarja", "Moletom"] },
+    {
+      name: "Camisetas",
+      subcategories: ["Masculina", "Feminina", "Infantil"],
+      featured: true,
+    },
+    {
+      name: "Calcas",
+      subcategories: ["Jeans", "Sarja", "Moletom"],
+      featured: false,
+    },
   ],
   variationTypes: [
     { name: "Tamanho", options: ["PP", "P", "M", "G", "GG"] },
     { name: "Cor", options: ["Preto", "Branco", "Azul"] },
   ],
 };
+
+const createCatalogSectionId = () =>
+  `section_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
 const normalizeTextList = (value) =>
   String(value || "")
@@ -193,10 +207,20 @@ const normalizeTextList = (value) =>
 
 const normalizeCatalog = (catalog) => {
   const base = catalog || {};
+  const sections = Array.isArray(base.sections)
+    ? base.sections
+        .map((item) => ({
+          id: String(item?.id || "").trim() || createCatalogSectionId(),
+          name: String(item?.name || "").trim(),
+        }))
+        .filter((item) => item.name)
+    : [];
+
   const categories = Array.isArray(base.categories)
     ? base.categories
         .map((item) => ({
           name: String(item?.name || "").trim(),
+          featured: Boolean(item?.featured),
           subcategories: Array.isArray(item?.subcategories)
             ? item.subcategories
                 .map((sub) => String(sub || "").trim())
@@ -220,6 +244,7 @@ const normalizeCatalog = (catalog) => {
     : [];
 
   return {
+    sections,
     categories:
       categories.length > 0 ? categories : DEFAULT_PRODUCT_CATALOG.categories,
     variationTypes:
@@ -282,6 +307,118 @@ const formatCurrencyBRL = (value) =>
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
+
+function StoreProductCard({
+  product,
+  onOpenProduct,
+  onAddToCart,
+  isShelf = false,
+}) {
+  const { priceTag, discountPct } = getDiscountMeta(product);
+  const hasVariations = getProductVariationGroups(product).length > 0;
+
+  return (
+    <div
+      onClick={() => onOpenProduct(product)}
+      className={`bg-white ${isShelf ? "w-[210px] sm:w-[230px] md:w-[250px] shrink-0 snap-start" : "w-full"} rounded-[1.6rem] sm:rounded-[2rem] shadow-sm border border-slate-200/60 overflow-hidden hover:shadow-2xl hover:shadow-indigo-500/10 hover:border-indigo-300/50 transition-all duration-500 group flex flex-col sm:hover:-translate-y-2 relative cursor-pointer`}
+    >
+      <div className="absolute inset-0 bg-gradient-to-t from-indigo-900/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none z-10"></div>
+
+      <div
+        className={`relative ${isShelf ? "aspect-[4/5]" : "aspect-[4/5] sm:aspect-[4/5]"} overflow-hidden bg-slate-50`}
+      >
+        {product.images?.[0] || product.image ? (
+          <img
+            src={product.images?.[0] || product.image}
+            alt={product.name}
+            className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700 ease-out"
+          />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center text-slate-300 bg-slate-100/50">
+            <ImageIcon size={48} className="drop-shadow-sm" />
+          </div>
+        )}
+
+        {discountPct > 0 && (
+          <span className="absolute top-3 right-3 bg-emerald-500 text-white text-[11px] font-black px-2.5 py-1.5 rounded-xl shadow-md z-20">
+            -{discountPct}%
+          </span>
+        )}
+
+        {Number(product.stock) <= 0 && (
+          <div className="absolute inset-0 bg-white/40 backdrop-blur-[4px] flex items-center justify-center z-20">
+            <span className="bg-rose-500 text-white px-3 py-1.5 rounded-full font-black text-[11px] shadow-xl uppercase tracking-widest border-2 border-white/50">
+              ESGOTADO
+            </span>
+          </div>
+        )}
+      </div>
+
+      <div className="p-3 sm:p-4 md:p-5 flex flex-col flex-grow relative z-20 bg-white">
+        <h3 className="font-bold text-[15px] sm:text-sm md:text-base text-slate-800 mb-2 line-clamp-2 leading-snug min-h-[2.5rem] group-hover:text-indigo-600 transition-colors">
+          {product.name}
+        </h3>
+
+        <div className="mt-auto pt-3 border-t border-slate-100 space-y-2">
+          <div className="flex items-end justify-between gap-3">
+            <div className="flex flex-col min-w-0">
+              {priceTag > 0 ? (
+                <>
+                  <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-0.5">
+                    De
+                  </span>
+                  <span className="text-[11px] text-slate-400 line-through font-semibold mb-0.5 line-clamp-1">
+                    {formatCurrencyBRL(priceTag)}
+                  </span>
+                  <span className="text-[10px] text-emerald-600 font-black uppercase tracking-wider">
+                    Por
+                  </span>
+                </>
+              ) : (
+                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-1">
+                  Valor
+                </span>
+              )}
+              <span className="text-lg sm:text-xl font-black text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-purple-600 leading-none line-clamp-1">
+                {formatCurrencyBRL(product.price)}
+              </span>
+            </div>
+
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                if (hasVariations) {
+                  onOpenProduct(product);
+                } else {
+                  onAddToCart(product);
+                }
+              }}
+              disabled={Number(product.stock) <= 0}
+              className="hidden md:flex bg-slate-900 group-hover:bg-gradient-to-r group-hover:from-indigo-500 group-hover:to-purple-500 disabled:bg-slate-100 disabled:text-slate-300 text-white w-11 h-11 rounded-full items-center justify-center shadow-md hover:shadow-lg hover:shadow-indigo-500/30 transition-all duration-300 hover:scale-110 disabled:hover:scale-100 active:scale-95 shrink-0"
+            >
+              <Plus strokeWidth={3} className="w-5 h-5" />
+            </button>
+          </div>
+
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              if (hasVariations) {
+                onOpenProduct(product);
+              } else {
+                onAddToCart(product);
+              }
+            }}
+            disabled={Number(product.stock) <= 0}
+            className="w-full md:hidden py-2.5 rounded-xl bg-slate-900 text-white font-black text-sm shadow-md active:scale-[0.99] disabled:bg-slate-100 disabled:text-slate-300"
+          >
+            {hasVariations ? "Ver opções" : "Comprar"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // --- Componente Global de Confirmação ---
 function ConfirmModal({
@@ -726,6 +863,10 @@ function StoreFront({ products, user, showToast, storeSettings }) {
   const [selectedProduct, setSelectedProduct] = useState(null);
 
   const isRealUser = user && !user.isAnonymous;
+  const productCatalog = useMemo(
+    () => normalizeCatalog(storeSettings?.catalog),
+    [storeSettings?.catalog],
+  );
 
   // Buscar perfil do utilizador
   useEffect(() => {
@@ -963,6 +1104,17 @@ function StoreFront({ products, user, showToast, storeSettings }) {
     return 0;
   });
 
+  const showcaseSections = (productCatalog.sections || [])
+    .map((section) => ({
+      ...section,
+      products: products.filter((product) =>
+        Array.isArray(product.showcaseSections)
+          ? product.showcaseSections.includes(section.id)
+          : false,
+      ),
+    }))
+    .filter((section) => section.products.length > 0);
+
   const startCheckout = () => {
     if (!isRealUser) {
       setIsCartOpen(false);
@@ -1089,6 +1241,43 @@ function StoreFront({ products, user, showToast, storeSettings }) {
 
       {/* Product Grid */}
       <main className="max-w-[1400px] mx-auto px-4 py-8 md:py-12">
+        {showcaseSections.length > 0 && (
+          <div className="space-y-6 mb-10">
+            {showcaseSections.map((section) => (
+              <section
+                key={section.id}
+                className="bg-white border border-slate-200 rounded-3xl shadow-sm p-4 md:p-5"
+              >
+                <div className="flex items-end justify-between gap-3 mb-4">
+                  <div>
+                    <h3 className="text-lg md:text-xl font-black text-slate-800">
+                      {section.name}
+                    </h3>
+                    <p className="text-xs md:text-sm text-slate-500 font-semibold">
+                      Deslize para ver mais produtos desta sessão
+                    </p>
+                  </div>
+                  <span className="text-xs md:text-sm font-black text-indigo-600 whitespace-nowrap">
+                    {section.products.length} item(ns)
+                  </span>
+                </div>
+
+                <div className="flex gap-3 md:gap-4 overflow-x-auto hide-scrollbar snap-x snap-mandatory pb-1">
+                  {section.products.map((product) => (
+                    <StoreProductCard
+                      key={`${section.id}-${product.id}`}
+                      product={product}
+                      onOpenProduct={setSelectedProduct}
+                      onAddToCart={addToCart}
+                      isShelf
+                    />
+                  ))}
+                </div>
+              </section>
+            ))}
+          </div>
+        )}
+
         <div className="mb-8 bg-white border border-slate-200 rounded-3xl shadow-sm p-4 md:p-6">
           <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
             <h3 className="text-lg md:text-xl font-black text-slate-800 flex items-center gap-2">
@@ -1222,107 +1411,29 @@ function StoreFront({ products, user, showToast, storeSettings }) {
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-5 md:gap-8">
-            {sortedProducts.map((product) => {
-              const { priceTag, discountPct } = getDiscountMeta(product);
+          <section className="space-y-4">
+            <div className="flex items-end justify-between gap-3">
+              <div>
+                <h3 className="text-xl md:text-2xl font-black text-slate-900">
+                  Todos os produtos
+                </h3>
+                <p className="text-sm text-slate-500 font-semibold">
+                  Abaixo fica o catálogo completo com os filtros atuais.
+                </p>
+              </div>
+            </div>
 
-              return (
-                <div
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 sm:gap-5 md:gap-8">
+              {sortedProducts.map((product) => (
+                <StoreProductCard
                   key={product.id}
-                  onClick={() => setSelectedProduct(product)}
-                  className="bg-white rounded-[2rem] shadow-sm border border-slate-200/60 overflow-hidden hover:shadow-2xl hover:shadow-indigo-500/10 hover:border-indigo-300/50 transition-all duration-500 group flex flex-col hover:-translate-y-2 relative cursor-pointer"
-                >
-                  {/* Overlay de Hover */}
-                  <div className="absolute inset-0 bg-gradient-to-t from-indigo-900/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none z-10"></div>
-
-                  {/* Imagem Proporção Vertical (Moda/Geral) */}
-                  <div className="relative aspect-[4/5] overflow-hidden bg-slate-50">
-                    {product.images?.[0] || product.image ? (
-                      <img
-                        src={product.images?.[0] || product.image}
-                        alt={product.name}
-                        className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700 ease-out"
-                      />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center text-slate-300 bg-slate-100/50">
-                        <ImageIcon size={48} className="drop-shadow-sm" />
-                      </div>
-                    )}
-                    {/* Etiqueta de Categoria */}
-                    {product.category && (
-                      <span className="absolute top-4 left-4 bg-white/90 backdrop-blur-md text-indigo-700 text-[10px] font-black px-3 py-1.5 rounded-xl border border-white shadow-sm uppercase tracking-wider z-20">
-                        {product.subcategory
-                          ? `${product.category} / ${product.subcategory}`
-                          : product.category}
-                      </span>
-                    )}
-                    {discountPct > 0 && (
-                      <span className="absolute top-4 right-4 bg-emerald-500 text-white text-[11px] font-black px-2.5 py-1.5 rounded-xl shadow-md z-20">
-                        -{discountPct}%
-                      </span>
-                    )}
-                    {/* Etiqueta Esgotado */}
-                    {Number(product.stock) <= 0 && (
-                      <div className="absolute inset-0 bg-white/40 backdrop-blur-[4px] flex items-center justify-center z-20">
-                        <span className="bg-rose-500 text-white px-4 py-2 rounded-full font-black text-xs shadow-xl uppercase tracking-widest border-2 border-white/50">
-                          ESGOTADO
-                        </span>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Informações do Produto */}
-                  <div className="p-5 md:p-6 flex flex-col flex-grow relative z-20 bg-white">
-                    <h3 className="font-bold text-sm md:text-base text-slate-800 mb-2 line-clamp-2 leading-snug min-h-[2.75rem] group-hover:text-indigo-600 transition-colors">
-                      {product.name}
-                    </h3>
-
-                    <div className="flex items-end justify-between mt-auto pt-4 border-t border-slate-100">
-                      <div className="flex flex-col">
-                        {priceTag > 0 ? (
-                          <>
-                            <span className="text-[11px] text-slate-400 font-bold uppercase tracking-wider mb-0.5">
-                              De
-                            </span>
-                            <span className="text-xs text-slate-400 line-through font-semibold mb-0.5">
-                              {formatCurrencyBRL(priceTag)}
-                            </span>
-                            <span className="text-[11px] text-emerald-600 font-black uppercase tracking-wider">
-                              Por
-                            </span>
-                          </>
-                        ) : (
-                          <span className="text-[11px] text-slate-400 font-bold uppercase tracking-wider mb-1">
-                            Valor
-                          </span>
-                        )}
-                        <span className="text-xl md:text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-purple-600 leading-none">
-                          {formatCurrencyBRL(product.price)}
-                        </span>
-                      </div>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (getProductVariationGroups(product).length > 0) {
-                            setSelectedProduct(product);
-                          } else {
-                            addToCart(product);
-                          }
-                        }}
-                        disabled={Number(product.stock) <= 0}
-                        className="bg-slate-900 group-hover:bg-gradient-to-r group-hover:from-indigo-500 group-hover:to-purple-500 disabled:bg-slate-100 disabled:text-slate-300 text-white w-10 h-10 md:w-12 md:h-12 rounded-full flex items-center justify-center shadow-md hover:shadow-lg hover:shadow-indigo-500/30 transition-all duration-300 hover:scale-110 disabled:hover:scale-100 active:scale-95"
-                      >
-                        <Plus
-                          strokeWidth={3}
-                          className="w-5 h-5 md:w-6 md:h-6"
-                        />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+                  product={product}
+                  onOpenProduct={setSelectedProduct}
+                  onAddToCart={addToCart}
+                />
+              ))}
+            </div>
+          </section>
         )}
       </main>
 
@@ -1674,9 +1785,11 @@ function ProductModal({ product, close, addToCart }) {
     close();
   };
 
+  const hasStock = Number(product.stock) > 0;
+
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 sm:p-6 bg-slate-900/60 backdrop-blur-sm overflow-y-auto print:hidden">
-      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col md:flex-row animate-slide-up relative">
+    <div className="fixed inset-0 z-[70] flex items-center justify-center p-2 sm:p-4 md:p-6 bg-slate-900/60 backdrop-blur-sm overflow-y-auto print:hidden">
+      <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-5xl max-h-[96vh] overflow-hidden flex flex-col md:flex-row animate-slide-up relative">
         {/* Botão Fechar */}
         <button
           onClick={close}
@@ -1686,8 +1799,8 @@ function ProductModal({ product, close, addToCart }) {
         </button>
 
         {/* Imagem do Produto e Galeria */}
-        <div className="w-full md:w-1/2 bg-slate-100 relative flex flex-col">
-          <div className="relative w-full aspect-square md:aspect-auto md:flex-1 bg-slate-50">
+        <div className="w-full md:w-1/2 bg-slate-100 relative flex flex-col shrink-0 md:max-h-[96vh]">
+          <div className="relative w-full aspect-[4/3] sm:aspect-square md:aspect-auto md:flex-1 bg-slate-50 min-h-[220px] md:min-h-0">
             {images.length > 0 ? (
               <img
                 src={images[currentImgIndex]}
@@ -1710,12 +1823,12 @@ function ProductModal({ product, close, addToCart }) {
 
           {/* Miniaturas da Galeria */}
           {images.length > 1 && (
-            <div className="flex gap-2 p-4 bg-white border-t border-slate-100 overflow-x-auto hide-scrollbar shrink-0">
+            <div className="flex gap-2 p-3 md:p-4 bg-white border-t border-slate-100 overflow-x-auto hide-scrollbar shrink-0">
               {images.map((img, idx) => (
                 <button
                   key={idx}
                   onClick={() => setCurrentImgIndex(idx)}
-                  className={`w-16 h-16 shrink-0 rounded-lg overflow-hidden border-2 transition-all ${currentImgIndex === idx ? "border-indigo-600 shadow-md" : "border-transparent opacity-70 hover:opacity-100"}`}
+                  className={`w-14 h-14 md:w-16 md:h-16 shrink-0 rounded-lg overflow-hidden border-2 transition-all ${currentImgIndex === idx ? "border-indigo-600 shadow-md" : "border-transparent opacity-70 hover:opacity-100"}`}
                 >
                   <img
                     src={img}
@@ -1729,9 +1842,9 @@ function ProductModal({ product, close, addToCart }) {
         </div>
 
         {/* Detalhes do Produto */}
-        <div className="w-full md:w-1/2 p-6 md:p-8 flex flex-col">
-          <div className="flex-grow">
-            <h2 className="text-2xl md:text-3xl font-bold text-slate-900 mb-2 leading-tight">
+        <div className="w-full md:w-1/2 flex flex-col min-h-0">
+          <div className="flex-grow overflow-y-auto px-4 pb-4 pt-5 sm:px-5 md:px-8 md:pt-8 md:pb-6">
+            <h2 className="text-xl sm:text-2xl md:text-3xl font-bold text-slate-900 mb-2 leading-tight pr-12 md:pr-0">
               {product.name}
             </h2>
             {discountPct > 0 && (
@@ -1744,11 +1857,11 @@ function ProductModal({ product, close, addToCart }) {
                 De {formatCurrencyBRL(priceTag)}
               </div>
             )}
-            <div className="text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-purple-600 mb-6">
+            <div className="text-2xl sm:text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-purple-600 mb-4 md:mb-6">
               {formatCurrencyBRL(product.price)}
             </div>
 
-            <div className="prose prose-sm text-slate-600 mb-8">
+            <div className="prose prose-sm text-slate-600 mb-6 md:mb-8 max-w-none">
               <p>
                 {product.description ||
                   "Nenhuma descrição fornecida para este produto."}
@@ -1777,7 +1890,7 @@ function ProductModal({ product, close, addToCart }) {
                                 [group.type]: option,
                               }))
                             }
-                            className={`px-4 py-2 rounded-xl font-bold text-sm transition-all duration-200 border-2 ${
+                            className={`px-3.5 py-2 rounded-xl font-bold text-sm transition-all duration-200 border-2 ${
                               selectedVariations[group.type] === option
                                 ? "border-indigo-600 bg-indigo-50 text-indigo-700 shadow-sm"
                                 : "border-slate-200 text-slate-600 hover:border-indigo-300"
@@ -1794,7 +1907,7 @@ function ProductModal({ product, close, addToCart }) {
             )}
 
             {/* Quantidade */}
-            <div className="mb-8">
+            <div className="mb-5 md:mb-8">
               <span className="block text-sm font-bold text-slate-800 mb-3 uppercase tracking-wider">
                 Quantidade:
               </span>
@@ -1821,17 +1934,31 @@ function ProductModal({ product, close, addToCart }) {
             </div>
           </div>
 
-          {/* Botão Adicionar */}
-          <div className="pt-4 border-t border-slate-100">
+          <div className="px-4 py-3 md:px-8 md:py-5 border-t border-slate-100 bg-white/95 backdrop-blur-sm shrink-0">
+            <div className="flex items-center justify-between gap-4 mb-3 md:hidden">
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-wider text-slate-400">
+                  Total do item
+                </p>
+                <p className="text-xl font-black text-slate-900">
+                  {formatCurrencyBRL(Number(product.price || 0) * qty)}
+                </p>
+              </div>
+              <div className="text-right">
+                <p className="text-[11px] font-black uppercase tracking-wider text-slate-400">
+                  Quantidade
+                </p>
+                <p className="text-lg font-black text-indigo-600">{qty}x</p>
+              </div>
+            </div>
+
             <button
               onClick={handleAdd}
-              disabled={Number(product.stock) <= 0}
+              disabled={!hasStock}
               className="w-full py-4 rounded-2xl font-bold text-lg text-white shadow-lg transition-all duration-300 flex items-center justify-center gap-2 bg-gradient-to-r from-indigo-600 to-purple-600 hover:shadow-indigo-500/30 hover:scale-[1.02] disabled:opacity-50 disabled:scale-100"
             >
               <ShoppingBag size={22} />
-              {Number(product.stock) > 0
-                ? "Adicionar ao Carrinho"
-                : "Produto Esgotado"}
+              {hasStock ? "Adicionar ao Carrinho" : "Produto Esgotado"}
             </button>
           </div>
         </div>
@@ -3473,6 +3600,11 @@ function StatCard({ title, value, icon, color }) {
 
 function ProductManager({ products, showToast, storeSettings }) {
   const [isAdding, setIsAdding] = useState(false);
+  const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
+  const [bulkFileName, setBulkFileName] = useState("");
+  const [bulkProductsPreview, setBulkProductsPreview] = useState([]);
+  const [bulkErrors, setBulkErrors] = useState([]);
+  const [isBulkImporting, setIsBulkImporting] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [productToDelete, setProductToDelete] = useState(null); // Estado para o modal de confirmação
   const [formData, setFormData] = useState({
@@ -3481,6 +3613,7 @@ function ProductManager({ products, showToast, storeSettings }) {
     priceTag: "",
     category: "",
     subcategory: "",
+    showcaseSections: [],
     description: "",
     stock: "",
     images: [],
@@ -3499,6 +3632,8 @@ function ProductManager({ products, showToast, storeSettings }) {
     );
     return selected?.subcategories || [];
   }, [formData.category, productCatalog.categories]);
+
+  const availableShowcaseSections = productCatalog.sections || [];
 
   const getInitialVariationMap = (product = {}) => {
     const groups = getProductVariationGroups(product);
@@ -3586,6 +3721,455 @@ function ProductManager({ products, showToast, storeSettings }) {
     }));
   };
 
+  const handleToggleShowcaseSection = (sectionId) => {
+    setFormData((prev) => {
+      const current = Array.isArray(prev.showcaseSections)
+        ? prev.showcaseSections
+        : [];
+
+      return {
+        ...prev,
+        showcaseSections: current.includes(sectionId)
+          ? current.filter((item) => item !== sectionId)
+          : [...current, sectionId],
+      };
+    });
+  };
+
+  const parseCsvLine = (line, delimiter) => {
+    const values = [];
+    let current = "";
+    let insideQuotes = false;
+
+    for (let i = 0; i < line.length; i += 1) {
+      const char = line[i];
+      const next = line[i + 1];
+
+      if (char === '"') {
+        if (insideQuotes && next === '"') {
+          current += '"';
+          i += 1;
+        } else {
+          insideQuotes = !insideQuotes;
+        }
+      } else if (char === delimiter && !insideQuotes) {
+        values.push(current.trim());
+        current = "";
+      } else {
+        current += char;
+      }
+    }
+
+    values.push(current.trim());
+    return values;
+  };
+
+  const parseCsvText = (text) => {
+    const lines = String(text || "")
+      .replace(/\r/g, "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    if (lines.length < 2) {
+      return [];
+    }
+
+    const normalizeHeader = (header) =>
+      String(header || "")
+        .replace(/^\uFEFF/, "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase()
+        .replace(/\s+/g, "")
+        .replace(/_/g, "")
+        .replace(/\./g, "");
+
+    const headerAliasMap = {
+      name: "name",
+      nome: "name",
+      produto: "name",
+      price: "price",
+      preco: "price",
+      valor: "price",
+      pricetag: "priceTag",
+      precotarja: "priceTag",
+      precoantigo: "priceTag",
+      de: "priceTag",
+      category: "category",
+      categoria: "category",
+      subcategory: "subcategory",
+      subcategoria: "subcategory",
+      description: "description",
+      descricao: "description",
+      desc: "description",
+      stock: "stock",
+      estoque: "stock",
+      images: "images",
+      imagens: "images",
+      image: "image",
+      imagem: "image",
+      image1: "image1",
+      imagem1: "image1",
+      image2: "image2",
+      imagem2: "image2",
+      image3: "image3",
+      imagem3: "image3",
+      image4: "image4",
+      imagem4: "image4",
+      image5: "image5",
+      imagem5: "image5",
+      showcasesections: "showcaseSections",
+      showcase: "showcaseSections",
+      sections: "showcaseSections",
+      secoes: "showcaseSections",
+      secao: "showcaseSections",
+      sessaoshowcase: "showcaseSections",
+      sessao: "showcaseSections",
+      sessoes: "showcaseSections",
+      sessoesdestaque: "showcaseSections",
+      secaodestaque: "showcaseSections",
+      vtrine: "showcaseSections",
+      vitrine: "showcaseSections",
+      variationsbytype: "variationsByType",
+      variacoesportipo: "variationsByType",
+      variacaopartipo: "variationsByType",
+      variationsbytypejson: "variationsByTypeJson",
+      variacoesportipojson: "variationsByTypeJson",
+    };
+
+    const delimiter = lines[0].includes(";") ? ";" : ",";
+    const headers = parseCsvLine(lines[0], delimiter).map((h) => {
+      const normalized = normalizeHeader(h);
+      return headerAliasMap[normalized] || String(h || "").trim();
+    });
+
+    return lines.slice(1).map((line) => {
+      const cols = parseCsvLine(line, delimiter);
+      const obj = {};
+      headers.forEach((header, index) => {
+        obj[header] = cols[index] || "";
+      });
+      return obj;
+    });
+  };
+
+  const parseVariationMapInput = (rawValue, allowedTypes) => {
+    if (!rawValue) return {};
+
+    const text = String(rawValue).trim();
+    if (!text) return {};
+
+    try {
+      const parsedJson = JSON.parse(text);
+      if (parsedJson && typeof parsedJson === "object") {
+        return Object.fromEntries(
+          Object.entries(parsedJson)
+            .map(([type, values]) => [
+              String(type || "").trim(),
+              Array.isArray(values)
+                ? values.map((v) => String(v || "").trim()).filter(Boolean)
+                : [],
+            ])
+            .filter(
+              ([type, values]) =>
+                type && values.length > 0 && allowedTypes.has(type),
+            ),
+        );
+      }
+    } catch {
+      // fallback para formato texto: Tamanho:PP|P|M;Cor:Preto|Branco
+    }
+
+    return Object.fromEntries(
+      text
+        .split(";")
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .map((part) => {
+          const [type, optionsRaw = ""] = part.split(":");
+          return [
+            String(type || "").trim(),
+            String(optionsRaw || "")
+              .split("|")
+              .map((opt) => opt.trim())
+              .filter(Boolean),
+          ];
+        })
+        .filter(
+          ([type, options]) =>
+            type && options.length > 0 && allowedTypes.has(type),
+        ),
+    );
+  };
+
+  const normalizeBulkRowsToProducts = (rows) => {
+    const allowedTypes = new Set(
+      (productCatalog.variationTypes || [])
+        .map((item) => String(item?.name || "").trim())
+        .filter(Boolean),
+    );
+    const availableSections = productCatalog.sections || [];
+    const sectionIdByNormalizedName = new Map(
+      availableSections.map((section) => [
+        String(section.name || "")
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .toLowerCase()
+          .trim(),
+        section.id,
+      ]),
+    );
+
+    const productsResult = [];
+    const errorsResult = [];
+
+    const normalizeGoogleDriveImageUrl = (url) => {
+      const raw = String(url || "").trim();
+      if (!raw.includes("drive.google.com")) return raw;
+
+      if (raw.includes("/drive/folders/")) {
+        return raw;
+      }
+
+      const byPathMatch = raw.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+      if (byPathMatch?.[1]) {
+        return `https://drive.google.com/thumbnail?id=${byPathMatch[1]}&sz=w1600`;
+      }
+
+      const byQueryMatch = raw.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+      if (byQueryMatch?.[1]) {
+        return `https://drive.google.com/thumbnail?id=${byQueryMatch[1]}&sz=w1600`;
+      }
+
+      const byUcMatch = raw.match(/\/uc\?(?:.*&)?id=([a-zA-Z0-9_-]+)/);
+      if (byUcMatch?.[1]) {
+        return `https://drive.google.com/thumbnail?id=${byUcMatch[1]}&sz=w1600`;
+      }
+
+      const byThumbnailMatch = raw.match(
+        /\/thumbnail\?(?:.*&)?id=([a-zA-Z0-9_-]+)/,
+      );
+      if (byThumbnailMatch?.[1]) {
+        return `https://drive.google.com/thumbnail?id=${byThumbnailMatch[1]}&sz=w1600`;
+      }
+
+      return raw;
+    };
+
+    const parseImageList = (value) => {
+      return String(value || "")
+        .replace(/[\n\r]+/g, "|")
+        .split(/[|;,]/)
+        .map((url) =>
+          String(url || "")
+            .trim()
+            .replace(/^"|"$/g, ""),
+        )
+        .filter(Boolean)
+        .map((url) => url.replace(/\\/g, "/"))
+        .map((url) => normalizeGoogleDriveImageUrl(url));
+    };
+
+    const parseShowcaseSectionIds = (value) => {
+      if (Array.isArray(value)) {
+        return [
+          ...new Set(
+            value.map((item) => String(item || "").trim()).filter(Boolean),
+          ),
+        ];
+      }
+
+      const rawItems = String(value || "")
+        .replace(/[\n\r]+/g, "|")
+        .split(/[|;,]/)
+        .map((item) => String(item || "").trim())
+        .filter(Boolean);
+
+      return [
+        ...new Set(
+          rawItems
+            .map((item) => {
+              const normalizedName = item
+                .normalize("NFD")
+                .replace(/[\u0300-\u036f]/g, "")
+                .toLowerCase()
+                .trim();
+
+              return sectionIdByNormalizedName.get(normalizedName) || item;
+            })
+            .filter((item) =>
+              availableSections.some(
+                (section) => section.id === item || section.name === item,
+              ),
+            ),
+        ),
+      ];
+    };
+
+    const parseLocaleNumber = (value) => {
+      if (typeof value === "number") return value;
+
+      const raw = String(value || "")
+        .trim()
+        .replace(/R\$/gi, "")
+        .replace(/\s/g, "");
+
+      if (!raw) return NaN;
+
+      let normalized = raw;
+      const hasComma = normalized.includes(",");
+      const hasDot = normalized.includes(".");
+
+      if (hasComma && hasDot) {
+        if (normalized.lastIndexOf(",") > normalized.lastIndexOf(".")) {
+          normalized = normalized.replace(/\./g, "").replace(",", ".");
+        } else {
+          normalized = normalized.replace(/,/g, "");
+        }
+      } else if (hasComma) {
+        normalized = normalized.replace(",", ".");
+      }
+
+      return Number(normalized);
+    };
+
+    rows.forEach((row, index) => {
+      const lineNo = index + 2;
+      const name = String(row.name || "").trim();
+      const price = parseLocaleNumber(row.price);
+      const stock = parseLocaleNumber(row.stock);
+      const priceTagRaw = parseLocaleNumber(row.priceTag);
+      const priceTag =
+        Number.isFinite(priceTagRaw) && priceTagRaw > 0 ? priceTagRaw : null;
+
+      if (!name) {
+        errorsResult.push(`Linha ${lineNo}: nome é obrigatório.`);
+        return;
+      }
+
+      if (!Number.isFinite(price) || price <= 0) {
+        errorsResult.push(`Linha ${lineNo}: preço inválido.`);
+        return;
+      }
+
+      if (!Number.isFinite(stock) || stock < 0) {
+        errorsResult.push(`Linha ${lineNo}: estoque inválido.`);
+        return;
+      }
+
+      const imagesFromList = parseImageList(row.images);
+
+      const imagesFromCols = [
+        row.image,
+        row.image1,
+        row.image2,
+        row.image3,
+        row.image4,
+        row.image5,
+      ].flatMap((url) => parseImageList(url));
+
+      const images = [...new Set([...imagesFromList, ...imagesFromCols])];
+
+      const hasDriveFolderLink = images.some((imgUrl) =>
+        String(imgUrl).includes("drive.google.com/drive/folders/"),
+      );
+
+      if (hasDriveFolderLink) {
+        errorsResult.push(
+          `Linha ${lineNo}: link de pasta do Google Drive não é imagem direta. Use link de arquivo (file/d/ID).`,
+        );
+      }
+
+      const variationsByType = parseVariationMapInput(
+        row.variationsByType || row.variationsByTypeJson || "",
+        allowedTypes,
+      );
+      const showcaseSections = parseShowcaseSectionIds(row.showcaseSections);
+
+      const flattenedVariations = Object.values(variationsByType)
+        .flat()
+        .join(", ");
+
+      productsResult.push({
+        name,
+        price,
+        priceTag,
+        category: String(row.category || "").trim(),
+        subcategory: String(row.subcategory || "").trim(),
+        description: String(row.description || "").trim(),
+        stock: Math.floor(stock),
+        images,
+        image: images[0] || "",
+        showcaseSections,
+        variationsByType,
+        variations: flattenedVariations,
+      });
+    });
+
+    return { productsResult, errorsResult };
+  };
+
+  const handleBulkFileChange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      setBulkFileName(file.name);
+
+      let rows = [];
+      if (file.name.toLowerCase().endsWith(".json")) {
+        const parsed = JSON.parse(text);
+        rows = Array.isArray(parsed) ? parsed : [];
+      } else {
+        rows = parseCsvText(text);
+      }
+
+      const { productsResult, errorsResult } =
+        normalizeBulkRowsToProducts(rows);
+      setBulkProductsPreview(productsResult);
+      setBulkErrors(errorsResult);
+
+      if (productsResult.length === 0) {
+        showToast("Nenhum produto válido encontrado no arquivo.", "error");
+      }
+    } catch (error) {
+      setBulkProductsPreview([]);
+      setBulkErrors(["Não foi possível ler o arquivo. Verifique o formato."]);
+      showToast("Falha ao processar arquivo de cadastro massivo.", "error");
+    } finally {
+      e.target.value = "";
+    }
+  };
+
+  const executeBulkImport = async () => {
+    if (bulkProductsPreview.length === 0 || isBulkImporting) return;
+
+    setIsBulkImporting(true);
+    let importedCount = 0;
+
+    try {
+      for (const productData of bulkProductsPreview) {
+        await addDoc(
+          collection(db, "artifacts", appId, "public", "data", "products"),
+          { ...productData, createdAt: serverTimestamp() },
+        );
+        importedCount += 1;
+      }
+
+      showToast(`${importedCount} produto(s) importado(s) com sucesso!`);
+      setIsBulkModalOpen(false);
+      setBulkProductsPreview([]);
+      setBulkErrors([]);
+      setBulkFileName("");
+    } catch {
+      showToast("Erro ao importar produtos em massa.", "error");
+    } finally {
+      setIsBulkImporting(false);
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
@@ -3623,6 +4207,9 @@ function ProductManager({ products, showToast, storeSettings }) {
         priceTag: normalizedPriceTag,
         stock: Number(formData.stock),
         subcategory: formData.subcategory || "",
+        showcaseSections: Array.isArray(formData.showcaseSections)
+          ? formData.showcaseSections
+          : [],
         variationsByType: normalizedVariationMap,
         variations: flattenedVariations,
         image: formData.images?.[0] || "", // Mantém compatibilidade com dados antigos
@@ -3655,6 +4242,9 @@ function ProductManager({ products, showToast, storeSettings }) {
       priceTag: product.priceTag || "",
       category: product.category || "",
       subcategory: product.subcategory || "",
+      showcaseSections: Array.isArray(product.showcaseSections)
+        ? product.showcaseSections
+        : [],
       description: product.description || "",
       stock: product.stock || "",
       images: product.images || (product.image ? [product.image] : []),
@@ -3695,6 +4285,7 @@ function ProductManager({ products, showToast, storeSettings }) {
       priceTag: "",
       category: "",
       subcategory: "",
+      showcaseSections: [],
       description: "",
       stock: "",
       images: [],
@@ -3901,6 +4492,43 @@ function ProductManager({ products, showToast, storeSettings }) {
             <div className="md:col-span-2 space-y-3 p-4 rounded-xl border border-slate-200 bg-slate-50">
               <div className="flex items-center justify-between gap-3">
                 <h4 className="text-sm font-black text-slate-700 uppercase tracking-wider">
+                  Sessões do Mostruário
+                </h4>
+                <span className="text-xs text-slate-500 font-semibold">
+                  Marque onde este produto deve aparecer no início da loja
+                </span>
+              </div>
+
+              {availableShowcaseSections.length === 0 ? (
+                <p className="text-sm text-slate-500">
+                  Nenhuma sessão cadastrada no admin. Crie em Configurações para
+                  habilitar este vínculo.
+                </p>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  {availableShowcaseSections.map((section) => (
+                    <label
+                      key={section.id}
+                      className="inline-flex items-center gap-2 text-sm font-semibold text-slate-700 bg-white border border-slate-200 rounded-lg px-3 py-2"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={(formData.showcaseSections || []).includes(
+                          section.id,
+                        )}
+                        onChange={() => handleToggleShowcaseSection(section.id)}
+                        className="w-4 h-4 rounded border-slate-300 text-indigo-600"
+                      />
+                      {section.name}
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="md:col-span-2 space-y-3 p-4 rounded-xl border border-slate-200 bg-slate-50">
+              <div className="flex items-center justify-between gap-3">
+                <h4 className="text-sm font-black text-slate-700 uppercase tracking-wider">
                   Variações do Produto
                 </h4>
                 <span className="text-xs text-slate-500 font-semibold">
@@ -3966,13 +4594,22 @@ function ProductManager({ products, showToast, storeSettings }) {
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <h2 className="text-2xl font-bold text-slate-800">Produtos</h2>
-        <button
-          onClick={() => setIsAdding(true)}
-          className="bg-indigo-600 hover:bg-indigo-700 transition text-white px-4 py-2 rounded-lg font-medium flex items-center gap-2"
-        >
-          <Plus size={18} />{" "}
-          <span className="hidden sm:inline">Novo Produto</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setIsBulkModalOpen(true)}
+            className="bg-slate-900 hover:bg-slate-700 transition text-white px-4 py-2 rounded-lg font-medium flex items-center gap-2"
+          >
+            <Upload size={18} />
+            <span className="hidden sm:inline">Cadastro Massivo</span>
+          </button>
+          <button
+            onClick={() => setIsAdding(true)}
+            className="bg-indigo-600 hover:bg-indigo-700 transition text-white px-4 py-2 rounded-lg font-medium flex items-center gap-2"
+          >
+            <Plus size={18} />{" "}
+            <span className="hidden sm:inline">Novo Produto</span>
+          </button>
+        </div>
       </div>
       <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-x-auto">
         <table className="w-full text-left min-w-[600px]">
@@ -4055,6 +4692,150 @@ function ProductManager({ products, showToast, storeSettings }) {
         cancelText="Manter Produto"
         confirmStyle="bg-rose-600 hover:bg-rose-700"
       />
+
+      {isBulkModalOpen && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm print:hidden">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[92vh] overflow-hidden flex flex-col">
+            <div className="p-5 md:p-6 border-b border-slate-100 flex justify-between items-center">
+              <div>
+                <h3 className="text-xl font-black text-slate-800">
+                  Cadastro Massivo de Produtos
+                </h3>
+                <p className="text-sm text-slate-500 mt-1">
+                  Importe arquivo CSV ou JSON para cadastrar vários produtos.
+                </p>
+              </div>
+              <button
+                onClick={() => setIsBulkModalOpen(false)}
+                className="p-2 rounded-full hover:bg-slate-100"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-5 md:p-6 space-y-4 overflow-y-auto">
+              <div className="flex flex-wrap items-center gap-3">
+                <label className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg cursor-pointer text-sm font-bold inline-flex items-center gap-2">
+                  <Upload size={16} />
+                  <span className="whitespace-nowrap">Selecionar arquivo</span>
+                  <input
+                    type="file"
+                    className="hidden"
+                    accept=".csv,.json"
+                    onChange={handleBulkFileChange}
+                  />
+                </label>
+                <a
+                  href="/modelo-cadastro-massivo.csv"
+                  download
+                  className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2 rounded-lg text-sm font-bold inline-flex items-center gap-2"
+                >
+                  <Download size={16} />
+                  Baixar Arquivo Aceito
+                </a>
+                {bulkFileName && (
+                  <span className="text-sm text-slate-500 font-semibold">
+                    Arquivo: {bulkFileName}
+                  </span>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-3">
+                  <p className="text-xs text-emerald-700 font-black uppercase tracking-wider">
+                    Produtos Válidos
+                  </p>
+                  <p className="text-2xl font-black text-emerald-600">
+                    {bulkProductsPreview.length}
+                  </p>
+                </div>
+                <div className="bg-rose-50 border border-rose-100 rounded-xl p-3">
+                  <p className="text-xs text-rose-700 font-black uppercase tracking-wider">
+                    Linhas com Erro
+                  </p>
+                  <p className="text-2xl font-black text-rose-600">
+                    {bulkErrors.length}
+                  </p>
+                </div>
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+                  <p className="text-xs text-slate-500 font-black uppercase tracking-wider">
+                    Formatos Aceitos
+                  </p>
+                  <p className="text-sm font-bold text-slate-700 mt-1">
+                    .csv e .json
+                  </p>
+                </div>
+              </div>
+
+              {bulkErrors.length > 0 && (
+                <div className="bg-rose-50 border border-rose-100 rounded-xl p-3">
+                  <p className="text-sm font-black text-rose-700 mb-2">
+                    Erros encontrados
+                  </p>
+                  <ul className="text-xs text-rose-700 space-y-1 max-h-32 overflow-y-auto">
+                    {bulkErrors.slice(0, 15).map((error, idx) => (
+                      <li key={`${error}-${idx}`}>• {error}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {bulkProductsPreview.length > 0 && (
+                <div className="border border-slate-200 rounded-xl overflow-auto">
+                  <table className="w-full text-sm min-w-[720px]">
+                    <thead className="bg-slate-100 text-slate-600">
+                      <tr>
+                        <th className="text-left p-3">Nome</th>
+                        <th className="text-left p-3">Categoria</th>
+                        <th className="text-left p-3">Preço</th>
+                        <th className="text-left p-3">Estoque</th>
+                        <th className="text-left p-3">Imagens</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 bg-white">
+                      {bulkProductsPreview.slice(0, 10).map((item, idx) => (
+                        <tr key={`${item.name}-${idx}`}>
+                          <td className="p-3 font-semibold text-slate-700">
+                            {item.name}
+                          </td>
+                          <td className="p-3 text-slate-600">
+                            {item.category || "-"}
+                          </td>
+                          <td className="p-3 text-indigo-600 font-bold">
+                            {formatCurrencyBRL(item.price)}
+                          </td>
+                          <td className="p-3 text-slate-700">{item.stock}</td>
+                          <td className="p-3 text-slate-600">
+                            {item.images?.length || 0}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            <div className="p-5 md:p-6 border-t border-slate-100 flex justify-end gap-3">
+              <button
+                onClick={() => setIsBulkModalOpen(false)}
+                className="px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold"
+              >
+                Fechar
+              </button>
+              <button
+                onClick={executeBulkImport}
+                disabled={bulkProductsPreview.length === 0 || isBulkImporting}
+                className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-300 text-white font-bold"
+              >
+                {isBulkImporting
+                  ? "Importando..."
+                  : `Importar ${bulkProductsPreview.length} Produto(s)`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -5339,11 +6120,19 @@ function AdminSettings({ showToast, storeSettings }) {
   const [newCategory, setNewCategory] = useState({
     name: "",
     subcategories: "",
+    featured: false,
+  });
+  const [newSectionName, setNewSectionName] = useState("");
+  const [editingSectionId, setEditingSectionId] = useState("");
+  const [editSectionDraft, setEditSectionDraft] = useState({
+    id: "",
+    name: "",
   });
   const [editingCategoryName, setEditingCategoryName] = useState("");
   const [editCategoryDraft, setEditCategoryDraft] = useState({
     name: "",
     subcategories: "",
+    featured: false,
   });
   const [newVariationType, setNewVariationType] = useState({
     name: "",
@@ -5466,11 +6255,126 @@ function AdminSettings({ showToast, storeSettings }) {
         ...normalizeCatalog(prev.catalog),
         categories: [
           ...(prev.catalog?.categories || []),
-          { name, subcategories },
+          { name, subcategories, featured: Boolean(newCategory.featured) },
         ],
       },
     }));
-    setNewCategory({ name: "", subcategories: "" });
+    setNewCategory({ name: "", subcategories: "", featured: false });
+  };
+
+  const handleAddSection = () => {
+    const name = String(newSectionName || "").trim();
+    if (!name) {
+      return showToast("Informe o nome da sessão", "error");
+    }
+
+    const alreadyExists = (config.catalog?.sections || []).some(
+      (item) => item.name.toLowerCase() === name.toLowerCase(),
+    );
+
+    if (alreadyExists) {
+      return showToast("Sessão já existe", "error");
+    }
+
+    setConfig((prev) => ({
+      ...prev,
+      catalog: {
+        ...normalizeCatalog(prev.catalog),
+        sections: [
+          ...(normalizeCatalog(prev.catalog).sections || []),
+          { id: createCatalogSectionId(), name },
+        ],
+      },
+    }));
+    setNewSectionName("");
+  };
+
+  const handleRemoveSection = (sectionId) => {
+    setConfig((prev) => ({
+      ...prev,
+      catalog: {
+        ...normalizeCatalog(prev.catalog),
+        sections: (normalizeCatalog(prev.catalog).sections || []).filter(
+          (item) => item.id !== sectionId,
+        ),
+      },
+    }));
+
+    if (editingSectionId === sectionId) {
+      setEditingSectionId("");
+      setEditSectionDraft({ id: "", name: "" });
+    }
+  };
+
+  const handleStartEditSection = (section) => {
+    setEditingSectionId(section.id);
+    setEditSectionDraft({ id: section.id, name: section.name });
+  };
+
+  const handleCancelEditSection = () => {
+    setEditingSectionId("");
+    setEditSectionDraft({ id: "", name: "" });
+  };
+
+  const handleSaveSectionEdit = () => {
+    const nextName = String(editSectionDraft.name || "").trim();
+    if (!nextName) {
+      return showToast("Nome da sessão é obrigatório", "error");
+    }
+
+    const hasDuplicatedName = (config.catalog?.sections || []).some(
+      (item) =>
+        item.name.toLowerCase() === nextName.toLowerCase() &&
+        item.id !== editingSectionId,
+    );
+
+    if (hasDuplicatedName) {
+      return showToast("Já existe outra sessão com esse nome", "error");
+    }
+
+    setConfig((prev) => ({
+      ...prev,
+      catalog: {
+        ...normalizeCatalog(prev.catalog),
+        sections: (normalizeCatalog(prev.catalog).sections || []).map((item) =>
+          item.id === editingSectionId ? { ...item, name: nextName } : item,
+        ),
+      },
+    }));
+
+    handleCancelEditSection();
+    showToast("Sessão atualizada!");
+  };
+
+  const handleMoveSection = (sectionId, direction) => {
+    setConfig((prev) => {
+      const currentSections = [
+        ...(normalizeCatalog(prev.catalog).sections || []),
+      ];
+      const currentIndex = currentSections.findIndex(
+        (item) => item.id === sectionId,
+      );
+
+      if (currentIndex === -1) return prev;
+
+      const targetIndex = currentIndex + direction;
+      if (targetIndex < 0 || targetIndex >= currentSections.length) {
+        return prev;
+      }
+
+      [currentSections[currentIndex], currentSections[targetIndex]] = [
+        currentSections[targetIndex],
+        currentSections[currentIndex],
+      ];
+
+      return {
+        ...prev,
+        catalog: {
+          ...normalizeCatalog(prev.catalog),
+          sections: currentSections,
+        },
+      };
+    });
   };
 
   const handleRemoveCategory = (name) => {
@@ -5490,12 +6394,13 @@ function AdminSettings({ showToast, storeSettings }) {
     setEditCategoryDraft({
       name: category.name,
       subcategories: (category.subcategories || []).join(", "),
+      featured: Boolean(category.featured),
     });
   };
 
   const handleCancelEditCategory = () => {
     setEditingCategoryName("");
-    setEditCategoryDraft({ name: "", subcategories: "" });
+    setEditCategoryDraft({ name: "", subcategories: "", featured: false });
   };
 
   const handleSaveCategoryEdit = () => {
@@ -5525,6 +6430,7 @@ function AdminSettings({ showToast, storeSettings }) {
                 subcategories: normalizeTextList(
                   editCategoryDraft.subcategories,
                 ),
+                featured: Boolean(editCategoryDraft.featured),
               }
             : item,
         ),
@@ -5773,6 +6679,137 @@ function AdminSettings({ showToast, storeSettings }) {
           Catálogo de Produtos
         </h3>
 
+        <div className="space-y-4">
+          <h4 className="text-sm font-black uppercase tracking-wider text-slate-600">
+            Sessões do Mostruário
+          </h4>
+          <p className="text-sm text-slate-500">
+            Crie sessões para aparecer no início da loja. Elas só serão exibidas
+            se houver produtos vinculados a elas.
+          </p>
+
+          <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-2 bg-slate-50 p-3 rounded-xl border border-slate-200">
+            <input
+              placeholder="Ex: Novidades da Semana"
+              className="p-2.5 border rounded-lg text-sm outline-none"
+              value={newSectionName}
+              onChange={(e) => setNewSectionName(e.target.value)}
+            />
+            <button
+              onClick={handleAddSection}
+              className="bg-slate-900 hover:bg-slate-700 text-white font-bold px-4 py-2 rounded-lg"
+            >
+              Adicionar Sessão
+            </button>
+          </div>
+
+          <div className="overflow-auto border border-slate-200 rounded-xl bg-white">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-100 text-slate-600">
+                <tr>
+                  <th className="text-left p-3 w-20">Ordem</th>
+                  <th className="text-left p-3">Sessão</th>
+                  <th className="text-right p-3">Ação</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {(config.catalog?.sections || []).length === 0 ? (
+                  <tr>
+                    <td colSpan="3" className="p-4 text-sm text-slate-500">
+                      Nenhuma sessão cadastrada ainda.
+                    </td>
+                  </tr>
+                ) : (
+                  (config.catalog?.sections || []).map(
+                    (section, index, all) => (
+                      <tr key={section.id}>
+                        <td className="p-3 text-slate-500 font-bold">
+                          #{index + 1}
+                        </td>
+                        <td className="p-3 font-semibold text-slate-700">
+                          {editingSectionId === section.id ? (
+                            <input
+                              value={editSectionDraft.name}
+                              onChange={(e) =>
+                                setEditSectionDraft((prev) => ({
+                                  ...prev,
+                                  name: e.target.value,
+                                }))
+                              }
+                              className="w-full p-2 border border-slate-200 rounded-lg text-sm outline-none"
+                            />
+                          ) : (
+                            section.name
+                          )}
+                        </td>
+                        <td className="p-3">
+                          <div className="flex items-center justify-end gap-2">
+                            {editingSectionId === section.id ? (
+                              <>
+                                <button
+                                  onClick={handleSaveSectionEdit}
+                                  className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold"
+                                >
+                                  Salvar
+                                </button>
+                                <button
+                                  onClick={handleCancelEditSection}
+                                  className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold"
+                                >
+                                  Cancelar
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <button
+                                  onClick={() =>
+                                    handleMoveSection(section.id, -1)
+                                  }
+                                  disabled={index === 0}
+                                  className="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 disabled:opacity-40 text-slate-700 text-xs font-black"
+                                  title="Mover para cima"
+                                >
+                                  ↑
+                                </button>
+                                <button
+                                  onClick={() =>
+                                    handleMoveSection(section.id, 1)
+                                  }
+                                  disabled={index === all.length - 1}
+                                  className="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 disabled:opacity-40 text-slate-700 text-xs font-black"
+                                  title="Mover para baixo"
+                                >
+                                  ↓
+                                </button>
+                                <button
+                                  onClick={() =>
+                                    handleStartEditSection(section)
+                                  }
+                                  className="px-3 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold"
+                                >
+                                  Editar
+                                </button>
+                                <button
+                                  onClick={() =>
+                                    handleRemoveSection(section.id)
+                                  }
+                                  className="px-3 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold"
+                                >
+                                  Remover
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ),
+                  )
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
           <div className="space-y-4">
             <h4 className="text-sm font-black uppercase tracking-wider text-slate-600">
@@ -5799,6 +6836,20 @@ function AdminSettings({ showToast, storeSettings }) {
                   })
                 }
               />
+              <label className="sm:col-span-3 inline-flex items-center gap-2 text-sm font-semibold text-slate-700 bg-white border border-slate-200 rounded-lg px-3 py-2">
+                <input
+                  type="checkbox"
+                  checked={newCategory.featured}
+                  onChange={(e) =>
+                    setNewCategory({
+                      ...newCategory,
+                      featured: e.target.checked,
+                    })
+                  }
+                  className="w-4 h-4 rounded border-slate-300 text-indigo-600"
+                />
+                Exibir como categoria destaque na loja
+              </label>
               <button
                 onClick={handleAddCategory}
                 className="sm:col-span-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 rounded-lg"
@@ -5813,6 +6864,7 @@ function AdminSettings({ showToast, storeSettings }) {
                   <tr>
                     <th className="text-left p-3">Categoria</th>
                     <th className="text-left p-3">Subcategorias</th>
+                    <th className="text-left p-3">Destaque</th>
                     <th className="text-right p-3">Ação</th>
                   </tr>
                 </thead>
@@ -5850,6 +6902,32 @@ function AdminSettings({ showToast, storeSettings }) {
                           />
                         ) : (
                           category.subcategories?.join(", ") || "-"
+                        )}
+                      </td>
+                      <td className="p-3 text-slate-600">
+                        {editingCategoryName === category.name ? (
+                          <label className="inline-flex items-center gap-2 text-sm font-semibold text-slate-700">
+                            <input
+                              type="checkbox"
+                              checked={editCategoryDraft.featured}
+                              onChange={(e) =>
+                                setEditCategoryDraft((prev) => ({
+                                  ...prev,
+                                  featured: e.target.checked,
+                                }))
+                              }
+                              className="w-4 h-4 rounded border-slate-300 text-indigo-600"
+                            />
+                            Destaque
+                          </label>
+                        ) : category.featured ? (
+                          <span className="inline-flex px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 text-xs font-bold border border-emerald-100">
+                            Sim
+                          </span>
+                        ) : (
+                          <span className="inline-flex px-2.5 py-1 rounded-full bg-slate-100 text-slate-500 text-xs font-bold">
+                            Não
+                          </span>
                         )}
                       </td>
                       <td className="p-3">
