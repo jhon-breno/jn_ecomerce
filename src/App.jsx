@@ -243,6 +243,13 @@ const getProductVariationGroups = (product) => {
       }))
       .filter((group) => group.type && group.options.length > 0);
 
+    const hasRealTypes = groups.some(
+      (group) => group.type.toLowerCase() !== "opcao",
+    );
+    if (hasRealTypes) {
+      return groups.filter((group) => group.type.toLowerCase() !== "opcao");
+    }
+
     if (groups.length > 0) return groups;
   }
 
@@ -3517,10 +3524,22 @@ function ProductManager({ products, showToast, storeSettings }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
+      const allowedTypes = new Set(
+        (productCatalog.variationTypes || [])
+          .map((item) => String(item?.name || "").trim())
+          .filter(Boolean),
+      );
+
       const normalizedVariationMap = Object.fromEntries(
         Object.entries(formData.variationsByType || {})
           .map(([type, values]) => [type, normalizeTextList(values)])
-          .filter(([type, values]) => type && values.length > 0),
+          .filter(
+            ([type, values]) =>
+              type &&
+              values.length > 0 &&
+              allowedTypes.has(type) &&
+              type.toLowerCase() !== "opcao",
+          ),
       );
 
       const flattenedVariations = Object.values(normalizedVariationMap)
