@@ -174,6 +174,84 @@ const buildPixPayload = ({
   return `${payloadWithoutCrc}${crc16Ccitt(payloadWithoutCrc)}`;
 };
 
+const DEFAULT_PRODUCT_CATALOG = {
+  categories: [
+    { name: "Camisetas", subcategories: ["Masculina", "Feminina", "Infantil"] },
+    { name: "Calcas", subcategories: ["Jeans", "Sarja", "Moletom"] },
+  ],
+  variationTypes: [
+    { name: "Tamanho", options: ["PP", "P", "M", "G", "GG"] },
+    { name: "Cor", options: ["Preto", "Branco", "Azul"] },
+  ],
+};
+
+const normalizeTextList = (value) =>
+  String(value || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+const normalizeCatalog = (catalog) => {
+  const base = catalog || {};
+  const categories = Array.isArray(base.categories)
+    ? base.categories
+        .map((item) => ({
+          name: String(item?.name || "").trim(),
+          subcategories: Array.isArray(item?.subcategories)
+            ? item.subcategories
+                .map((sub) => String(sub || "").trim())
+                .filter(Boolean)
+            : [],
+        }))
+        .filter((item) => item.name)
+    : [];
+
+  const variationTypes = Array.isArray(base.variationTypes)
+    ? base.variationTypes
+        .map((item) => ({
+          name: String(item?.name || "").trim(),
+          options: Array.isArray(item?.options)
+            ? item.options
+                .map((opt) => String(opt || "").trim())
+                .filter(Boolean)
+            : [],
+        }))
+        .filter((item) => item.name)
+    : [];
+
+  return {
+    categories:
+      categories.length > 0 ? categories : DEFAULT_PRODUCT_CATALOG.categories,
+    variationTypes:
+      variationTypes.length > 0
+        ? variationTypes
+        : DEFAULT_PRODUCT_CATALOG.variationTypes,
+  };
+};
+
+const getProductVariationGroups = (product) => {
+  if (
+    product?.variationsByType &&
+    typeof product.variationsByType === "object"
+  ) {
+    const groups = Object.entries(product.variationsByType)
+      .map(([type, values]) => ({
+        type,
+        options: Array.isArray(values)
+          ? values.map((opt) => String(opt || "").trim()).filter(Boolean)
+          : [],
+      }))
+      .filter((group) => group.type && group.options.length > 0);
+
+    if (groups.length > 0) return groups;
+  }
+
+  const legacyVariations = normalizeTextList(product?.variations || "");
+  if (legacyVariations.length === 0) return [];
+
+  return [{ type: "Opcao", options: legacyVariations }];
+};
+
 // --- Componente Global de Confirmação ---
 function ConfirmModal({
   isOpen,
@@ -222,6 +300,7 @@ export default function App() {
     banners: [],
     mpPublicKey: "",
     pixKey: "",
+    catalog: DEFAULT_PRODUCT_CATALOG,
     shipping: {
       pickupEnabled: true,
       correiosBaseRate: 25.0,
@@ -607,6 +686,11 @@ function StoreFront({ products, user, showToast, storeSettings }) {
   const [isAccountOpen, setIsAccountOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("Todas");
+  const [selectedSubcategory, setSelectedSubcategory] = useState("Todas");
+  const [sortBy, setSortBy] = useState("relevancia");
+  const [priceRange, setPriceRange] = useState("todos");
+  const [onlyInStock, setOnlyInStock] = useState(false);
+  const [onlyWithVariations, setOnlyWithVariations] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
 
   const isRealUser = user && !user.isAnonymous;
@@ -733,6 +817,22 @@ function StoreFront({ products, user, showToast, storeSettings }) {
     ...new Set(products.map((p) => p.category).filter(Boolean)),
   ];
 
+  const subcategories = [
+    "Todas",
+    ...new Set(
+      products
+        .filter((p) =>
+          selectedCategory === "Todas" ? true : p.category === selectedCategory,
+        )
+        .map((p) => p.subcategory)
+        .filter(Boolean),
+    ),
+  ];
+
+  const effectiveSubcategory = subcategories.includes(selectedSubcategory)
+    ? selectedSubcategory
+    : "Todas";
+
   // Adiciona ao carrinho validando o estoque
   const addToCart = (product, qty = 1) => {
     const cartItemId = product.selectedVariation
@@ -796,7 +896,39 @@ function StoreFront({ products, user, showToast, storeSettings }) {
     const matchesSearch = p.name.toLowerCase().includes(search.toLowerCase());
     const matchesCategory =
       selectedCategory === "Todas" || p.category === selectedCategory;
-    return matchesSearch && matchesCategory;
+    const matchesSubcategory =
+      effectiveSubcategory === "Todas" ||
+      p.subcategory === effectiveSubcategory;
+    const variationGroups = getProductVariationGroups(p);
+
+    const matchesPriceRange =
+      priceRange === "todos"
+        ? true
+        : priceRange === "ate_99"
+          ? Number(p.price) <= 99
+          : priceRange === "100_199"
+            ? Number(p.price) >= 100 && Number(p.price) <= 199
+            : priceRange === "200_399"
+              ? Number(p.price) >= 200 && Number(p.price) <= 399
+              : Number(p.price) >= 400;
+
+    return (
+      matchesSearch &&
+      matchesCategory &&
+      matchesSubcategory &&
+      matchesPriceRange &&
+      (!onlyInStock || Number(p.stock) > 0) &&
+      (!onlyWithVariations || variationGroups.length > 0)
+    );
+  });
+
+  const sortedProducts = [...filteredProducts].sort((a, b) => {
+    if (sortBy === "menor_preco") return Number(a.price) - Number(b.price);
+    if (sortBy === "maior_preco") return Number(b.price) - Number(a.price);
+    if (sortBy === "nome_az") {
+      return String(a.name || "").localeCompare(String(b.name || ""), "pt-BR");
+    }
+    return 0;
   });
 
   const startCheckout = () => {
@@ -813,67 +945,93 @@ function StoreFront({ products, user, showToast, storeSettings }) {
   return (
     <div className="relative min-h-[calc(100vh-36px)] pb-20 bg-slate-50/50 print:hidden">
       {/* Header */}
-      <header className="bg-slate-100 sticky top-0 z-40 border-b border-slate-200 shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 py-3 md:py-4 flex justify-between items-center gap-2">
-          <div className="flex items-center gap-2 md:gap-3">
-            {storeSettings.logo ? (
-              <img
-                src={storeSettings.logo}
-                alt="Logo da Loja"
-                className="h-10 md:h-12 w-auto object-contain"
-              />
-            ) : (
-              <div className="bg-indigo-200/50 w-10 h-10 md:w-12 md:h-12 rounded-lg flex items-center justify-center shrink-0">
-                <ShoppingBag size={24} className="text-indigo-700" />
+      <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/90 backdrop-blur-xl shadow-sm">
+        <div className="max-w-7xl mx-auto px-4 py-3 md:py-4 flex flex-col gap-4">
+          <div className="flex justify-between items-center gap-2">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-14 h-14 md:w-16 md:h-16 rounded-2xl p-1.5 bg-gradient-to-br from-amber-200 via-rose-100 to-sky-100 shadow-md shrink-0">
+                <div className="w-full h-full rounded-xl bg-white flex items-center justify-center overflow-hidden">
+                  {storeSettings.logo ? (
+                    <img
+                      src={storeSettings.logo}
+                      alt="Logo da Loja"
+                      className="w-full h-full object-contain p-1"
+                    />
+                  ) : (
+                    <ShoppingBag size={24} className="text-slate-700" />
+                  )}
+                </div>
               </div>
-            )}
-            <h1 className="text-lg sm:text-xl md:text-2xl font-bold text-slate-900 truncate">
-              {storeSettings.storeName || "Aucela Multimarcas"}
-            </h1>
-          </div>
-          <div className="flex items-center gap-2 md:gap-4 shrink-0">
-            {isRealUser ? (
-              <div className="flex items-center gap-4">
-                <span className="text-sm font-bold text-slate-700 hidden md:block">
-                  Olá, {user.email ? user.email.split("@")[0] : "Usuário"}
-                </span>
-                <button
-                  onClick={() => setIsAccountOpen(true)}
-                  className="flex items-center gap-2 text-slate-700 hover:text-indigo-600 font-bold text-sm transition bg-slate-200 hover:bg-slate-300 px-4 py-2 rounded-full"
-                  title="Minha Conta"
-                >
-                  <FileText size={18} />
-                  <span className="hidden sm:inline">Minha Conta</span>
-                </button>
-                <button
-                  onClick={() => signOut(auth)}
-                  className="text-slate-500 hover:text-rose-500 transition"
-                  title="Sair"
-                >
-                  <LogOut size={22} />
-                </button>
+              <div className="min-w-0">
+                <h1 className="text-lg sm:text-xl md:text-2xl font-black text-slate-900 truncate leading-tight">
+                  {storeSettings.storeName || "Aucela Multimarcas"}
+                </h1>
+                <p className="text-xs md:text-sm text-slate-500 font-semibold truncate">
+                  Moda, ofertas e envio rapido para todo Brasil
+                </p>
               </div>
-            ) : (
-              <button
-                onClick={() => setIsAuthModalOpen(true)}
-                className="flex items-center gap-2 text-slate-700 hover:text-indigo-600 font-bold text-sm transition bg-slate-200 hover:bg-slate-300 px-4 py-2 rounded-full"
-              >
-                <User size={18} />{" "}
-                <span className="hidden sm:inline">Entrar / Cadastrar</span>
-              </button>
-            )}
+            </div>
 
-            <button
-              onClick={() => setIsCartOpen(true)}
-              className="relative p-2.5 text-slate-700 hover:text-white hover:bg-gradient-to-r hover:from-indigo-600 hover:to-purple-600 hover:shadow-md transition-all duration-300 bg-slate-200 rounded-full hover:scale-105"
-            >
-              <ShoppingCart size={22} />
-              {cart.length > 0 && (
-                <span className="absolute -top-1 -right-1 bg-rose-500 text-white text-[11px] font-black h-5 w-5 rounded-full flex items-center justify-center shadow-md border-2 border-white ring-2 ring-rose-500/20">
-                  {cart.reduce((sum, item) => sum + item.qty, 0)}
-                </span>
+            <div className="flex items-center gap-2 md:gap-4 shrink-0">
+              {isRealUser ? (
+                <div className="flex items-center gap-4">
+                  <span className="text-sm font-bold text-slate-700 hidden md:block">
+                    Olá, {user.email ? user.email.split("@")[0] : "Usuário"}
+                  </span>
+                  <button
+                    onClick={() => setIsAccountOpen(true)}
+                    className="flex items-center gap-2 text-slate-700 hover:text-indigo-600 font-bold text-sm transition bg-slate-200 hover:bg-slate-300 px-4 py-2 rounded-full"
+                    title="Minha Conta"
+                  >
+                    <FileText size={18} />
+                    <span className="hidden sm:inline">Minha Conta</span>
+                  </button>
+                  <button
+                    onClick={() => signOut(auth)}
+                    className="text-slate-500 hover:text-rose-500 transition"
+                    title="Sair"
+                  >
+                    <LogOut size={22} />
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setIsAuthModalOpen(true)}
+                  className="flex items-center gap-2 text-slate-700 hover:text-indigo-600 font-bold text-sm transition bg-slate-200 hover:bg-slate-300 px-4 py-2 rounded-full"
+                >
+                  <User size={18} />{" "}
+                  <span className="hidden sm:inline">Entrar / Cadastrar</span>
+                </button>
               )}
-            </button>
+
+              <button
+                onClick={() => setIsCartOpen(true)}
+                className="relative p-2.5 text-slate-700 hover:text-white hover:bg-gradient-to-r hover:from-indigo-600 hover:to-purple-600 hover:shadow-md transition-all duration-300 bg-slate-200 rounded-full hover:scale-105"
+              >
+                <ShoppingCart size={22} />
+                {cart.length > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-rose-500 text-white text-[11px] font-black h-5 w-5 rounded-full flex items-center justify-center shadow-md border-2 border-white ring-2 ring-rose-500/20">
+                    {cart.reduce((sum, item) => sum + item.qty, 0)}
+                  </span>
+                )}
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 items-center">
+            <div className="relative">
+              <Search
+                className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"
+                size={20}
+              />
+              <input
+                type="text"
+                placeholder="Buscar produtos, marcas e estilos..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="w-full pl-12 pr-4 py-3 rounded-2xl bg-slate-100 text-slate-900 font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-400 border border-slate-200"
+              />
+            </div>
           </div>
         </div>
       </header>
@@ -881,57 +1039,142 @@ function StoreFront({ products, user, showToast, storeSettings }) {
       {/* Banners Carousel */}
       <BannerCarousel banners={storeSettings.banners} />
 
-      {/* Hero / Search Section */}
-      <div className="relative overflow-hidden bg-gradient-to-br from-indigo-900 via-purple-900 to-slate-900 text-white py-16 px-4 text-center border-b-[6px] border-fuchsia-500 shadow-2xl">
+      {/* Hero Section */}
+      <div className="relative overflow-hidden bg-gradient-to-r from-slate-900 via-slate-800 to-slate-700 text-white py-14 px-4 text-center border-b-[5px] border-amber-400 shadow-2xl">
         <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-10"></div>
         <div className="relative z-10">
-          <h2 className="text-3xl md:text-5xl font-black mb-4 tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white to-purple-200 drop-shadow-2xl">
-            Descubra Nossas Ofertas
+          <h2 className="text-3xl md:text-5xl font-black mb-3 tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white to-amber-100 drop-shadow-2xl">
+            Seu Estilo, Sua Vitrine
           </h2>
-          <div className="max-w-xl mx-auto relative mt-8">
-            <Search
-              className="absolute left-5 top-1/2 -translate-y-1/2 text-indigo-400"
-              size={22}
-            />
-            <input
-              type="text"
-              placeholder="Buscar produtos pelo nome..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-full pl-14 pr-6 py-4 rounded-full bg-white/95 text-slate-900 font-bold focus:outline-none focus:ring-4 focus:ring-fuchsia-400/50 transition-all duration-300 shadow-2xl text-sm md:text-base border-2 border-transparent focus:border-fuchsia-300"
-            />
-          </div>
+          <p className="text-sm md:text-base text-slate-200 max-w-2xl mx-auto">
+            Filtros rapidos, categorias inteligentes e colecoes em destaque para
+            facilitar a compra no celular e no desktop.
+          </p>
         </div>
       </div>
 
-      {/* Category Filter Scroll */}
-      {categories.length > 1 && (
-        <div className="bg-white/70 backdrop-blur-md border-b sticky top-[73px] md:top-[81px] z-30 shadow-sm border-slate-200/50">
-          <div className="max-w-7xl mx-auto px-4 py-3 flex gap-3 overflow-x-auto hide-scrollbar items-center">
-            <Filter
-              size={18}
-              className="text-indigo-400 shrink-0 mr-2 hidden sm:block drop-shadow-sm"
-            />
-            {categories.map((cat) => (
-              <button
-                key={cat}
-                onClick={() => setSelectedCategory(cat)}
-                className={`px-6 py-2.5 rounded-full whitespace-nowrap text-sm font-bold transition-all duration-300 ${
-                  selectedCategory === cat
-                    ? "bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-lg shadow-indigo-500/30 scale-105"
-                    : "bg-white text-slate-600 border border-slate-200 hover:border-indigo-300 hover:text-indigo-600 hover:bg-indigo-50/50 hover:shadow-sm"
-                }`}
-              >
-                {cat}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
       {/* Product Grid */}
       <main className="max-w-[1400px] mx-auto px-4 py-8 md:py-12">
-        {filteredProducts.length === 0 ? (
+        <div className="mb-8 bg-white border border-slate-200 rounded-3xl shadow-sm p-4 md:p-6">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+            <h3 className="text-lg md:text-xl font-black text-slate-800 flex items-center gap-2">
+              <Filter size={20} className="text-indigo-500" />
+              Funil de Filtros
+            </h3>
+            <span className="text-xs md:text-sm text-slate-500 font-semibold bg-slate-100 px-3 py-1 rounded-full">
+              {sortedProducts.length} produto(s) encontrado(s)
+            </span>
+          </div>
+
+          <div className="space-y-4">
+            {categories.length > 1 && (
+              <div>
+                <p className="text-xs font-black uppercase tracking-wider text-slate-500 mb-2">
+                  Categoria
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {categories.map((cat) => (
+                    <button
+                      key={cat}
+                      onClick={() => {
+                        setSelectedCategory(cat);
+                        setSelectedSubcategory("Todas");
+                      }}
+                      className={`px-4 py-2 rounded-full text-sm font-bold transition-all ${
+                        selectedCategory === cat
+                          ? "bg-slate-900 text-white shadow-md"
+                          : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                      }`}
+                    >
+                      {cat}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {subcategories.length > 1 && (
+              <div>
+                <p className="text-xs font-black uppercase tracking-wider text-slate-500 mb-2">
+                  Subcategoria
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {subcategories.map((sub) => (
+                    <button
+                      key={sub}
+                      onClick={() => setSelectedSubcategory(sub)}
+                      className={`px-3.5 py-1.5 rounded-full text-xs md:text-sm font-bold transition-all ${
+                        effectiveSubcategory === sub
+                          ? "bg-amber-500 text-white shadow"
+                          : "bg-amber-50 text-amber-700 hover:bg-amber-100"
+                      }`}
+                    >
+                      {sub}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3 pt-2 border-t border-slate-100">
+              <div className="md:col-span-2">
+                <label className="block text-xs font-black uppercase tracking-wider text-slate-500 mb-2">
+                  Ordenar por valor
+                </label>
+                <select
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value)}
+                  className="w-full p-2.5 border border-slate-200 rounded-xl bg-white font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-indigo-400"
+                >
+                  <option value="relevancia">Mais relevantes</option>
+                  <option value="menor_preco">Menor valor</option>
+                  <option value="maior_preco">Maior valor</option>
+                  <option value="nome_az">Nome A-Z</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-black uppercase tracking-wider text-slate-500 mb-2">
+                  Faixa de valor
+                </label>
+                <select
+                  value={priceRange}
+                  onChange={(e) => setPriceRange(e.target.value)}
+                  className="w-full p-2.5 border border-slate-200 rounded-xl bg-white font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-indigo-400"
+                >
+                  <option value="todos">Todos os valores</option>
+                  <option value="ate_99">Até R$ 99</option>
+                  <option value="100_199">R$ 100 a R$ 199</option>
+                  <option value="200_399">R$ 200 a R$ 399</option>
+                  <option value="400_plus">Acima de R$ 400</option>
+                </select>
+              </div>
+
+              <div className="flex flex-col justify-end gap-2">
+                <label className="inline-flex items-center gap-2 text-sm font-semibold text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={onlyInStock}
+                    onChange={(e) => setOnlyInStock(e.target.checked)}
+                    className="w-4 h-4 rounded border-slate-300 text-indigo-600"
+                  />
+                  Somente em estoque
+                </label>
+                <label className="inline-flex items-center gap-2 text-sm font-semibold text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={onlyWithVariations}
+                    onChange={(e) => setOnlyWithVariations(e.target.checked)}
+                    className="w-4 h-4 rounded border-slate-300 text-indigo-600"
+                  />
+                  Com variações
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {sortedProducts.length === 0 ? (
           <div className="text-center py-24 bg-white/50 backdrop-blur rounded-3xl border border-slate-200/50 shadow-sm mt-8 max-w-2xl mx-auto">
             <Package
               size={64}
@@ -946,7 +1189,7 @@ function StoreFront({ products, user, showToast, storeSettings }) {
           </div>
         ) : (
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-5 md:gap-8">
-            {filteredProducts.map((product) => (
+            {sortedProducts.map((product) => (
               <div
                 key={product.id}
                 onClick={() => setSelectedProduct(product)}
@@ -971,7 +1214,9 @@ function StoreFront({ products, user, showToast, storeSettings }) {
                   {/* Etiqueta de Categoria */}
                   {product.category && (
                     <span className="absolute top-4 left-4 bg-white/90 backdrop-blur-md text-indigo-700 text-[10px] font-black px-3 py-1.5 rounded-xl border border-white shadow-sm uppercase tracking-wider z-20">
-                      {product.category}
+                      {product.subcategory
+                        ? `${product.category} / ${product.subcategory}`
+                        : product.category}
                     </span>
                   )}
                   {/* Etiqueta Esgotado */}
@@ -1002,7 +1247,7 @@ function StoreFront({ products, user, showToast, storeSettings }) {
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        if (product.variations) {
+                        if (getProductVariationGroups(product).length > 0) {
                           setSelectedProduct(product);
                         } else {
                           addToCart(product);
@@ -1323,13 +1568,7 @@ function CustomerAccountModal({ user, userProfile, orders, close, showToast }) {
 
 // 1.0.5 Product Details Modal
 function ProductModal({ product, close, addToCart }) {
-  // Converte a string de variedades (ex: "P, M, G") num array
-  const variations = product.variations
-    ? product.variations
-        .split(",")
-        .map((v) => v.trim())
-        .filter(Boolean)
-    : [];
+  const variationGroups = getProductVariationGroups(product);
 
   const images =
     product.images?.length > 0
@@ -1338,15 +1577,39 @@ function ProductModal({ product, close, addToCart }) {
         ? [product.image]
         : [];
 
-  const [selectedVariation, setSelectedVariation] = useState(
-    variations.length > 0 ? variations[0] : "",
+  const [selectedVariations, setSelectedVariations] = useState(() =>
+    variationGroups.reduce((acc, group) => {
+      acc[group.type] = group.options[0] || "";
+      return acc;
+    }, {}),
   );
   const [qty, setQty] = useState(1);
   const [currentImgIndex, setCurrentImgIndex] = useState(0);
 
+  const selectedVariationLabel = variationGroups
+    .map((group) => {
+      const selected = selectedVariations[group.type] || "";
+      return selected ? `${group.type}: ${selected}` : "";
+    })
+    .filter(Boolean)
+    .join(" | ");
+
   const handleAdd = () => {
-    if (variations.length > 0 && !selectedVariation) return;
-    addToCart({ ...product, selectedVariation, image: images[0] || "" }, qty);
+    const hasMissingSelection = variationGroups.some(
+      (group) => !selectedVariations[group.type],
+    );
+
+    if (hasMissingSelection) return;
+
+    addToCart(
+      {
+        ...product,
+        selectedVariation: selectedVariationLabel,
+        selectedVariationMap: selectedVariations,
+        image: images[0] || "",
+      },
+      qty,
+    );
     close();
   };
 
@@ -1377,7 +1640,9 @@ function ProductModal({ product, close, addToCart }) {
             )}
             {product.category && (
               <span className="absolute top-4 left-4 bg-white/90 backdrop-blur-md text-indigo-700 text-xs font-black px-3 py-1.5 rounded-xl border border-white shadow-sm uppercase tracking-wider z-10">
-                {product.category}
+                {product.subcategory
+                  ? `${product.category} / ${product.subcategory}`
+                  : product.category}
               </span>
             )}
           </div>
@@ -1420,24 +1685,38 @@ function ProductModal({ product, close, addToCart }) {
             </div>
 
             {/* Variedades (Tamanhos/Cores) */}
-            {variations.length > 0 && (
+            {variationGroups.length > 0 && (
               <div className="mb-6">
                 <span className="block text-sm font-bold text-slate-800 mb-3 uppercase tracking-wider">
-                  Selecione uma opção:
+                  Selecione as variações:
                 </span>
-                <div className="flex flex-wrap gap-2">
-                  {variations.map((variation) => (
-                    <button
-                      key={variation}
-                      onClick={() => setSelectedVariation(variation)}
-                      className={`px-4 py-2 rounded-xl font-bold text-sm transition-all duration-200 border-2 ${
-                        selectedVariation === variation
-                          ? "border-indigo-600 bg-indigo-50 text-indigo-700 shadow-sm"
-                          : "border-slate-200 text-slate-600 hover:border-indigo-300"
-                      }`}
-                    >
-                      {variation}
-                    </button>
+                <div className="space-y-4">
+                  {variationGroups.map((group) => (
+                    <div key={group.type}>
+                      <span className="block text-xs font-black text-slate-500 uppercase tracking-widest mb-2">
+                        {group.type}
+                      </span>
+                      <div className="flex flex-wrap gap-2">
+                        {group.options.map((option) => (
+                          <button
+                            key={`${group.type}-${option}`}
+                            onClick={() =>
+                              setSelectedVariations((prev) => ({
+                                ...prev,
+                                [group.type]: option,
+                              }))
+                            }
+                            className={`px-4 py-2 rounded-xl font-bold text-sm transition-all duration-200 border-2 ${
+                              selectedVariations[group.type] === option
+                                ? "border-indigo-600 bg-indigo-50 text-indigo-700 shadow-sm"
+                                : "border-slate-200 text-slate-600 hover:border-indigo-300"
+                            }`}
+                          >
+                            {option}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                   ))}
                 </div>
               </div>
@@ -3019,7 +3298,11 @@ function AdminDashboard({
         </div>
         <div className={activeTab !== "products" ? "print:hidden" : ""}>
           {activeTab === "products" && (
-            <ProductManager products={products} showToast={showToast} />
+            <ProductManager
+              products={products}
+              showToast={showToast}
+              storeSettings={storeSettings}
+            />
           )}
         </div>
         <div className={activeTab !== "pos" ? "print:hidden" : ""}>
@@ -3117,7 +3400,7 @@ function StatCard({ title, value, icon, color }) {
   );
 }
 
-function ProductManager({ products, showToast }) {
+function ProductManager({ products, showToast, storeSettings }) {
   const [isAdding, setIsAdding] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [productToDelete, setProductToDelete] = useState(null); // Estado para o modal de confirmação
@@ -3125,11 +3408,35 @@ function ProductManager({ products, showToast }) {
     name: "",
     price: "",
     category: "",
+    subcategory: "",
     description: "",
     stock: "",
     images: [],
     variations: "",
+    variationsByType: {},
   });
+
+  const productCatalog = useMemo(
+    () => normalizeCatalog(storeSettings?.catalog),
+    [storeSettings?.catalog],
+  );
+
+  const availableSubcategories = useMemo(() => {
+    const selected = productCatalog.categories.find(
+      (cat) => cat.name === formData.category,
+    );
+    return selected?.subcategories || [];
+  }, [formData.category, productCatalog.categories]);
+
+  const getInitialVariationMap = (product = {}) => {
+    const groups = getProductVariationGroups(product);
+    if (groups.length === 0) return {};
+
+    return groups.reduce((acc, group) => {
+      acc[group.type] = group.options.join(", ");
+      return acc;
+    }, {});
+  };
 
   const handleImageChange = async (e) => {
     const files = Array.from(e.target.files);
@@ -3176,13 +3483,57 @@ function ProductManager({ products, showToast }) {
     });
   };
 
+  const moveImage = (index, direction) => {
+    setFormData((prev) => {
+      const imgs = [...(prev.images || [])];
+      const targetIndex = index + direction;
+      if (targetIndex < 0 || targetIndex >= imgs.length) return prev;
+
+      [imgs[index], imgs[targetIndex]] = [imgs[targetIndex], imgs[index]];
+      return { ...prev, images: imgs };
+    });
+  };
+
+  const setPrimaryImage = (index) => {
+    setFormData((prev) => {
+      const imgs = [...(prev.images || [])];
+      if (index < 0 || index >= imgs.length) return prev;
+      const [selected] = imgs.splice(index, 1);
+      imgs.unshift(selected);
+      return { ...prev, images: imgs };
+    });
+  };
+
+  const handleVariationTypeChange = (typeName, value) => {
+    setFormData((prev) => ({
+      ...prev,
+      variationsByType: {
+        ...(prev.variationsByType || {}),
+        [typeName]: value,
+      },
+    }));
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
+      const normalizedVariationMap = Object.fromEntries(
+        Object.entries(formData.variationsByType || {})
+          .map(([type, values]) => [type, normalizeTextList(values)])
+          .filter(([type, values]) => type && values.length > 0),
+      );
+
+      const flattenedVariations = Object.values(normalizedVariationMap)
+        .flat()
+        .join(", ");
+
       const productData = {
         ...formData,
         price: Number(formData.price),
         stock: Number(formData.stock),
+        subcategory: formData.subcategory || "",
+        variationsByType: normalizedVariationMap,
+        variations: flattenedVariations,
         image: formData.images?.[0] || "", // Mantém compatibilidade com dados antigos
       };
 
@@ -3211,10 +3562,12 @@ function ProductManager({ products, showToast }) {
       name: product.name || "",
       price: product.price || "",
       category: product.category || "",
+      subcategory: product.subcategory || "",
       description: product.description || "",
       stock: product.stock || "",
       images: product.images || (product.image ? [product.image] : []),
       variations: product.variations || "",
+      variationsByType: getInitialVariationMap(product),
     });
     setEditingId(product.id);
     setIsAdding(true);
@@ -3248,10 +3601,12 @@ function ProductManager({ products, showToast }) {
       name: "",
       price: "",
       category: "",
+      subcategory: "",
       description: "",
       stock: "",
       images: [],
       variations: "",
+      variationsByType: {},
     });
   };
 
@@ -3271,6 +3626,12 @@ function ProductManager({ products, showToast }) {
             <label className="text-sm font-bold text-slate-700">
               Imagens do Produto
             </label>
+            {(formData.images || []).length > 1 && (
+              <p className="text-xs text-slate-500">
+                A primeira imagem e a capa do produto. Use as setas para
+                ordenar.
+              </p>
+            )}
             <div className="flex flex-wrap gap-3">
               {(formData.images || []).map((imgBase64, idx) => (
                 <div
@@ -3282,6 +3643,48 @@ function ProductManager({ products, showToast }) {
                     alt={`Upload ${idx}`}
                     className="w-full h-full object-cover"
                   />
+
+                  <div className="absolute bottom-1 left-1 flex items-center gap-1">
+                    <span className="bg-black/60 text-white text-[10px] px-1.5 py-0.5 rounded">
+                      {idx + 1}
+                    </span>
+                    {idx === 0 && (
+                      <span className="bg-emerald-600/90 text-white text-[10px] px-1.5 py-0.5 rounded font-bold">
+                        CAPA
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="absolute top-1 left-1 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button
+                      type="button"
+                      onClick={() => moveImage(idx, -1)}
+                      disabled={idx === 0}
+                      className="bg-white/90 text-slate-700 disabled:text-slate-300 p-1 rounded-md shadow"
+                      title="Mover para a esquerda"
+                    >
+                      <ChevronLeft size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => moveImage(idx, 1)}
+                      disabled={idx === (formData.images || []).length - 1}
+                      className="bg-white/90 text-slate-700 disabled:text-slate-300 p-1 rounded-md shadow"
+                      title="Mover para a direita"
+                    >
+                      <ChevronRight size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPrimaryImage(idx)}
+                      disabled={idx === 0}
+                      className="bg-indigo-600/90 text-white disabled:bg-indigo-300 p-1.5 rounded-md shadow text-[10px] font-bold"
+                      title="Definir como capa"
+                    >
+                      Capa
+                    </button>
+                  </div>
+
                   <button
                     type="button"
                     onClick={() => removeImage(idx)}
@@ -3319,15 +3722,47 @@ function ProductManager({ products, showToast }) {
             />
 
             <div className="flex flex-col">
-              <input
+              <select
                 required
-                placeholder="Categoria (ex: Camisetas)"
                 value={formData.category}
                 onChange={(e) =>
-                  setFormData({ ...formData, category: e.target.value })
+                  setFormData({
+                    ...formData,
+                    category: e.target.value,
+                    subcategory: "",
+                  })
                 }
-                className="p-3 border rounded-lg outline-none focus:border-indigo-400"
-              />
+                className="p-3 border rounded-lg outline-none focus:border-indigo-400 bg-white"
+              >
+                <option value="">Selecione a categoria</option>
+                {productCatalog.categories.map((category) => (
+                  <option key={category.name} value={category.name}>
+                    {category.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex flex-col">
+              <select
+                value={formData.subcategory}
+                onChange={(e) =>
+                  setFormData({ ...formData, subcategory: e.target.value })
+                }
+                className="p-3 border rounded-lg outline-none focus:border-indigo-400 bg-white"
+                disabled={availableSubcategories.length === 0}
+              >
+                <option value="">
+                  {availableSubcategories.length > 0
+                    ? "Selecione a subcategoria"
+                    : "Sem subcategorias nessa categoria"}
+                </option>
+                {availableSubcategories.map((subcategory) => (
+                  <option key={subcategory} value={subcategory}>
+                    {subcategory}
+                  </option>
+                ))}
+              </select>
             </div>
 
             <div className="flex flex-col">
@@ -3357,15 +3792,48 @@ function ProductManager({ products, showToast }) {
               />
             </div>
 
-            <div className="flex flex-col md:col-span-2">
-              <input
-                placeholder="Variedades (Tamanhos/Cores) - Separe por vírgula. Ex: P, M, G ou Azul, Preto"
-                value={formData.variations}
-                onChange={(e) =>
-                  setFormData({ ...formData, variations: e.target.value })
-                }
-                className="p-3 border rounded-lg outline-none focus:border-indigo-400"
-              />
+            <div className="md:col-span-2 space-y-3 p-4 rounded-xl border border-slate-200 bg-slate-50">
+              <div className="flex items-center justify-between gap-3">
+                <h4 className="text-sm font-black text-slate-700 uppercase tracking-wider">
+                  Variações do Produto
+                </h4>
+                <span className="text-xs text-slate-500 font-semibold">
+                  Definidas em Configurações do Admin
+                </span>
+              </div>
+
+              {productCatalog.variationTypes.length === 0 ? (
+                <p className="text-sm text-slate-500">
+                  Nenhum tipo de variação configurado. Cadastre em Configurações
+                  para habilitar Tamanho, Cor, etc.
+                </p>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {productCatalog.variationTypes.map((variationType) => (
+                    <div
+                      key={variationType.name}
+                      className="flex flex-col gap-1"
+                    >
+                      <label className="text-xs font-black text-slate-500 uppercase tracking-wider">
+                        {variationType.name}
+                      </label>
+                      <input
+                        placeholder={`Ex: ${variationType.options.join(", ")}`}
+                        value={
+                          formData.variationsByType?.[variationType.name] || ""
+                        }
+                        onChange={(e) =>
+                          handleVariationTypeChange(
+                            variationType.name,
+                            e.target.value,
+                          )
+                        }
+                        className="p-3 border rounded-lg outline-none focus:border-indigo-400 bg-white"
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             <textarea
@@ -3406,6 +3874,7 @@ function ProductManager({ products, showToast }) {
             <tr className="border-b">
               <th className="p-4">Produto</th>
               <th className="p-4">Categoria</th>
+              <th className="p-4">Subcategoria</th>
               <th className="p-4">Preço</th>
               <th className="p-4">Estoque</th>
               <th className="p-4 text-right">Ação</th>
@@ -3428,6 +3897,11 @@ function ProductManager({ products, showToast }) {
                 <td className="p-4">
                   <span className="bg-slate-100 text-slate-600 px-2 py-1 rounded text-xs font-semibold">
                     {p.category || "N/A"}
+                  </span>
+                </td>
+                <td className="p-4">
+                  <span className="bg-amber-50 text-amber-700 px-2 py-1 rounded text-xs font-semibold border border-amber-100">
+                    {p.subcategory || "-"}
                   </span>
                 </td>
                 <td className="p-4 text-indigo-600 font-bold">
@@ -3456,7 +3930,7 @@ function ProductManager({ products, showToast }) {
             ))}
             {products.length === 0 && (
               <tr>
-                <td colSpan="5" className="p-8 text-center text-slate-400">
+                <td colSpan="6" className="p-8 text-center text-slate-400">
                   Nenhum produto cadastrado.
                 </td>
               </tr>
@@ -4746,6 +5220,7 @@ function AdminSettings({ showToast, storeSettings }) {
     banners: [],
     mpPublicKey: "",
     pixKey: "",
+    catalog: DEFAULT_PRODUCT_CATALOG,
     shipping: {
       pickupEnabled: true,
       correiosBaseRate: 25.0,
@@ -4754,6 +5229,24 @@ function AdminSettings({ showToast, storeSettings }) {
   });
   const [isUploading, setIsUploading] = useState(false);
   const [newCity, setNewCity] = useState({ name: "", state: "", rate: "" });
+  const [newCategory, setNewCategory] = useState({
+    name: "",
+    subcategories: "",
+  });
+  const [editingCategoryName, setEditingCategoryName] = useState("");
+  const [editCategoryDraft, setEditCategoryDraft] = useState({
+    name: "",
+    subcategories: "",
+  });
+  const [newVariationType, setNewVariationType] = useState({
+    name: "",
+    options: "",
+  });
+  const [editingVariationTypeName, setEditingVariationTypeName] = useState("");
+  const [editVariationTypeDraft, setEditVariationTypeDraft] = useState({
+    name: "",
+    options: "",
+  });
 
   // Carrega as configurações globais para o formulário local
   useEffect(() => {
@@ -4761,6 +5254,7 @@ function AdminSettings({ showToast, storeSettings }) {
       setConfig((prev) => ({
         ...prev,
         ...storeSettings,
+        catalog: normalizeCatalog(storeSettings.catalog),
         shipping: storeSettings.shipping || {
           pickupEnabled: true,
           correiosBaseRate: 25.0,
@@ -4842,6 +5336,184 @@ function AdminSettings({ showToast, storeSettings }) {
       ...config,
       shipping: { ...config.shipping, localCities: updatedCities },
     });
+  };
+
+  const handleAddCategory = () => {
+    const name = String(newCategory.name || "").trim();
+    if (!name) {
+      return showToast("Informe o nome da categoria", "error");
+    }
+
+    const subcategories = normalizeTextList(newCategory.subcategories);
+    const alreadyExists = (config.catalog?.categories || []).some(
+      (item) => item.name.toLowerCase() === name.toLowerCase(),
+    );
+
+    if (alreadyExists) {
+      return showToast("Categoria já existe", "error");
+    }
+
+    setConfig((prev) => ({
+      ...prev,
+      catalog: {
+        ...normalizeCatalog(prev.catalog),
+        categories: [
+          ...(prev.catalog?.categories || []),
+          { name, subcategories },
+        ],
+      },
+    }));
+    setNewCategory({ name: "", subcategories: "" });
+  };
+
+  const handleRemoveCategory = (name) => {
+    setConfig((prev) => ({
+      ...prev,
+      catalog: {
+        ...normalizeCatalog(prev.catalog),
+        categories: (prev.catalog?.categories || []).filter(
+          (item) => item.name !== name,
+        ),
+      },
+    }));
+  };
+
+  const handleStartEditCategory = (category) => {
+    setEditingCategoryName(category.name);
+    setEditCategoryDraft({
+      name: category.name,
+      subcategories: (category.subcategories || []).join(", "),
+    });
+  };
+
+  const handleCancelEditCategory = () => {
+    setEditingCategoryName("");
+    setEditCategoryDraft({ name: "", subcategories: "" });
+  };
+
+  const handleSaveCategoryEdit = () => {
+    const nextName = String(editCategoryDraft.name || "").trim();
+    if (!nextName) {
+      return showToast("Nome da categoria é obrigatório", "error");
+    }
+
+    const hasDuplicatedName = (config.catalog?.categories || []).some(
+      (item) =>
+        item.name.toLowerCase() === nextName.toLowerCase() &&
+        item.name !== editingCategoryName,
+    );
+
+    if (hasDuplicatedName) {
+      return showToast("Já existe outra categoria com esse nome", "error");
+    }
+
+    setConfig((prev) => ({
+      ...prev,
+      catalog: {
+        ...normalizeCatalog(prev.catalog),
+        categories: (prev.catalog?.categories || []).map((item) =>
+          item.name === editingCategoryName
+            ? {
+                name: nextName,
+                subcategories: normalizeTextList(
+                  editCategoryDraft.subcategories,
+                ),
+              }
+            : item,
+        ),
+      },
+    }));
+
+    handleCancelEditCategory();
+    showToast("Categoria atualizada!");
+  };
+
+  const handleAddVariationType = () => {
+    const name = String(newVariationType.name || "").trim();
+    if (!name) {
+      return showToast("Informe o tipo de variação", "error");
+    }
+
+    const options = normalizeTextList(newVariationType.options);
+    const alreadyExists = (config.catalog?.variationTypes || []).some(
+      (item) => item.name.toLowerCase() === name.toLowerCase(),
+    );
+
+    if (alreadyExists) {
+      return showToast("Tipo de variação já existe", "error");
+    }
+
+    setConfig((prev) => ({
+      ...prev,
+      catalog: {
+        ...normalizeCatalog(prev.catalog),
+        variationTypes: [
+          ...(prev.catalog?.variationTypes || []),
+          { name, options },
+        ],
+      },
+    }));
+    setNewVariationType({ name: "", options: "" });
+  };
+
+  const handleRemoveVariationType = (name) => {
+    setConfig((prev) => ({
+      ...prev,
+      catalog: {
+        ...normalizeCatalog(prev.catalog),
+        variationTypes: (prev.catalog?.variationTypes || []).filter(
+          (item) => item.name !== name,
+        ),
+      },
+    }));
+  };
+
+  const handleStartEditVariationType = (variationType) => {
+    setEditingVariationTypeName(variationType.name);
+    setEditVariationTypeDraft({
+      name: variationType.name,
+      options: (variationType.options || []).join(", "),
+    });
+  };
+
+  const handleCancelEditVariationType = () => {
+    setEditingVariationTypeName("");
+    setEditVariationTypeDraft({ name: "", options: "" });
+  };
+
+  const handleSaveVariationTypeEdit = () => {
+    const nextName = String(editVariationTypeDraft.name || "").trim();
+    if (!nextName) {
+      return showToast("Nome do tipo de variação é obrigatório", "error");
+    }
+
+    const hasDuplicatedName = (config.catalog?.variationTypes || []).some(
+      (item) =>
+        item.name.toLowerCase() === nextName.toLowerCase() &&
+        item.name !== editingVariationTypeName,
+    );
+
+    if (hasDuplicatedName) {
+      return showToast("Já existe outro tipo com esse nome", "error");
+    }
+
+    setConfig((prev) => ({
+      ...prev,
+      catalog: {
+        ...normalizeCatalog(prev.catalog),
+        variationTypes: (prev.catalog?.variationTypes || []).map((item) =>
+          item.name === editingVariationTypeName
+            ? {
+                name: nextName,
+                options: normalizeTextList(editVariationTypeDraft.options),
+              }
+            : item,
+        ),
+      },
+    }));
+
+    handleCancelEditVariationType();
+    showToast("Tipo de variação atualizado!");
   };
 
   const saveSettings = async (e) => {
@@ -4965,6 +5637,266 @@ function AdminSettings({ showToast, storeSettings }) {
                   disabled={isUploading}
                 />
               </label>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Catálogo de Produtos */}
+      <div className="space-y-6">
+        <h3 className="font-semibold text-lg border-b pb-2 text-slate-700">
+          Catálogo de Produtos
+        </h3>
+
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
+          <div className="space-y-4">
+            <h4 className="text-sm font-black uppercase tracking-wider text-slate-600">
+              Tabela de Categorias e Subcategorias
+            </h4>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 bg-slate-50 p-3 rounded-xl border border-slate-200">
+              <input
+                placeholder="Categoria"
+                className="p-2.5 border rounded-lg text-sm outline-none"
+                value={newCategory.name}
+                onChange={(e) =>
+                  setNewCategory({ ...newCategory, name: e.target.value })
+                }
+              />
+              <input
+                placeholder="Subcategorias (virgula)"
+                className="sm:col-span-2 p-2.5 border rounded-lg text-sm outline-none"
+                value={newCategory.subcategories}
+                onChange={(e) =>
+                  setNewCategory({
+                    ...newCategory,
+                    subcategories: e.target.value,
+                  })
+                }
+              />
+              <button
+                onClick={handleAddCategory}
+                className="sm:col-span-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 rounded-lg"
+              >
+                Adicionar Categoria
+              </button>
+            </div>
+
+            <div className="overflow-auto border border-slate-200 rounded-xl">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-100 text-slate-600">
+                  <tr>
+                    <th className="text-left p-3">Categoria</th>
+                    <th className="text-left p-3">Subcategorias</th>
+                    <th className="text-right p-3">Ação</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 bg-white">
+                  {(config.catalog?.categories || []).map((category) => (
+                    <tr key={category.name}>
+                      <td className="p-3 font-semibold text-slate-700">
+                        {editingCategoryName === category.name ? (
+                          <input
+                            value={editCategoryDraft.name}
+                            onChange={(e) =>
+                              setEditCategoryDraft((prev) => ({
+                                ...prev,
+                                name: e.target.value,
+                              }))
+                            }
+                            className="w-full p-2 border border-slate-200 rounded-lg text-sm outline-none"
+                          />
+                        ) : (
+                          category.name
+                        )}
+                      </td>
+                      <td className="p-3 text-slate-600">
+                        {editingCategoryName === category.name ? (
+                          <input
+                            value={editCategoryDraft.subcategories}
+                            onChange={(e) =>
+                              setEditCategoryDraft((prev) => ({
+                                ...prev,
+                                subcategories: e.target.value,
+                              }))
+                            }
+                            placeholder="Subcategorias separadas por vírgula"
+                            className="w-full p-2 border border-slate-200 rounded-lg text-sm outline-none"
+                          />
+                        ) : (
+                          category.subcategories?.join(", ") || "-"
+                        )}
+                      </td>
+                      <td className="p-3">
+                        <div className="flex items-center justify-end gap-2">
+                          {editingCategoryName === category.name ? (
+                            <>
+                              <button
+                                onClick={handleSaveCategoryEdit}
+                                className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold"
+                              >
+                                Salvar
+                              </button>
+                              <button
+                                onClick={handleCancelEditCategory}
+                                className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold"
+                              >
+                                Cancelar
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <button
+                                onClick={() =>
+                                  handleStartEditCategory(category)
+                                }
+                                className="px-3 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold"
+                              >
+                                Editar
+                              </button>
+                              <button
+                                onClick={() =>
+                                  handleRemoveCategory(category.name)
+                                }
+                                className="px-3 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold"
+                              >
+                                Remover
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <h4 className="text-sm font-black uppercase tracking-wider text-slate-600">
+              Tipos de Variação (Tamanho, Cor, etc.)
+            </h4>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 bg-slate-50 p-3 rounded-xl border border-slate-200">
+              <input
+                placeholder="Tipo (ex: Tamanho)"
+                className="p-2.5 border rounded-lg text-sm outline-none"
+                value={newVariationType.name}
+                onChange={(e) =>
+                  setNewVariationType({
+                    ...newVariationType,
+                    name: e.target.value,
+                  })
+                }
+              />
+              <input
+                placeholder="Opções (P, M, G...)"
+                className="sm:col-span-2 p-2.5 border rounded-lg text-sm outline-none"
+                value={newVariationType.options}
+                onChange={(e) =>
+                  setNewVariationType({
+                    ...newVariationType,
+                    options: e.target.value,
+                  })
+                }
+              />
+              <button
+                onClick={handleAddVariationType}
+                className="sm:col-span-3 bg-slate-800 hover:bg-slate-700 text-white font-bold py-2 rounded-lg"
+              >
+                Adicionar Tipo de Variação
+              </button>
+            </div>
+
+            <div className="overflow-auto border border-slate-200 rounded-xl">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-100 text-slate-600">
+                  <tr>
+                    <th className="text-left p-3">Tipo</th>
+                    <th className="text-left p-3">Opções</th>
+                    <th className="text-right p-3">Ação</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 bg-white">
+                  {(config.catalog?.variationTypes || []).map((item) => (
+                    <tr key={item.name}>
+                      <td className="p-3 font-semibold text-slate-700">
+                        {editingVariationTypeName === item.name ? (
+                          <input
+                            value={editVariationTypeDraft.name}
+                            onChange={(e) =>
+                              setEditVariationTypeDraft((prev) => ({
+                                ...prev,
+                                name: e.target.value,
+                              }))
+                            }
+                            className="w-full p-2 border border-slate-200 rounded-lg text-sm outline-none"
+                          />
+                        ) : (
+                          item.name
+                        )}
+                      </td>
+                      <td className="p-3 text-slate-600">
+                        {editingVariationTypeName === item.name ? (
+                          <input
+                            value={editVariationTypeDraft.options}
+                            onChange={(e) =>
+                              setEditVariationTypeDraft((prev) => ({
+                                ...prev,
+                                options: e.target.value,
+                              }))
+                            }
+                            placeholder="Opções separadas por vírgula"
+                            className="w-full p-2 border border-slate-200 rounded-lg text-sm outline-none"
+                          />
+                        ) : (
+                          item.options?.join(", ") || "-"
+                        )}
+                      </td>
+                      <td className="p-3">
+                        <div className="flex items-center justify-end gap-2">
+                          {editingVariationTypeName === item.name ? (
+                            <>
+                              <button
+                                onClick={handleSaveVariationTypeEdit}
+                                className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold"
+                              >
+                                Salvar
+                              </button>
+                              <button
+                                onClick={handleCancelEditVariationType}
+                                className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold"
+                              >
+                                Cancelar
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <button
+                                onClick={() =>
+                                  handleStartEditVariationType(item)
+                                }
+                                className="px-3 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold"
+                              >
+                                Editar
+                              </button>
+                              <button
+                                onClick={() =>
+                                  handleRemoveVariationType(item.name)
+                                }
+                                className="px-3 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold"
+                              >
+                                Remover
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
         </div>
