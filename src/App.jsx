@@ -118,6 +118,162 @@ const maskPhone = (value) => {
   return v.replace(/(\d{2})(\d{5})(\d{4}).*/, "($1) $2-$3");
 };
 
+const normalizePhoneDigits = (value) => String(value || "").replace(/\D/g, "");
+
+const formatContactPhone = (value) => {
+  const digits = normalizePhoneDigits(value);
+  if (digits.length === 11) {
+    return `(${digits.slice(0, 2)}) ${digits.slice(2, 3)} ${digits.slice(3, 7)}-${digits.slice(7, 11)}`;
+  }
+  if (digits.length === 10) {
+    return `(${digits.slice(0, 2)}) ${digits.slice(2, 6)}-${digits.slice(6, 10)}`;
+  }
+  return String(value || "").trim();
+};
+
+function InstagramBrandIcon({ size = 16, className = "" }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      className={className}
+      aria-hidden="true"
+    >
+      <rect
+        x="3"
+        y="3"
+        width="18"
+        height="18"
+        rx="6"
+        stroke="currentColor"
+        strokeWidth="2"
+      />
+      <circle cx="12" cy="12" r="4" stroke="currentColor" strokeWidth="2" />
+      <circle cx="17.5" cy="6.5" r="1.3" fill="currentColor" />
+    </svg>
+  );
+}
+
+function FacebookBrandIcon({ size = 16, className = "" }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      className={className}
+      aria-hidden="true"
+    >
+      <path
+        d="M13.8 21V13.4H16.3L16.7 10.4H13.8V8.5C13.8 7.63 14.05 7.03 15.3 7.03H16.8V4.34C16.07 4.25 15.34 4.2 14.61 4.2C12.44 4.2 10.95 5.53 10.95 7.97V10.4H8.7V13.4H10.95V21H13.8Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
+function YouTubeBrandIcon({ size = 16, className = "" }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      className={className}
+      aria-hidden="true"
+    >
+      <rect
+        x="3"
+        y="6"
+        width="18"
+        height="12"
+        rx="4"
+        stroke="currentColor"
+        strokeWidth="2"
+      />
+      <path d="M10 9.7L15 12L10 14.3V9.7Z" fill="currentColor" />
+    </svg>
+  );
+}
+
+function TikTokBrandIcon({ size = 16, className = "" }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      className={className}
+      aria-hidden="true"
+    >
+      <path
+        d="M14 4V12.5C14 14.43 12.43 16 10.5 16C8.57 16 7 14.43 7 12.5C7 10.57 8.57 9 10.5 9C10.86 9 11.2 9.05 11.53 9.16V11.4C11.24 11.19 10.88 11.06 10.5 11.06C9.71 11.06 9.06 11.71 9.06 12.5C9.06 13.29 9.71 13.94 10.5 13.94C11.29 13.94 11.94 13.29 11.94 12.5V4H14ZM17.93 7.37C17.04 6.69 16.4 5.7 16.16 4.56H14.02C14.3 6.49 15.57 8.14 17.35 8.98C17.53 9.06 17.72 9.14 17.93 9.2V7.37Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
+const getRouteFromLocation = () => {
+  const path = String(window.location.pathname || "").toLowerCase();
+  const hash = String(window.location.hash || "")
+    .replace(/^#/, "")
+    .toLowerCase();
+
+  if (path === "/admin") return "admin";
+  if (hash === "/admin" || hash === "admin") return "admin";
+
+  return "store";
+};
+
+const normalizePhoneList = (value) => {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item || "").trim()).filter(Boolean);
+  }
+
+  return String(value || "")
+    .split(/\n|,/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+};
+
+const normalizeSocialLinks = (value) => {
+  const links = value && typeof value === "object" ? value : {};
+  return {
+    whatsapp: String(links.whatsapp || "").trim(),
+    instagram: String(links.instagram || "").trim(),
+    facebook: String(links.facebook || "").trim(),
+    youtube: String(links.youtube || "").trim(),
+    tiktok: String(links.tiktok || "").trim(),
+  };
+};
+
+const resolveSocialUrl = (platform, value) => {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (/^https?:\/\//i.test(raw)) return raw;
+
+  const cleaned = raw.replace(/^@/, "").replace(/^\/+/, "");
+  switch (platform) {
+    case "instagram":
+      return `https://instagram.com/${cleaned}`;
+    case "facebook":
+      return `https://facebook.com/${cleaned}`;
+    case "youtube":
+      return `https://youtube.com/${cleaned}`;
+    case "tiktok":
+      return `https://tiktok.com/@${cleaned.replace(/^@/, "")}`;
+    default:
+      return `https://${cleaned}`;
+  }
+};
+
 const sanitizePixText = (value, maxLength) =>
   String(value || "")
     .normalize("NFD")
@@ -467,6 +623,15 @@ export default function App() {
     storeTagline: "",
     logo: "",
     banners: [],
+    footerDescription: "",
+    contactPhones: [],
+    socialLinks: {
+      whatsapp: "",
+      instagram: "",
+      facebook: "",
+      youtube: "",
+      tiktok: "",
+    },
     mpPublicKey: "",
     pixKey: "",
     catalog: DEFAULT_PRODUCT_CATALOG,
@@ -490,18 +655,19 @@ export default function App() {
   */
 
   // Simples Hash Router
-  const [currentRoute, setCurrentRoute] = useState(
-    window.location.hash || "#/",
-  );
+  const [currentRoute, setCurrentRoute] = useState(getRouteFromLocation());
 
   useEffect(() => {
-    const handleHashChange = () =>
-      setCurrentRoute(window.location.hash || "#/");
-    window.addEventListener("hashchange", handleHashChange);
-    return () => window.removeEventListener("hashchange", handleHashChange);
+    const syncRoute = () => setCurrentRoute(getRouteFromLocation());
+    window.addEventListener("hashchange", syncRoute);
+    window.addEventListener("popstate", syncRoute);
+    return () => {
+      window.removeEventListener("hashchange", syncRoute);
+      window.removeEventListener("popstate", syncRoute);
+    };
   }, []);
 
-  const isAdminRoute = currentRoute === "#/admin";
+  const isAdminRoute = currentRoute === "admin";
 
   useEffect(() => {
     const savedSession = sessionStorage.getItem(ADMIN_SESSION_KEY);
@@ -745,6 +911,12 @@ export default function App() {
           to { transform: translateY(0); opacity: 1; }
         }
         .animate-slide-down { animation: slide-down 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+
+        @keyframes whatsapp-float-pulse {
+          0% { transform: translateY(0) scale(1); filter: drop-shadow(0 10px 16px rgba(16, 185, 129, 0.22)); }
+          50% { transform: translateY(-3px) scale(1.035); filter: drop-shadow(0 16px 28px rgba(16, 185, 129, 0.35)); }
+          100% { transform: translateY(0) scale(1); filter: drop-shadow(0 10px 16px rgba(16, 185, 129, 0.22)); }
+        }
         
         @media print {
           @page { margin: 0; size: auto; }
@@ -861,12 +1033,64 @@ function StoreFront({ products, user, showToast, storeSettings }) {
   const [onlyInStock, setOnlyInStock] = useState(false);
   const [onlyWithVariations, setOnlyWithVariations] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
+  const [productsPage, setProductsPage] = useState(1);
+  const [viewportWidth, setViewportWidth] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth : 1280,
+  );
 
   const isRealUser = user && !user.isAnonymous;
   const productCatalog = useMemo(
     () => normalizeCatalog(storeSettings?.catalog),
     [storeSettings?.catalog],
   );
+  const socialLinks = useMemo(
+    () => normalizeSocialLinks(storeSettings?.socialLinks),
+    [storeSettings?.socialLinks],
+  );
+  const contactPhones = useMemo(
+    () => normalizePhoneList(storeSettings?.contactPhones),
+    [storeSettings?.contactPhones],
+  );
+
+  const whatsappDigits = normalizePhoneDigits(
+    socialLinks.whatsapp || contactPhones[0] || "",
+  );
+  const whatsappHref = whatsappDigits
+    ? `https://wa.me/55${whatsappDigits}?text=${encodeURIComponent(`Olá! Vim pela loja ${storeSettings?.storeName || ""} e quero atendimento.`)}`
+    : "";
+
+  const socialItems = [
+    {
+      label: "Instagram",
+      href: resolveSocialUrl("instagram", socialLinks.instagram),
+      icon: <InstagramBrandIcon size={14} />,
+      short: "IG",
+    },
+    {
+      label: "Facebook",
+      href: resolveSocialUrl("facebook", socialLinks.facebook),
+      icon: <FacebookBrandIcon size={14} />,
+      short: "FB",
+    },
+    {
+      label: "YouTube",
+      href: resolveSocialUrl("youtube", socialLinks.youtube),
+      icon: <YouTubeBrandIcon size={14} />,
+      short: "YT",
+    },
+    {
+      label: "TikTok",
+      href: resolveSocialUrl("tiktok", socialLinks.tiktok),
+      icon: <TikTokBrandIcon size={14} />,
+      short: "TT",
+    },
+  ].filter((item) => item.href);
+  const hasContactPhones = contactPhones.length > 0;
+  const hasSocialLinks = socialItems.length > 0;
+  const formattedContactPhones = contactPhones.map((phone) => ({
+    raw: phone,
+    label: formatContactPhone(phone),
+  }));
 
   // Buscar perfil do utilizador
   useEffect(() => {
@@ -1104,6 +1328,51 @@ function StoreFront({ products, user, showToast, storeSettings }) {
     return 0;
   });
 
+  const productGridColumns =
+    viewportWidth >= 1280
+      ? 5
+      : viewportWidth >= 1024
+        ? 4
+        : viewportWidth >= 768
+          ? 3
+          : 2;
+
+  const productsPerPage = productGridColumns * 3;
+  const totalProductPages = Math.max(
+    1,
+    Math.ceil(sortedProducts.length / productsPerPage),
+  );
+
+  const paginatedProducts = sortedProducts.slice(
+    (productsPage - 1) * productsPerPage,
+    productsPage * productsPerPage,
+  );
+
+  useEffect(() => {
+    const handleResize = () => setViewportWidth(window.innerWidth);
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
+  useEffect(() => {
+    setProductsPage(1);
+  }, [
+    search,
+    selectedCategory,
+    effectiveSubcategory,
+    sortBy,
+    priceRange,
+    onlyInStock,
+    onlyWithVariations,
+    productsPerPage,
+  ]);
+
+  useEffect(() => {
+    if (productsPage > totalProductPages) {
+      setProductsPage(totalProductPages);
+    }
+  }, [productsPage, totalProductPages]);
+
   const showcaseSections = (productCatalog.sections || [])
     .map((section) => ({
       ...section,
@@ -1127,7 +1396,7 @@ function StoreFront({ products, user, showToast, storeSettings }) {
   };
 
   return (
-    <div className="relative min-h-[calc(100vh-36px)] pb-20 bg-slate-50/50 print:hidden">
+    <div className="relative min-h-[calc(100vh-36px)] bg-slate-50/50 print:hidden flex flex-col">
       {/* Header */}
       <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/90 backdrop-blur-xl shadow-sm">
         <div className="max-w-7xl mx-auto px-4 py-3 md:py-4 flex flex-col gap-4">
@@ -1240,7 +1509,7 @@ function StoreFront({ products, user, showToast, storeSettings }) {
       </div>
 
       {/* Product Grid */}
-      <main className="max-w-[1400px] mx-auto px-4 py-8 md:py-12">
+      <main className="max-w-[1400px] mx-auto px-4 py-8 md:py-12 pb-20 md:pb-10 flex-1 w-full">
         {showcaseSections.length > 0 && (
           <div className="space-y-6 mb-10">
             {showcaseSections.map((section) => (
@@ -1424,7 +1693,7 @@ function StoreFront({ products, user, showToast, storeSettings }) {
             </div>
 
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 sm:gap-5 md:gap-8">
-              {sortedProducts.map((product) => (
+              {paginatedProducts.map((product) => (
                 <StoreProductCard
                   key={product.id}
                   product={product}
@@ -1433,9 +1702,176 @@ function StoreFront({ products, user, showToast, storeSettings }) {
                 />
               ))}
             </div>
+
+            {totalProductPages > 1 && (
+              <div className="pt-6 flex items-center justify-center gap-2">
+                <button
+                  onClick={() =>
+                    setProductsPage((prev) => Math.max(1, prev - 1))
+                  }
+                  disabled={productsPage === 1}
+                  className="inline-flex items-center gap-1 px-3 py-2 rounded-xl border border-slate-200 bg-white text-slate-600 font-bold text-sm disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
+                >
+                  <ChevronLeft size={16} /> Anterior
+                </button>
+
+                <span className="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-black">
+                  {productsPage}
+                </span>
+
+                <span className="text-sm font-semibold text-slate-500">
+                  de {totalProductPages}
+                </span>
+
+                <button
+                  onClick={() =>
+                    setProductsPage((prev) =>
+                      Math.min(totalProductPages, prev + 1),
+                    )
+                  }
+                  disabled={productsPage === totalProductPages}
+                  className="inline-flex items-center gap-1 px-3 py-2 rounded-xl border border-slate-200 bg-white text-slate-600 font-bold text-sm disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
+                >
+                  Proxima <ChevronRight size={16} />
+                </button>
+              </div>
+            )}
           </section>
         )}
       </main>
+
+      <footer className="bg-slate-950 text-slate-200 border-t border-slate-800 mt-auto">
+        <div className="max-w-[1400px] mx-auto px-4 py-10 md:py-14">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 md:gap-10">
+            <div className="space-y-4">
+              <h3 className="text-2xl font-black text-white">
+                {storeSettings.storeName || "Aucela Multimarcas"}
+              </h3>
+
+              {storeSettings.footerDescription && (
+                <p className="text-sm text-slate-400 leading-relaxed max-w-md">
+                  {storeSettings.footerDescription}
+                </p>
+              )}
+
+              {(storeSettings.storeTagline || storeSettings.logo) && (
+                <div className="flex items-center gap-2.5 text-slate-400">
+                  {storeSettings.logo && (
+                    <img
+                      src={storeSettings.logo}
+                      alt="Logo da Loja"
+                      className="w-8 h-8 rounded-lg object-contain bg-white p-0.5 border border-slate-700"
+                    />
+                  )}
+                  {storeSettings.storeTagline && (
+                    <p className="text-sm leading-relaxed">
+                      {storeSettings.storeTagline}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {hasContactPhones && (
+              <div className="space-y-3">
+                <h4 className="text-sm font-black uppercase tracking-wider text-slate-300">
+                  Contato
+                </h4>
+                <div className="space-y-2">
+                  {formattedContactPhones.map((phone) => (
+                    <a
+                      key={phone.raw}
+                      href={`tel:${normalizePhoneDigits(phone.raw)}`}
+                      className="flex items-center gap-2 text-sm text-slate-300 hover:text-white transition"
+                    >
+                      <Smartphone size={15} /> {phone.label}
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {hasSocialLinks && (
+              <div className="space-y-3">
+                <h4 className="text-sm font-black uppercase tracking-wider text-slate-300">
+                  Redes Sociais
+                </h4>
+                <div className="flex flex-wrap gap-2">
+                  {socialItems.map((item) => (
+                    <a
+                      key={item.label}
+                      href={item.href}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-2 px-3 py-2 rounded-full bg-slate-900 border border-slate-700 hover:border-indigo-400 hover:text-white transition text-sm"
+                    >
+                      <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-slate-800 text-[10px] font-black">
+                        {item.icon || item.short}
+                      </span>
+                      {item.label}
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="mt-8 pt-5 border-t border-slate-800 text-xs text-slate-500 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <span>
+              © {new Date().getFullYear()}{" "}
+              {storeSettings.storeName || "JN Store"}
+            </span>
+            <div className="flex flex-wrap items-center gap-2.5">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gradient-to-r from-emerald-500/20 to-cyan-500/20 border border-emerald-400/30 text-[11px] font-black text-emerald-200 uppercase tracking-wider">
+                <CreditCard size={13} /> Pagamento Seguro
+              </span>
+
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-700 text-[10px] font-black text-slate-200 uppercase">
+                <DollarSign size={12} /> Mercado Pago
+              </span>
+
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-700 text-[10px] font-black text-cyan-200 uppercase">
+                <QrCode size={12} /> Pix
+              </span>
+
+              <span className="px-2.5 py-1 rounded-lg bg-[#1a1f71] border border-[#2f3ba8] text-[10px] font-black text-white uppercase tracking-wide">
+                Visa
+              </span>
+
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-700 text-[10px] font-black text-white uppercase tracking-wide">
+                <span className="relative w-5 h-3 inline-block">
+                  <span className="absolute left-0 top-0 w-3 h-3 rounded-full bg-[#eb001b] opacity-95"></span>
+                  <span className="absolute right-0 top-0 w-3 h-3 rounded-full bg-[#f79e1b] opacity-95"></span>
+                </span>
+                Mastercard
+              </span>
+
+              <span className="px-2.5 py-1 rounded-lg bg-[#0b2a6f] border border-[#1a3d8f] text-[10px] font-black text-white uppercase tracking-wide">
+                Elo
+              </span>
+            </div>
+          </div>
+        </div>
+      </footer>
+
+      {whatsappHref && (
+        <a
+          href={whatsappHref}
+          target="_blank"
+          rel="noreferrer"
+          className="fixed right-4 bottom-4 md:right-6 md:bottom-6 z-50"
+          style={{
+            animation: "whatsapp-float-pulse 3.8s ease-in-out infinite",
+          }}
+          aria-label="Falar no WhatsApp"
+        >
+          <img
+            src="/whatsapp.png"
+            alt="WhatsApp"
+            className="w-14 h-14 md:w-16 md:h-16 object-contain drop-shadow-[0_14px_24px_rgba(0,0,0,0.35)] hover:scale-105 transition-transform duration-300"
+          />
+        </a>
+      )}
 
       {/* Modals */}
       {selectedProduct && (
@@ -3183,39 +3619,92 @@ function CheckoutFlow({
                 <CreditCard size={20} /> Método de Pagamento
               </h3>
 
+              <div className="rounded-2xl border border-sky-200 bg-gradient-to-r from-sky-50 via-white to-indigo-50 p-4 md:p-5 shadow-sm space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-black text-slate-800 uppercase tracking-wider">
+                      Pagamento Seguro
+                    </p>
+                    <p className="text-sm text-slate-600">
+                      Checkout com Mercado Pago: PIX, Cartao e Boleto.
+                    </p>
+                  </div>
+                  <span className="px-3 py-1.5 rounded-full bg-sky-600 text-white text-xs font-black uppercase tracking-wider">
+                    Mercado Pago
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  {[
+                    "VISA",
+                    "MASTERCARD",
+                    "ELO",
+                    "AMEX",
+                    "HIPERCARD",
+                    "PIX",
+                    "BOLETO",
+                  ].map((flag) => (
+                    <span
+                      key={flag}
+                      className="px-2.5 py-1 rounded-full bg-white border border-slate-200 text-[11px] font-black text-slate-600"
+                    >
+                      {flag}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
               <div className="grid gap-3">
-                {["PIX", "Cartão de Crédito", "Boleto"].map((method) => (
+                {[
+                  {
+                    title: "PIX",
+                    subtitle: "Aprovacao rapida com QR Code e Copia e Cola",
+                  },
+                  {
+                    title: "Cartão de Crédito",
+                    subtitle: "Parcelamento e processamento no Mercado Pago",
+                  },
+                  {
+                    title: "Boleto",
+                    subtitle: "Pagamento bancario com vencimento",
+                  },
+                ].map((method) => (
                   <div key={method} className="flex flex-col">
                     <label
-                      className={`flex items-center p-4 border rounded-xl cursor-pointer transition ${paymentMethod === method ? "border-indigo-500 bg-indigo-50 shadow-sm" : "hover:bg-slate-50"}`}
+                      className={`flex items-center p-4 border rounded-xl cursor-pointer transition ${paymentMethod === method.title ? "border-indigo-500 bg-indigo-50 shadow-sm ring-2 ring-indigo-200" : "hover:bg-slate-50"}`}
                     >
                       <input
                         type="radio"
                         name="payment"
                         className="mr-3 w-4 h-4 text-indigo-600"
-                        checked={paymentMethod === method}
-                        onChange={() => setPaymentMethod(method)}
+                        checked={paymentMethod === method.title}
+                        onChange={() => setPaymentMethod(method.title)}
                       />
-                      {method === "PIX" && (
+                      {method.title === "PIX" && (
                         <QrCode size={18} className="mr-2 text-teal-600" />
                       )}
-                      {method === "Cartão de Crédito" && (
+                      {method.title === "Cartão de Crédito" && (
                         <CreditCard
                           size={18}
                           className="mr-2 text-indigo-600"
                         />
                       )}
-                      {method === "Boleto" && (
+                      {method.title === "Boleto" && (
                         <FileText size={18} className="mr-2 text-slate-600" />
                       )}
-                      <span className="font-semibold text-slate-700">
-                        {method}
+                      <span className="flex flex-col">
+                        <span className="font-semibold text-slate-700">
+                          {method.title}
+                        </span>
+                        <span className="text-xs text-slate-500">
+                          {method.subtitle}
+                        </span>
                       </span>
                     </label>
 
                     {/* Formulário Visual para Cartão de Crédito */}
-                    {paymentMethod === method &&
-                      method === "Cartão de Crédito" && (
+                    {paymentMethod === method.title &&
+                      method.title === "Cartão de Crédito" && (
                         <div className="mt-3 space-y-3 p-4 bg-white rounded-xl border border-indigo-100 shadow-sm animate-slide-up">
                           <div className="text-xs font-bold text-indigo-600 mb-2 uppercase tracking-wider flex items-center gap-1">
                             <Monitor size={14} /> Checkout Seguro
@@ -6106,6 +6595,15 @@ function AdminSettings({ showToast, storeSettings }) {
     storeTagline: "",
     logo: "",
     banners: [],
+    footerDescription: "",
+    contactPhones: [],
+    socialLinks: {
+      whatsapp: "",
+      instagram: "",
+      facebook: "",
+      youtube: "",
+      tiktok: "",
+    },
     mpPublicKey: "",
     pixKey: "",
     catalog: DEFAULT_PRODUCT_CATALOG,
@@ -6143,6 +6641,7 @@ function AdminSettings({ showToast, storeSettings }) {
     name: "",
     options: "",
   });
+  const [contactPhonesDraft, setContactPhonesDraft] = useState("");
 
   // Carrega as configurações globais para o formulário local
   useEffect(() => {
@@ -6151,12 +6650,17 @@ function AdminSettings({ showToast, storeSettings }) {
         ...prev,
         ...storeSettings,
         catalog: normalizeCatalog(storeSettings.catalog),
+        socialLinks: normalizeSocialLinks(storeSettings.socialLinks),
+        contactPhones: normalizePhoneList(storeSettings.contactPhones),
         shipping: storeSettings.shipping || {
           pickupEnabled: true,
           correiosBaseRate: 25.0,
           localCities: [],
         },
       }));
+      setContactPhonesDraft(
+        normalizePhoneList(storeSettings.contactPhones).join("\n"),
+      );
     }
   }, [storeSettings]);
 
@@ -6532,9 +7036,15 @@ function AdminSettings({ showToast, storeSettings }) {
   const saveSettings = async (e) => {
     e.preventDefault();
     try {
+      const payload = {
+        ...config,
+        contactPhones: normalizePhoneList(contactPhonesDraft),
+        socialLinks: normalizeSocialLinks(config.socialLinks),
+      };
+
       await setDoc(
         doc(db, "artifacts", appId, "public", "data", "settings", "config"),
-        config,
+        payload,
         { merge: true },
       );
       showToast("Configurações salvas e aplicadas na loja!");
@@ -7100,6 +7610,164 @@ function AdminSettings({ showToast, storeSettings }) {
                   ))}
                 </tbody>
               </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-6">
+        <h3 className="font-semibold text-lg border-b pb-2 text-slate-700">
+          Rodapé e Canais de Atendimento
+        </h3>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-bold mb-2 text-slate-700">
+                Descrição do Rodapé
+              </label>
+              <textarea
+                rows={4}
+                value={config.footerDescription || ""}
+                onChange={(e) =>
+                  setConfig({ ...config, footerDescription: e.target.value })
+                }
+                placeholder="Escreva uma mensagem institucional curta da sua loja."
+                className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-bold mb-2 text-slate-700">
+                Telefones de Contato (um por linha)
+              </label>
+              <textarea
+                rows={5}
+                value={contactPhonesDraft}
+                onChange={(e) => setContactPhonesDraft(e.target.value)}
+                onBlur={() =>
+                  setContactPhonesDraft(
+                    normalizePhoneList(contactPhonesDraft)
+                      .map((phone) => formatContactPhone(phone))
+                      .join("\n"),
+                  )
+                }
+                placeholder="(11) 99999-9999\n(11) 3333-3333"
+                className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+              />
+              <p className="text-xs text-slate-500 mt-1">
+                Esses telefones aparecerão no rodapé da loja.
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-bold mb-2 text-slate-700">
+                WhatsApp (somente número ou link)
+              </label>
+              <input
+                type="text"
+                value={config.socialLinks?.whatsapp || ""}
+                onChange={(e) =>
+                  setConfig({
+                    ...config,
+                    socialLinks: {
+                      ...normalizeSocialLinks(config.socialLinks),
+                      whatsapp: e.target.value,
+                    },
+                  })
+                }
+                placeholder="11999999999"
+                className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+              />
+              <p className="text-xs text-slate-500 mt-1">
+                Usado no botão flutuante de WhatsApp da loja.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-bold mb-2 text-slate-700">
+                Instagram (usuário ou link)
+              </label>
+              <input
+                type="text"
+                value={config.socialLinks?.instagram || ""}
+                onChange={(e) =>
+                  setConfig({
+                    ...config,
+                    socialLinks: {
+                      ...normalizeSocialLinks(config.socialLinks),
+                      instagram: e.target.value,
+                    },
+                  })
+                }
+                placeholder="@minhaloja"
+                className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-bold mb-2 text-slate-700">
+                Facebook (usuário/página ou link)
+              </label>
+              <input
+                type="text"
+                value={config.socialLinks?.facebook || ""}
+                onChange={(e) =>
+                  setConfig({
+                    ...config,
+                    socialLinks: {
+                      ...normalizeSocialLinks(config.socialLinks),
+                      facebook: e.target.value,
+                    },
+                  })
+                }
+                placeholder="minhaloja"
+                className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-bold mb-2 text-slate-700">
+                YouTube (canal ou link)
+              </label>
+              <input
+                type="text"
+                value={config.socialLinks?.youtube || ""}
+                onChange={(e) =>
+                  setConfig({
+                    ...config,
+                    socialLinks: {
+                      ...normalizeSocialLinks(config.socialLinks),
+                      youtube: e.target.value,
+                    },
+                  })
+                }
+                placeholder="@canaldaloja"
+                className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-bold mb-2 text-slate-700">
+                TikTok (usuário ou link)
+              </label>
+              <input
+                type="text"
+                value={config.socialLinks?.tiktok || ""}
+                onChange={(e) =>
+                  setConfig({
+                    ...config,
+                    socialLinks: {
+                      ...normalizeSocialLinks(config.socialLinks),
+                      tiktok: e.target.value,
+                    },
+                  })
+                }
+                placeholder="@minhaloja"
+                className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+              />
             </div>
           </div>
         </div>
