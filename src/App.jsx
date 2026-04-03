@@ -2406,6 +2406,8 @@ function ProductModal({ product, close, addToCart }) {
 // 1.0 Banner Carousel Component
 function BannerCarousel({ banners }) {
   const [currentIndex, setCurrentIndex] = useState(0);
+  const [touchStartX, setTouchStartX] = useState(null);
+  const [touchEndX, setTouchEndX] = useState(null);
 
   useEffect(() => {
     if (!banners || banners.length <= 1) return;
@@ -2415,6 +2417,10 @@ function BannerCarousel({ banners }) {
 
     return () => clearInterval(interval);
   }, [banners]);
+
+  useEffect(() => {
+    setCurrentIndex(0);
+  }, [banners?.length]);
 
   const prevSlide = () => {
     setCurrentIndex((prevIndex) =>
@@ -2426,10 +2432,36 @@ function BannerCarousel({ banners }) {
     setCurrentIndex((prevIndex) => (prevIndex + 1) % banners.length);
   };
 
+  const minSwipeDistance = 50;
+  const onTouchStart = (e) => {
+    setTouchEndX(null);
+    setTouchStartX(e.targetTouches[0].clientX);
+  };
+
+  const onTouchMove = (e) => {
+    setTouchEndX(e.targetTouches[0].clientX);
+  };
+
+  const onTouchEnd = () => {
+    if (touchStartX === null || touchEndX === null) return;
+    const distance = touchStartX - touchEndX;
+
+    if (distance > minSwipeDistance) {
+      nextSlide();
+    } else if (distance < -minSwipeDistance) {
+      prevSlide();
+    }
+  };
+
   if (!banners || banners.length === 0) return null;
 
   return (
-    <div className="w-full h-40 sm:h-64 md:h-80 lg:h-96 bg-slate-900 relative group overflow-hidden">
+    <div
+      className="w-full h-48 sm:h-64 md:h-80 lg:h-96 bg-slate-900 relative group overflow-hidden"
+      onTouchStart={onTouchStart}
+      onTouchMove={onTouchMove}
+      onTouchEnd={onTouchEnd}
+    >
       {/* Slides (Container com Transição Animada) */}
       <div
         className="flex w-full h-full transition-transform duration-700 ease-in-out"
@@ -2440,9 +2472,9 @@ function BannerCarousel({ banners }) {
             <img
               src={banner}
               alt={`Banner ${index + 1}`}
-              className="w-full h-full object-cover"
+              className="w-full h-full object-contain sm:object-cover"
             />
-            <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent"></div>
+            <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent sm:from-black/40"></div>
           </div>
         ))}
       </div>
@@ -2453,7 +2485,7 @@ function BannerCarousel({ banners }) {
           {/* Botão Voltar */}
           <button
             onClick={prevSlide}
-            className="absolute left-4 top-1/2 -translate-y-1/2 bg-white/20 hover:bg-white/40 text-white p-2 md:p-3 rounded-full opacity-0 group-hover:opacity-100 transition-all backdrop-blur-md shadow-lg"
+            className="absolute left-3 sm:left-4 top-1/2 -translate-y-1/2 bg-white/20 hover:bg-white/40 text-white p-2 md:p-3 rounded-full opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-all backdrop-blur-md shadow-lg"
           >
             <ChevronLeft size={24} />
           </button>
@@ -2461,7 +2493,7 @@ function BannerCarousel({ banners }) {
           {/* Botão Avançar */}
           <button
             onClick={nextSlide}
-            className="absolute right-4 top-1/2 -translate-y-1/2 bg-white/20 hover:bg-white/40 text-white p-2 md:p-3 rounded-full opacity-0 group-hover:opacity-100 transition-all backdrop-blur-md shadow-lg"
+            className="absolute right-3 sm:right-4 top-1/2 -translate-y-1/2 bg-white/20 hover:bg-white/40 text-white p-2 md:p-3 rounded-full opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-all backdrop-blur-md shadow-lg"
           >
             <ChevronRight size={24} />
           </button>
