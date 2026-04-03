@@ -476,12 +476,12 @@ function StoreProductCard({
   return (
     <div
       onClick={() => onOpenProduct(product)}
-      className={`bg-white ${isShelf ? "w-[210px] sm:w-[230px] md:w-[250px] shrink-0 snap-start" : "w-full"} rounded-[1.6rem] sm:rounded-[2rem] shadow-sm border border-slate-200/60 overflow-hidden hover:shadow-2xl hover:shadow-indigo-500/10 hover:border-indigo-300/50 transition-all duration-500 group flex flex-col sm:hover:-translate-y-2 relative cursor-pointer`}
+      className={`bg-white ${isShelf ? "w-[165px] sm:w-[180px] md:w-[200px] shrink-0 snap-start" : "w-full"} rounded-[1.6rem] sm:rounded-[2rem] shadow-sm border border-slate-200/60 overflow-hidden hover:shadow-2xl hover:shadow-indigo-500/10 hover:border-indigo-300/50 transition-all duration-500 group flex flex-col sm:hover:-translate-y-2 relative cursor-pointer`}
     >
       <div className="absolute inset-0 bg-gradient-to-t from-indigo-900/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none z-10"></div>
 
       <div
-        className={`relative ${isShelf ? "aspect-[4/5]" : "aspect-[4/5] sm:aspect-[4/5]"} overflow-hidden bg-slate-50`}
+        className={`relative ${isShelf ? "aspect-[5/4]" : "aspect-[4/5] sm:aspect-[4/5]"} overflow-hidden bg-slate-50`}
       >
         {product.images?.[0] || product.image ? (
           <img
@@ -1033,10 +1033,13 @@ function StoreFront({ products, user, showToast, storeSettings }) {
   const [onlyInStock, setOnlyInStock] = useState(false);
   const [onlyWithVariations, setOnlyWithVariations] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
+  const [activeShowcaseSectionId, setActiveShowcaseSectionId] = useState("");
   const [productsPage, setProductsPage] = useState(1);
   const [viewportWidth, setViewportWidth] = useState(() =>
     typeof window !== "undefined" ? window.innerWidth : 1280,
   );
+  const searchTerm = String(search || "").trim();
+  const isSearchMode = searchTerm.length > 0;
 
   const isRealUser = user && !user.isAnonymous;
   const productCatalog = useMemo(
@@ -1290,7 +1293,9 @@ function StoreFront({ products, user, showToast, storeSettings }) {
     );
 
   const filteredProducts = products.filter((p) => {
-    const matchesSearch = p.name.toLowerCase().includes(search.toLowerCase());
+    const matchesSearch = p.name
+      .toLowerCase()
+      .includes(searchTerm.toLowerCase());
     const matchesCategory =
       selectedCategory === "Todas" || p.category === selectedCategory;
     const matchesSubcategory =
@@ -1319,6 +1324,12 @@ function StoreFront({ products, user, showToast, storeSettings }) {
     );
   });
 
+  const textSearchProducts = products.filter((p) =>
+    String(p?.name || "")
+      .toLowerCase()
+      .includes(searchTerm.toLowerCase()),
+  );
+
   const sortedProducts = [...filteredProducts].sort((a, b) => {
     if (sortBy === "menor_preco") return Number(a.price) - Number(b.price);
     if (sortBy === "maior_preco") return Number(b.price) - Number(a.price);
@@ -1327,6 +1338,8 @@ function StoreFront({ products, user, showToast, storeSettings }) {
     }
     return 0;
   });
+
+  const visibleProducts = isSearchMode ? textSearchProducts : sortedProducts;
 
   const productGridColumns =
     viewportWidth >= 1280
@@ -1340,10 +1353,10 @@ function StoreFront({ products, user, showToast, storeSettings }) {
   const productsPerPage = productGridColumns * 3;
   const totalProductPages = Math.max(
     1,
-    Math.ceil(sortedProducts.length / productsPerPage),
+    Math.ceil(visibleProducts.length / productsPerPage),
   );
 
-  const paginatedProducts = sortedProducts.slice(
+  const paginatedProducts = visibleProducts.slice(
     (productsPage - 1) * productsPerPage,
     productsPage * productsPerPage,
   );
@@ -1383,6 +1396,16 @@ function StoreFront({ products, user, showToast, storeSettings }) {
       ),
     }))
     .filter((section) => section.products.length > 0);
+
+  useEffect(() => {
+    if (!activeShowcaseSectionId) return;
+    const exists = showcaseSections.some(
+      (section) => section.id === activeShowcaseSectionId,
+    );
+    if (!exists) {
+      setActiveShowcaseSectionId("");
+    }
+  }, [activeShowcaseSectionId, showcaseSections]);
 
   const startCheckout = () => {
     if (!isRealUser) {
@@ -1491,203 +1514,249 @@ function StoreFront({ products, user, showToast, storeSettings }) {
         </div>
       </header>
 
-      {/* Banners Carousel */}
-      <BannerCarousel banners={storeSettings.banners} />
+      {!isSearchMode && (
+        <>
+          {/* Banners Carousel */}
+          <BannerCarousel banners={storeSettings.banners} />
 
-      {/* Hero Section */}
-      <div className="relative overflow-hidden bg-gradient-to-r from-slate-900 via-slate-800 to-slate-700 text-white py-14 px-4 text-center border-b-[5px] border-amber-400 shadow-2xl">
-        <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-10"></div>
-        <div className="relative z-10">
-          <h2 className="text-3xl md:text-5xl font-black mb-3 tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white to-amber-100 drop-shadow-2xl">
-            Seu Estilo, Sua Vitrine
-          </h2>
-          <p className="text-sm md:text-base text-slate-200 max-w-2xl mx-auto">
-            Filtros rapidos, categorias inteligentes e colecoes em destaque para
-            facilitar a compra no celular e no desktop.
-          </p>
-        </div>
-      </div>
+          {/* Hero Section */}
+          <div className="relative overflow-hidden bg-gradient-to-r from-slate-900 via-slate-800 to-slate-700 text-white py-14 px-4 text-center border-b-[5px] border-amber-400 shadow-2xl">
+            <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-10"></div>
+            <div className="relative z-10">
+              <h2 className="text-3xl md:text-5xl font-black mb-3 tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white to-amber-100 drop-shadow-2xl">
+                Seu Estilo, Sua Vitrine
+              </h2>
+              <p className="text-sm md:text-base text-slate-200 max-w-2xl mx-auto">
+                Filtros rapidos, categorias inteligentes e colecoes em destaque
+                para facilitar a compra no celular e no desktop.
+              </p>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* Product Grid */}
       <main className="max-w-[1400px] mx-auto px-4 py-8 md:py-12 pb-20 md:pb-10 flex-1 w-full">
-        {showcaseSections.length > 0 && (
+        {!isSearchMode && showcaseSections.length > 0 && (
           <div className="space-y-6 mb-10">
-            {showcaseSections.map((section) => (
-              <section
-                key={section.id}
-                className="bg-white border border-slate-200 rounded-3xl shadow-sm p-4 md:p-5"
-              >
-                <div className="flex items-end justify-between gap-3 mb-4">
-                  <div>
-                    <h3 className="text-lg md:text-xl font-black text-slate-800">
-                      {section.name}
-                    </h3>
-                    <p className="text-xs md:text-sm text-slate-500 font-semibold">
-                      Deslize para ver mais produtos desta sessão
-                    </p>
-                  </div>
-                  <span className="text-xs md:text-sm font-black text-indigo-600 whitespace-nowrap">
-                    {section.products.length} item(ns)
-                  </span>
-                </div>
+            {showcaseSections
+              .filter((section) =>
+                activeShowcaseSectionId
+                  ? section.id === activeShowcaseSectionId
+                  : true,
+              )
+              .map((section) => {
+                const isExpanded = section.id === activeShowcaseSectionId;
 
-                <div className="flex gap-3 md:gap-4 overflow-x-auto hide-scrollbar snap-x snap-mandatory pb-1">
-                  {section.products.map((product) => (
-                    <StoreProductCard
-                      key={`${section.id}-${product.id}`}
-                      product={product}
-                      onOpenProduct={setSelectedProduct}
-                      onAddToCart={addToCart}
-                      isShelf
-                    />
-                  ))}
-                </div>
-              </section>
-            ))}
+                return (
+                  <section
+                    key={section.id}
+                    className="bg-white border border-slate-200 rounded-3xl shadow-sm p-4 md:p-5"
+                  >
+                    <div className="flex items-end justify-between gap-3 mb-4">
+                      <div>
+                        <h3 className="text-lg md:text-xl font-black text-slate-800">
+                          {section.name}
+                        </h3>
+                        <p className="text-xs md:text-sm text-slate-500 font-semibold">
+                          {isExpanded
+                            ? "Todos os produtos desta sessão"
+                            : "Deslize para ver mais produtos desta sessão"}
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs md:text-sm font-black text-indigo-600 whitespace-nowrap">
+                          {section.products.length} item(ns)
+                        </span>
+                        <button
+                          onClick={() =>
+                            setActiveShowcaseSectionId((prev) =>
+                              prev === section.id ? "" : section.id,
+                            )
+                          }
+                          className="px-3 py-1.5 rounded-full bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 text-xs md:text-sm font-black transition"
+                        >
+                          {isExpanded ? "Voltar" : "Ver todos"}
+                        </button>
+                      </div>
+                    </div>
+
+                    {isExpanded ? (
+                      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 sm:gap-4 md:gap-5">
+                        {section.products.map((product) => (
+                          <StoreProductCard
+                            key={`${section.id}-${product.id}`}
+                            product={product}
+                            onOpenProduct={setSelectedProduct}
+                            onAddToCart={addToCart}
+                          />
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="flex gap-3 md:gap-4 overflow-x-auto hide-scrollbar snap-x snap-mandatory pb-1">
+                        {section.products.map((product) => (
+                          <StoreProductCard
+                            key={`${section.id}-${product.id}`}
+                            product={product}
+                            onOpenProduct={setSelectedProduct}
+                            onAddToCart={addToCart}
+                            isShelf
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </section>
+                );
+              })}
           </div>
         )}
 
-        <div className="mb-8 bg-white border border-slate-200 rounded-3xl shadow-sm p-4 md:p-6">
-          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-            <h3 className="text-lg md:text-xl font-black text-slate-800 flex items-center gap-2">
-              <Filter size={20} className="text-indigo-500" />
-              Funil de Filtros
-            </h3>
-            <span className="text-xs md:text-sm text-slate-500 font-semibold bg-slate-100 px-3 py-1 rounded-full">
-              {sortedProducts.length} produto(s) encontrado(s)
-            </span>
-          </div>
+        {!isSearchMode && (
+          <div className="mb-8 bg-white border border-slate-200 rounded-3xl shadow-sm p-4 md:p-6">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+              <h3 className="text-lg md:text-xl font-black text-slate-800 flex items-center gap-2">
+                <Filter size={20} className="text-indigo-500" />
+                Funil de Filtros
+              </h3>
+              <span className="text-xs md:text-sm text-slate-500 font-semibold bg-slate-100 px-3 py-1 rounded-full">
+                {sortedProducts.length} produto(s) encontrado(s)
+              </span>
+            </div>
 
-          <div className="space-y-4">
-            {categories.length > 1 && (
-              <div>
-                <p className="text-xs font-black uppercase tracking-wider text-slate-500 mb-2">
-                  Categoria
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  {categories.map((cat) => (
-                    <button
-                      key={cat}
-                      onClick={() => {
-                        setSelectedCategory(cat);
-                        setSelectedSubcategory("Todas");
-                      }}
-                      className={`px-4 py-2 rounded-full text-sm font-bold transition-all ${
-                        selectedCategory === cat
-                          ? "bg-slate-900 text-white shadow-md"
-                          : "bg-slate-100 text-slate-700 hover:bg-slate-200"
-                      }`}
-                    >
-                      {cat}
-                    </button>
-                  ))}
+            <div className="space-y-4">
+              {categories.length > 1 && (
+                <div>
+                  <p className="text-xs font-black uppercase tracking-wider text-slate-500 mb-2">
+                    Categoria
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {categories.map((cat) => (
+                      <button
+                        key={cat}
+                        onClick={() => {
+                          setSelectedCategory(cat);
+                          setSelectedSubcategory("Todas");
+                        }}
+                        className={`px-4 py-2 rounded-full text-sm font-bold transition-all ${
+                          selectedCategory === cat
+                            ? "bg-slate-900 text-white shadow-md"
+                            : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                        }`}
+                      >
+                        {cat}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            {subcategories.length > 1 && (
-              <div>
-                <p className="text-xs font-black uppercase tracking-wider text-slate-500 mb-2">
-                  Subcategoria
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  {subcategories.map((sub) => (
-                    <button
-                      key={sub}
-                      onClick={() => setSelectedSubcategory(sub)}
-                      className={`px-3.5 py-1.5 rounded-full text-xs md:text-sm font-bold transition-all ${
-                        effectiveSubcategory === sub
-                          ? "bg-amber-500 text-white shadow"
-                          : "bg-amber-50 text-amber-700 hover:bg-amber-100"
-                      }`}
-                    >
-                      {sub}
-                    </button>
-                  ))}
+              {subcategories.length > 1 && (
+                <div>
+                  <p className="text-xs font-black uppercase tracking-wider text-slate-500 mb-2">
+                    Subcategoria
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {subcategories.map((sub) => (
+                      <button
+                        key={sub}
+                        onClick={() => setSelectedSubcategory(sub)}
+                        className={`px-3.5 py-1.5 rounded-full text-xs md:text-sm font-bold transition-all ${
+                          effectiveSubcategory === sub
+                            ? "bg-amber-500 text-white shadow"
+                            : "bg-amber-50 text-amber-700 hover:bg-amber-100"
+                        }`}
+                      >
+                        {sub}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-3 pt-2 border-t border-slate-100">
-              <div className="md:col-span-2">
-                <label className="block text-xs font-black uppercase tracking-wider text-slate-500 mb-2">
-                  Ordenar por valor
-                </label>
-                <select
-                  value={sortBy}
-                  onChange={(e) => setSortBy(e.target.value)}
-                  className="w-full p-2.5 border border-slate-200 rounded-xl bg-white font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-indigo-400"
-                >
-                  <option value="relevancia">Mais relevantes</option>
-                  <option value="menor_preco">Menor valor</option>
-                  <option value="maior_preco">Maior valor</option>
-                  <option value="nome_az">Nome A-Z</option>
-                </select>
-              </div>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3 pt-2 border-t border-slate-100">
+                <div className="md:col-span-2">
+                  <label className="block text-xs font-black uppercase tracking-wider text-slate-500 mb-2">
+                    Ordenar por valor
+                  </label>
+                  <select
+                    value={sortBy}
+                    onChange={(e) => setSortBy(e.target.value)}
+                    className="w-full p-2.5 border border-slate-200 rounded-xl bg-white font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-indigo-400"
+                  >
+                    <option value="relevancia">Mais relevantes</option>
+                    <option value="menor_preco">Menor valor</option>
+                    <option value="maior_preco">Maior valor</option>
+                    <option value="nome_az">Nome A-Z</option>
+                  </select>
+                </div>
 
-              <div>
-                <label className="block text-xs font-black uppercase tracking-wider text-slate-500 mb-2">
-                  Faixa de valor
-                </label>
-                <select
-                  value={priceRange}
-                  onChange={(e) => setPriceRange(e.target.value)}
-                  className="w-full p-2.5 border border-slate-200 rounded-xl bg-white font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-indigo-400"
-                >
-                  <option value="todos">Todos os valores</option>
-                  <option value="ate_99">Até R$ 99</option>
-                  <option value="100_199">R$ 100 a R$ 199</option>
-                  <option value="200_399">R$ 200 a R$ 399</option>
-                  <option value="400_plus">Acima de R$ 400</option>
-                </select>
-              </div>
+                <div>
+                  <label className="block text-xs font-black uppercase tracking-wider text-slate-500 mb-2">
+                    Faixa de valor
+                  </label>
+                  <select
+                    value={priceRange}
+                    onChange={(e) => setPriceRange(e.target.value)}
+                    className="w-full p-2.5 border border-slate-200 rounded-xl bg-white font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-indigo-400"
+                  >
+                    <option value="todos">Todos os valores</option>
+                    <option value="ate_99">Até R$ 99</option>
+                    <option value="100_199">R$ 100 a R$ 199</option>
+                    <option value="200_399">R$ 200 a R$ 399</option>
+                    <option value="400_plus">Acima de R$ 400</option>
+                  </select>
+                </div>
 
-              <div className="flex flex-col justify-end gap-2">
-                <label className="inline-flex items-center gap-2 text-sm font-semibold text-slate-700">
-                  <input
-                    type="checkbox"
-                    checked={onlyInStock}
-                    onChange={(e) => setOnlyInStock(e.target.checked)}
-                    className="w-4 h-4 rounded border-slate-300 text-indigo-600"
-                  />
-                  Somente em estoque
-                </label>
-                <label className="inline-flex items-center gap-2 text-sm font-semibold text-slate-700">
-                  <input
-                    type="checkbox"
-                    checked={onlyWithVariations}
-                    onChange={(e) => setOnlyWithVariations(e.target.checked)}
-                    className="w-4 h-4 rounded border-slate-300 text-indigo-600"
-                  />
-                  Com variações
-                </label>
+                <div className="flex flex-col justify-end gap-2">
+                  <label className="inline-flex items-center gap-2 text-sm font-semibold text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={onlyInStock}
+                      onChange={(e) => setOnlyInStock(e.target.checked)}
+                      className="w-4 h-4 rounded border-slate-300 text-indigo-600"
+                    />
+                    Somente em estoque
+                  </label>
+                  <label className="inline-flex items-center gap-2 text-sm font-semibold text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={onlyWithVariations}
+                      onChange={(e) => setOnlyWithVariations(e.target.checked)}
+                      className="w-4 h-4 rounded border-slate-300 text-indigo-600"
+                    />
+                    Com variações
+                  </label>
+                </div>
               </div>
             </div>
           </div>
-        </div>
+        )}
 
-        {sortedProducts.length === 0 ? (
+        {visibleProducts.length === 0 ? (
           <div className="text-center py-24 bg-white/50 backdrop-blur rounded-3xl border border-slate-200/50 shadow-sm mt-8 max-w-2xl mx-auto">
             <Package
               size={64}
               className="mx-auto text-indigo-200 mb-6 drop-shadow-sm"
             />
             <h3 className="text-xl font-bold text-slate-600">
-              Nenhum produto encontrado.
+              Nenhum produto localizado.
             </h3>
-            <p className="text-slate-400 mt-2">
-              Tente buscar por outro termo ou categoria.
-            </p>
+            <p className="text-slate-400 mt-2">Tente buscar por outro termo.</p>
           </div>
         ) : (
           <section className="space-y-4">
             <div className="flex items-end justify-between gap-3">
               <div>
                 <h3 className="text-xl md:text-2xl font-black text-slate-900">
-                  Todos os produtos
+                  {isSearchMode
+                    ? `Resultados para "${searchTerm}"`
+                    : "Todos os produtos"}
                 </h3>
                 <p className="text-sm text-slate-500 font-semibold">
-                  Abaixo fica o catálogo completo com os filtros atuais.
+                  {isSearchMode
+                    ? `${visibleProducts.length} produto(s) correspondente(s).`
+                    : "Abaixo fica o catálogo completo com os filtros atuais."}
                 </p>
               </div>
             </div>
