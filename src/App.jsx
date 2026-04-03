@@ -2408,28 +2408,74 @@ function BannerCarousel({ banners }) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [touchStartX, setTouchStartX] = useState(null);
   const [touchEndX, setTouchEndX] = useState(null);
+  const [activeBanners, setActiveBanners] = useState([]);
+
+  const normalizedBanners = useMemo(
+    () =>
+      (Array.isArray(banners) ? banners : [])
+        .map((item) => String(item || "").trim())
+        .filter(Boolean),
+    [banners],
+  );
 
   useEffect(() => {
-    if (!banners || banners.length <= 1) return;
+    let isCancelled = false;
+
+    if (normalizedBanners.length === 0) {
+      setActiveBanners([]);
+      return;
+    }
+
+    const preloadTasks = normalizedBanners.map(
+      (src) =>
+        new Promise((resolve) => {
+          const img = new Image();
+          img.onload = () => resolve({ src, ok: true });
+          img.onerror = () => resolve({ src, ok: false });
+          img.src = src;
+        }),
+    );
+
+    Promise.all(preloadTasks).then((results) => {
+      if (isCancelled) return;
+      const validBanners = results
+        .filter((item) => item.ok)
+        .map((item) => item.src);
+      setActiveBanners(validBanners);
+    });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [normalizedBanners]);
+
+  useEffect(() => {
+    if (!activeBanners || activeBanners.length <= 1) return;
     const interval = setInterval(() => {
-      setCurrentIndex((prevIndex) => (prevIndex + 1) % banners.length);
+      setCurrentIndex((prevIndex) => (prevIndex + 1) % activeBanners.length);
     }, 5000); // Roda automaticamente a cada 5 segundos
 
     return () => clearInterval(interval);
-  }, [banners]);
+  }, [activeBanners]);
 
   useEffect(() => {
     setCurrentIndex(0);
-  }, [banners?.length]);
+  }, [activeBanners?.length]);
+
+  useEffect(() => {
+    if (currentIndex >= activeBanners.length && activeBanners.length > 0) {
+      setCurrentIndex(0);
+    }
+  }, [currentIndex, activeBanners]);
 
   const prevSlide = () => {
     setCurrentIndex((prevIndex) =>
-      prevIndex === 0 ? banners.length - 1 : prevIndex - 1,
+      prevIndex === 0 ? activeBanners.length - 1 : prevIndex - 1,
     );
   };
 
   const nextSlide = () => {
-    setCurrentIndex((prevIndex) => (prevIndex + 1) % banners.length);
+    setCurrentIndex((prevIndex) => (prevIndex + 1) % activeBanners.length);
   };
 
   const minSwipeDistance = 50;
@@ -2453,7 +2499,7 @@ function BannerCarousel({ banners }) {
     }
   };
 
-  if (!banners || banners.length === 0) return null;
+  if (!normalizedBanners.length || !activeBanners.length) return null;
 
   return (
     <div
@@ -2467,11 +2513,14 @@ function BannerCarousel({ banners }) {
         className="flex w-full h-full transition-transform duration-700 ease-in-out"
         style={{ transform: `translateX(-${currentIndex * 100}%)` }}
       >
-        {banners.map((banner, index) => (
+        {activeBanners.map((banner, index) => (
           <div key={index} className="min-w-full h-full relative shrink-0">
             <img
               src={banner}
               alt={`Banner ${index + 1}`}
+              loading="eager"
+              decoding="async"
+              draggable={false}
               className="w-full h-full object-contain sm:object-cover"
             />
             <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent sm:from-black/40"></div>
@@ -2480,7 +2529,7 @@ function BannerCarousel({ banners }) {
       </div>
 
       {/* Controles do Carrossel */}
-      {banners.length > 1 && (
+      {activeBanners.length > 1 && (
         <>
           {/* Botão Voltar */}
           <button
@@ -2500,7 +2549,7 @@ function BannerCarousel({ banners }) {
 
           {/* Bolinhas Indicadoras (Dots) */}
           <div className="absolute bottom-4 left-0 right-0 flex justify-center gap-2">
-            {banners.map((_, idx) => (
+            {activeBanners.map((_, idx) => (
               <button
                 key={idx}
                 onClick={() => setCurrentIndex(idx)}
