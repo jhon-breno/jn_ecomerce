@@ -85,16 +85,7 @@ const buildApiUrl = (path) =>
   BACKEND_URL ? `${BACKEND_URL}${path}` : String(path || "");
 
 const shouldUseImageProxy = () => {
-  if (BACKEND_URL) return true;
-  if (typeof window === "undefined") return !import.meta.env.DEV;
-
-  const hostname = String(window.location.hostname || "").toLowerCase();
-  const isLocalhost =
-    hostname === "localhost" ||
-    hostname === "127.0.0.1" ||
-    hostname === "0.0.0.0";
-
-  return !isLocalhost;
+  return Boolean(BACKEND_URL);
 };
 
 const normalizeExternalImageUrl = (value) => {
@@ -3107,7 +3098,6 @@ function BannerCarousel({ banners }) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [touchStartX, setTouchStartX] = useState(null);
   const [touchEndX, setTouchEndX] = useState(null);
-  const [activeBanners, setActiveBanners] = useState([]);
 
   const normalizedBanners = useMemo(
     () =>
@@ -3117,37 +3107,7 @@ function BannerCarousel({ banners }) {
         .filter(Boolean),
     [banners],
   );
-
-  useEffect(() => {
-    let isCancelled = false;
-
-    if (normalizedBanners.length === 0) {
-      setActiveBanners([]);
-      return;
-    }
-
-    const preloadTasks = normalizedBanners.map(
-      (src) =>
-        new Promise((resolve) => {
-          const img = new Image();
-          img.onload = () => resolve({ src, ok: true });
-          img.onerror = () => resolve({ src, ok: false });
-          img.src = src;
-        }),
-    );
-
-    Promise.all(preloadTasks).then((results) => {
-      if (isCancelled) return;
-      const validBanners = results
-        .filter((item) => item.ok)
-        .map((item) => item.src);
-      setActiveBanners(validBanners);
-    });
-
-    return () => {
-      isCancelled = true;
-    };
-  }, [normalizedBanners]);
+  const activeBanners = normalizedBanners;
 
   useEffect(() => {
     if (!activeBanners || activeBanners.length <= 1) return;
@@ -3203,7 +3163,7 @@ function BannerCarousel({ banners }) {
 
   return (
     <div
-      className="w-full h-48 sm:h-64 md:h-80 lg:h-96 bg-slate-900 relative group overflow-hidden"
+      className="w-full h-64 sm:h-72 md:h-80 lg:h-96 bg-slate-900 relative group overflow-hidden"
       onTouchStart={onTouchStart}
       onTouchMove={onTouchMove}
       onTouchEnd={onTouchEnd}
@@ -3221,7 +3181,7 @@ function BannerCarousel({ banners }) {
               loading="eager"
               decoding="async"
               draggable={false}
-              className="w-full h-full object-contain sm:object-cover"
+              className="w-full h-full object-cover"
             />
             <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent sm:from-black/40"></div>
           </div>

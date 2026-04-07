@@ -27,6 +27,17 @@ Este projeto está configurado para:
 VITE_BACKEND_URL=http://localhost:3000
 ```
 
+Em produção, se o frontend estiver publicado separado do backend (ex.: Firebase Hosting para o site e Render/Railway para a API), `VITE_BACKEND_URL` deve apontar para a URL pública do backend. Isso é necessário para:
+
+- pagamentos (`/api/pix` e `/api/checkout/preference`)
+- proxy de imagens externas bloqueadas por hotlink, como `photo.yupoo.com`
+
+Exemplo:
+
+```env
+VITE_BACKEND_URL=https://seu-backend.exemplo.com
+```
+
 ### Backend
 
 1. Crie `loja-backend/.env` com base em [loja-backend/.env.example](loja-backend/.env.example).
@@ -89,3 +100,4 @@ npm run dev
 - Nunca coloque `MP_ACCESS_TOKEN` no frontend.
 - Use token `TEST-...` em homologação e `APP_USR-...` em produção.
 - Para receber confirmação automática de status, configure `MP_WEBHOOK_URL` no backend e um endpoint de webhook.
+- Se o frontend estiver no Firebase Hosting, a regra atual reescreve tudo para `index.html`. Isso significa que `/api/*` não funciona no mesmo domínio sem uma configuração adicional de proxy/rewrite para o backend.
