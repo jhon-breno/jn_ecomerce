@@ -1,4 +1,11 @@
-import React, { useState, useEffect, useRef, useMemo } from "react";
+import React, {
+  useState,
+  useEffect,
+  useRef,
+  useMemo,
+  useCallback,
+} from "react";
+import DOMPurify from "dompurify";
 import {
   ShoppingBag,
   ShoppingCart,
@@ -27,7 +34,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Truck,
-  Map,
+  Map as MapIcon,
   MessageCircle,
   Edit,
   Eye,
@@ -36,6 +43,8 @@ import {
   AlertTriangle,
   Upload,
   Download,
+  ZoomIn,
+  Maximize2,
 } from "lucide-react";
 
 // ATENÇÃO: Para o ambiente local, instale e importe o SDK do Mercado Pago aqui:
@@ -338,11 +347,13 @@ const DEFAULT_PRODUCT_CATALOG = {
     {
       name: "Camisetas",
       subcategories: ["Masculina", "Feminina", "Infantil"],
+      subsubcategories: [],
       featured: true,
     },
     {
       name: "Calcas",
       subcategories: ["Jeans", "Sarja", "Moletom"],
+      subsubcategories: [],
       featured: false,
     },
   ],
@@ -360,6 +371,243 @@ const normalizeTextList = (value) =>
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
+
+const estimateUtf8Bytes = (value) =>
+  new TextEncoder().encode(String(value || "")).length;
+
+const escapeHtml = (value) =>
+  String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+
+const sanitizeDescriptionHtml = (value) =>
+  DOMPurify.sanitize(String(value || ""), {
+    ALLOWED_TAGS: [
+      "p",
+      "br",
+      "strong",
+      "b",
+      "em",
+      "i",
+      "u",
+      "s",
+      "ul",
+      "ol",
+      "li",
+      "blockquote",
+      "h1",
+      "h2",
+      "h3",
+      "h4",
+      "h5",
+      "h6",
+      "a",
+      "img",
+      "span",
+      "div",
+      "table",
+      "thead",
+      "tbody",
+      "tfoot",
+      "tr",
+      "th",
+      "td",
+      "caption",
+      "colgroup",
+      "col",
+    ],
+    ALLOWED_ATTR: [
+      "href",
+      "target",
+      "rel",
+      "src",
+      "alt",
+      "title",
+      "colspan",
+      "rowspan",
+      "scope",
+      "width",
+      "height",
+      "align",
+      "valign",
+    ],
+  });
+
+const toSafeDescriptionHtml = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return "<p>Nenhuma descrição fornecida para este produto.</p>";
+  }
+
+  const hasHtml = /<[a-z][\s\S]*>/i.test(raw);
+  const html = hasHtml
+    ? raw
+    : raw
+        .split(/\n{2,}/)
+        .map(
+          (paragraph) =>
+            `<p>${escapeHtml(paragraph).replace(/\n/g, "<br />")}</p>`,
+        )
+        .join("");
+
+  return sanitizeDescriptionHtml(html);
+};
+
+const stripInlineBase64Images = (html) =>
+  String(html || "").replace(/<img[^>]+src=["']data:[^"']+["'][^>]*>/gi, "");
+
+const buildSizeTableHtmlFromText = (value) => {
+  const text = String(value || "")
+    .replace(/\u00A0/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!text) return "";
+
+  const rowRegex =
+    /((?:\d?\s*XL|[SPMLG])\s*\([^)]+\))\s*(\d{2,3}\s*cm)\s*(\d{2,3}\s*cm)/gi;
+  const rows = [];
+  let match = rowRegex.exec(text);
+  while (match) {
+    rows.push({
+      size: String(match[1] || "")
+        .replace(/\s+/g, " ")
+        .trim(),
+      chest: String(match[2] || "")
+        .replace(/\s+/g, " ")
+        .trim(),
+      length: String(match[3] || "")
+        .replace(/\s+/g, " ")
+        .trim(),
+    });
+    match = rowRegex.exec(text);
+  }
+
+  if (rows.length === 0) return "";
+
+  const body = rows
+    .map(
+      (row) =>
+        `<tr><td>${escapeHtml(row.size)}</td><td>${escapeHtml(row.chest)}</td><td>${escapeHtml(row.length)}</td></tr>`,
+    )
+    .join("");
+
+  return `<table><thead><tr><th>Tamanho</th><th>Largura (Peito)</th><th>Comprimento (Altura)</th></tr></thead><tbody>${body}</tbody></table>`;
+};
+
+const getDescriptionPreviewText = (value, maxLength = 120) => {
+  const text = String(value || "")
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, " ")
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!text) return "";
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength).trimEnd()}...`;
+};
+
+const isInlineDataImage = (value) => /^data:image\//i.test(String(value || ""));
+
+const recompressDataUrlImage = (dataUrl, maxWidth, quality) =>
+  new Promise((resolve) => {
+    if (!isInlineDataImage(dataUrl)) {
+      resolve(dataUrl);
+      return;
+    }
+
+    const img = new Image();
+    img.onload = () => {
+      const originalWidth = img.width || maxWidth;
+      const originalHeight = img.height || maxWidth;
+      const targetWidth = Math.min(maxWidth, originalWidth);
+      const targetHeight = Math.max(
+        1,
+        Math.round(originalHeight * (targetWidth / originalWidth)),
+      );
+
+      const canvas = document.createElement("canvas");
+      canvas.width = targetWidth;
+      canvas.height = targetHeight;
+      const ctx = canvas.getContext("2d");
+
+      if (!ctx) {
+        resolve(dataUrl);
+        return;
+      }
+
+      ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
+      resolve(canvas.toDataURL("image/jpeg", quality));
+    };
+
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+
+const optimizeProductImagesForPayload = async (
+  productData,
+  maxPayloadBytes = 900000,
+) => {
+  const profiles = [
+    { maxWidth: 520, quality: 0.62 },
+    { maxWidth: 460, quality: 0.55 },
+    { maxWidth: 400, quality: 0.5 },
+    { maxWidth: 340, quality: 0.44 },
+  ];
+
+  let bestData = productData;
+  let bestBytes = estimateUtf8Bytes(JSON.stringify(productData));
+  let currentImages = Array.isArray(productData.images)
+    ? productData.images
+    : [];
+
+  for (const profile of profiles) {
+    currentImages = await Promise.all(
+      currentImages.map((img) =>
+        recompressDataUrlImage(img, profile.maxWidth, profile.quality),
+      ),
+    );
+
+    const candidate = {
+      ...bestData,
+      images: currentImages,
+      image: currentImages[0] || "",
+    };
+    const candidateBytes = estimateUtf8Bytes(JSON.stringify(candidate));
+
+    if (candidateBytes < bestBytes) {
+      bestBytes = candidateBytes;
+      bestData = candidate;
+    }
+
+    if (candidateBytes <= maxPayloadBytes) {
+      return { data: candidate, bytes: candidateBytes, optimized: true };
+    }
+  }
+
+  return {
+    data: bestData,
+    bytes: bestBytes,
+    optimized: bestBytes < maxPayloadBytes,
+  };
+};
+
+const getProductSubcategories = (product) => {
+  const fromArray = Array.isArray(product?.subcategories)
+    ? product.subcategories.map((item) => String(item || "").trim())
+    : [];
+  const legacy = String(product?.subcategory || "").trim();
+  const merged = [...fromArray, legacy].filter(Boolean);
+  return [...new Set(merged)];
+};
 
 const normalizeCatalog = (catalog) => {
   const base = catalog || {};
@@ -379,6 +627,11 @@ const normalizeCatalog = (catalog) => {
           featured: Boolean(item?.featured),
           subcategories: Array.isArray(item?.subcategories)
             ? item.subcategories
+                .map((sub) => String(sub || "").trim())
+                .filter(Boolean)
+            : [],
+          subsubcategories: Array.isArray(item?.subsubcategories)
+            ? item.subsubcategories
                 .map((sub) => String(sub || "").trim())
                 .filter(Boolean)
             : [],
@@ -472,6 +725,10 @@ function StoreProductCard({
 }) {
   const { priceTag, discountPct } = getDiscountMeta(product);
   const hasVariations = getProductVariationGroups(product).length > 0;
+  const descriptionPreview = getDescriptionPreviewText(
+    product.description,
+    110,
+  );
 
   return (
     <div
@@ -514,6 +771,11 @@ function StoreProductCard({
         <h3 className="font-bold text-[15px] sm:text-sm md:text-base text-slate-800 mb-2 line-clamp-2 leading-snug min-h-[2.5rem] group-hover:text-indigo-600 transition-colors">
           {product.name}
         </h3>
+        {descriptionPreview && (
+          <p className="text-[11px] sm:text-xs text-slate-500 mb-2 line-clamp-2 leading-relaxed min-h-[2rem]">
+            {descriptionPreview}
+          </p>
+        )}
 
         <div className="mt-auto pt-3 border-t border-slate-100 space-y-2">
           <div className="flex items-end justify-between gap-3">
@@ -1224,7 +1486,7 @@ function StoreFront({ products, user, showToast, storeSettings }) {
         .filter((p) =>
           selectedCategory === "Todas" ? true : p.category === selectedCategory,
         )
-        .map((p) => p.subcategory)
+        .flatMap((p) => getProductSubcategories(p))
         .filter(Boolean),
     ),
   ];
@@ -1298,9 +1560,10 @@ function StoreFront({ products, user, showToast, storeSettings }) {
       .includes(searchTerm.toLowerCase());
     const matchesCategory =
       selectedCategory === "Todas" || p.category === selectedCategory;
+    const productSubcategories = getProductSubcategories(p);
     const matchesSubcategory =
       effectiveSubcategory === "Todas" ||
-      p.subcategory === effectiveSubcategory;
+      productSubcategories.includes(effectiveSubcategory);
     const variationGroups = getProductVariationGroups(p);
 
     const matchesPriceRange =
@@ -2242,10 +2505,338 @@ function CustomerAccountModal({ user, userProfile, orders, close, showToast }) {
   );
 }
 
+// 1.0.4b Image Lightbox — mobile full-screen with pinch-to-zoom
+function ImageLightbox({ images, currentIndex, onClose }) {
+  const [activeIdx, setActiveIdx] = useState(currentIndex);
+  const [scale, setScale] = useState(1);
+  const [translate, setTranslate] = useState({ x: 0, y: 0 });
+  const pinchRef = useRef({ lastDist: null, startScale: 1 });
+  const dragRef = useRef({
+    dragging: false,
+    startX: 0,
+    startY: 0,
+    lastTx: 0,
+    lastTy: 0,
+  });
+
+  const src = images[activeIdx];
+
+  const getTouchDist = (touches) => {
+    const dx = touches[0].clientX - touches[1].clientX;
+    const dy = touches[0].clientY - touches[1].clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+  };
+
+  const resetZoom = useCallback(() => {
+    setScale(1);
+    setTranslate({ x: 0, y: 0 });
+  }, []);
+
+  const handleTouchStart = useCallback(
+    (e) => {
+      if (e.touches.length === 2) {
+        pinchRef.current.lastDist = getTouchDist(e.touches);
+        pinchRef.current.startScale = scale;
+      } else if (e.touches.length === 1 && scale > 1) {
+        dragRef.current.dragging = true;
+        dragRef.current.startX = e.touches[0].clientX - translate.x;
+        dragRef.current.startY = e.touches[0].clientY - translate.y;
+      }
+    },
+    [scale, translate],
+  );
+
+  const handleTouchMove = useCallback((e) => {
+    e.preventDefault();
+    if (e.touches.length === 2 && pinchRef.current.lastDist !== null) {
+      const dist = getTouchDist(e.touches);
+      const ratio = dist / pinchRef.current.lastDist;
+      const newScale = Math.max(
+        1,
+        Math.min(5, pinchRef.current.startScale * ratio),
+      );
+      setScale(newScale);
+      if (newScale <= 1) setTranslate({ x: 0, y: 0 });
+    } else if (e.touches.length === 1 && dragRef.current.dragging) {
+      setTranslate({
+        x: e.touches[0].clientX - dragRef.current.startX,
+        y: e.touches[0].clientY - dragRef.current.startY,
+      });
+    }
+  }, []);
+
+  const handleTouchEnd = useCallback(() => {
+    pinchRef.current.lastDist = null;
+    dragRef.current.dragging = false;
+  }, []);
+
+  const lastTapRef = useRef(0);
+  const handleTap = useCallback(() => {
+    const now = Date.now();
+    if (now - lastTapRef.current < 300) {
+      if (scale > 1) {
+        resetZoom();
+      } else {
+        setScale(2.5);
+      }
+    }
+    lastTapRef.current = now;
+  }, [scale, resetZoom]);
+
+  const goNext = useCallback(
+    (e) => {
+      e.stopPropagation();
+      resetZoom();
+      setActiveIdx((i) => (i + 1) % images.length);
+    },
+    [images.length, resetZoom],
+  );
+
+  const goPrev = useCallback(
+    (e) => {
+      e.stopPropagation();
+      resetZoom();
+      setActiveIdx((i) => (i - 1 + images.length) % images.length);
+    },
+    [images.length, resetZoom],
+  );
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === "Escape") onClose();
+      if (e.key === "ArrowRight" && images.length > 1) {
+        resetZoom();
+        setActiveIdx((i) => (i + 1) % images.length);
+      }
+      if (e.key === "ArrowLeft" && images.length > 1) {
+        resetZoom();
+        setActiveIdx((i) => (i - 1 + images.length) % images.length);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [images.length, onClose, resetZoom]);
+
+  return (
+    <div
+      className="fixed inset-0 z-[150] bg-black/96 flex flex-col print:hidden"
+      onClick={onClose}
+    >
+      {/* Header */}
+      <div
+        className="flex items-center justify-between px-4 pt-4 pb-2 shrink-0"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {images.length > 1 && (
+          <span className="text-white/60 text-sm font-medium">
+            {activeIdx + 1} / {images.length}
+          </span>
+        )}
+        <div className="flex items-center gap-2 ml-auto">
+          {scale > 1 && (
+            <button
+              onClick={resetZoom}
+              className="bg-white/20 hover:bg-white/30 text-white text-xs px-3 py-1.5 rounded-full transition-colors"
+            >
+              Resetar zoom
+            </button>
+          )}
+          <button
+            onClick={onClose}
+            className="bg-white/20 hover:bg-white/30 text-white p-2 rounded-full transition-colors"
+          >
+            <X size={22} />
+          </button>
+        </div>
+      </div>
+
+      {/* Image area */}
+      <div
+        className="flex-1 flex items-center justify-center overflow-hidden touch-none relative"
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        onClick={(e) => {
+          e.stopPropagation();
+          handleTap();
+        }}
+      >
+        <img
+          src={src}
+          alt="Imagem ampliada"
+          draggable={false}
+          className="max-w-full max-h-full object-contain select-none"
+          style={{
+            transform: `scale(${scale}) translate(${translate.x / scale}px, ${translate.y / scale}px)`,
+            transition:
+              dragRef.current.dragging || pinchRef.current.lastDist
+                ? "none"
+                : "transform 0.25s ease",
+            cursor: scale > 1 ? "grab" : "zoom-in",
+            userSelect: "none",
+          }}
+        />
+
+        {/* Prev / Next arrows */}
+        {images.length > 1 && (
+          <>
+            <button
+              onClick={goPrev}
+              className="absolute left-3 top-1/2 -translate-y-1/2 bg-white/20 hover:bg-white/40 text-white p-2.5 rounded-full transition-colors backdrop-blur-sm"
+            >
+              <ChevronLeft size={22} />
+            </button>
+            <button
+              onClick={goNext}
+              className="absolute right-3 top-1/2 -translate-y-1/2 bg-white/20 hover:bg-white/40 text-white p-2.5 rounded-full transition-colors backdrop-blur-sm"
+            >
+              <ChevronRight size={22} />
+            </button>
+          </>
+        )}
+      </div>
+
+      {/* Bottom hint */}
+      <div
+        className="text-center text-white/40 text-xs pb-4 pt-2 shrink-0 select-none"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {scale > 1
+          ? "Arraste para navegar · Toque duplo para sair do zoom"
+          : "Pinça para ampliar · Toque duplo para zoom 2.5×"}
+      </div>
+
+      {/* Thumbnails */}
+      {images.length > 1 && (
+        <div
+          className="flex gap-2 justify-center pb-5 px-4 shrink-0 overflow-x-auto hide-scrollbar"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {images.map((img, i) => (
+            <button
+              key={i}
+              onClick={() => {
+                resetZoom();
+                setActiveIdx(i);
+              }}
+              className={`w-12 h-12 shrink-0 rounded-lg overflow-hidden border-2 transition-all ${activeIdx === i ? "border-white" : "border-white/20 opacity-50 hover:opacity-80"}`}
+            >
+              <img src={img} className="w-full h-full object-cover" alt="" />
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// 1.0.4c Image Zoom Viewer — desktop magnifier + mobile lightbox trigger
+function ImageZoomViewer({ images, currentIndex, alt }) {
+  const [showLens, setShowLens] = useState(false);
+  const [lensPos, setLensPos] = useState({ x: 0, y: 0 });
+  const [bgPos, setBgPos] = useState({ x: 50, y: 50 });
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+  const imgRef = useRef(null);
+
+  const LENS = 220;
+  const ZOOM = 4.5;
+  const src = images[currentIndex] || "";
+
+  const handleMouseMove = useCallback((e) => {
+    const img = imgRef.current;
+    if (!img) return;
+    const rect = img.getBoundingClientRect();
+    const rawX = e.clientX - rect.left;
+    const rawY = e.clientY - rect.top;
+    const x = Math.max(LENS / 2, Math.min(rawX, rect.width - LENS / 2));
+    const y = Math.max(LENS / 2, Math.min(rawY, rect.height - LENS / 2));
+    setLensPos({ x, y });
+    setBgPos({
+      x: (rawX / rect.width) * 100,
+      y: (rawY / rect.height) * 100,
+    });
+  }, []);
+
+  if (!src) return null;
+
+  return (
+    <>
+      <div
+        className="relative w-full h-full group"
+        onMouseEnter={() => setShowLens(true)}
+        onMouseLeave={() => setShowLens(false)}
+        onMouseMove={handleMouseMove}
+      >
+        <img
+          ref={imgRef}
+          src={src}
+          alt={alt}
+          draggable={false}
+          className="w-full h-full object-cover absolute inset-0 select-none"
+          style={{ cursor: showLens ? "crosshair" : "zoom-in" }}
+        />
+
+        {/* Desktop magnifier lens */}
+        {showLens && (
+          <div
+            className="hidden md:block absolute pointer-events-none rounded-full border-[3px] border-white/90 z-30"
+            style={{
+              width: LENS,
+              height: LENS,
+              left: lensPos.x - LENS / 2,
+              top: lensPos.y - LENS / 2,
+              backgroundImage: `url(${src})`,
+              backgroundSize: `${ZOOM * 100}%`,
+              backgroundPosition: `${bgPos.x}% ${bgPos.y}%`,
+              backgroundRepeat: "no-repeat",
+              boxShadow:
+                "0 0 0 1px rgba(0,0,0,0.08), 0 8px 32px rgba(0,0,0,0.35)",
+            }}
+          />
+        )}
+
+        {/* Desktop: click to open lightbox */}
+        <button
+          className="hidden md:flex absolute bottom-3 right-3 z-20 bg-black/50 hover:bg-black/70 text-white p-2 rounded-full transition-colors backdrop-blur-sm items-center gap-1.5 text-xs opacity-0 group-hover:opacity-100"
+          onClick={() => setLightboxOpen(true)}
+          title="Abrir galeria"
+        >
+          <Maximize2 size={14} />
+          <span className="pr-0.5">Ampliar</span>
+        </button>
+
+        {/* Mobile: tap hint + trigger */}
+        <button
+          className="md:hidden absolute inset-0 w-full h-full bg-transparent"
+          onClick={() => setLightboxOpen(true)}
+          aria-label="Ver imagem ampliada"
+        >
+          <span className="absolute bottom-3 left-1/2 -translate-x-1/2 bg-black/55 text-white text-xs px-3 py-1.5 rounded-full backdrop-blur-sm flex items-center gap-1.5 pointer-events-none whitespace-nowrap">
+            <ZoomIn size={13} />
+            Toque para ampliar
+          </span>
+        </button>
+      </div>
+
+      {lightboxOpen && (
+        <ImageLightbox
+          images={images}
+          currentIndex={currentIndex}
+          onClose={() => setLightboxOpen(false)}
+        />
+      )}
+    </>
+  );
+}
+
 // 1.0.5 Product Details Modal
 function ProductModal({ product, close, addToCart }) {
   const variationGroups = getProductVariationGroups(product);
   const { priceTag, discountPct } = getDiscountMeta(product);
+  const descriptionHtml = useMemo(
+    () => toSafeDescriptionHtml(product.description),
+    [product.description],
+  );
 
   const images =
     product.images?.length > 0
@@ -2307,23 +2898,27 @@ function ProductModal({ product, close, addToCart }) {
         <div className="w-full md:w-1/2 bg-slate-100 relative flex flex-col shrink-0 md:max-h-[96vh]">
           <div className="relative w-full aspect-[4/3] sm:aspect-square md:aspect-auto md:flex-1 bg-slate-50 min-h-[220px] md:min-h-0">
             {images.length > 0 ? (
-              <img
-                src={images[currentImgIndex]}
+              <ImageZoomViewer
+                images={images}
+                currentIndex={currentImgIndex}
                 alt={product.name}
-                className="w-full h-full object-cover absolute inset-0"
               />
             ) : (
               <div className="w-full h-full flex items-center justify-center text-slate-300 absolute inset-0">
                 <ImageIcon size={64} />
               </div>
             )}
-            {product.category && (
-              <span className="absolute top-4 left-4 bg-white/90 backdrop-blur-md text-indigo-700 text-xs font-black px-3 py-1.5 rounded-xl border border-white shadow-sm uppercase tracking-wider z-10">
-                {product.subcategory
-                  ? `${product.category} / ${product.subcategory}`
-                  : product.category}
+            {discountPct > 0 ? (
+              <span className="absolute top-4 right-4 bg-emerald-500 text-white text-[15px] font-black px-4 py-2 rounded-2xl shadow-md z-20 pointer-events-none">
+                -{discountPct}%
               </span>
-            )}
+            ) : product.category ? (
+              <span className="absolute top-4 left-4 bg-white/90 backdrop-blur-md text-indigo-700 text-xs font-black px-3 py-1.5 rounded-xl border border-white shadow-sm uppercase tracking-wider z-10 pointer-events-none">
+                {[product.category, product.subcategory, product.subsubcategory]
+                  .filter(Boolean)
+                  .join(" / ")}
+              </span>
+            ) : null}
           </div>
 
           {/* Miniaturas da Galeria */}
@@ -2366,12 +2961,10 @@ function ProductModal({ product, close, addToCart }) {
               {formatCurrencyBRL(product.price)}
             </div>
 
-            <div className="prose prose-sm text-slate-600 mb-6 md:mb-8 max-w-none">
-              <p>
-                {product.description ||
-                  "Nenhuma descrição fornecida para este produto."}
-              </p>
-            </div>
+            <div
+              className="prose prose-sm text-slate-600 mb-6 md:mb-8 max-w-none [&_img]:max-w-full [&_img]:h-auto [&_img]:rounded-xl [&_img]:my-3 [&_a]:text-indigo-600 [&_a]:underline [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:leading-relaxed [&_table]:w-full [&_table]:border-collapse [&_table]:text-sm [&_table]:my-3 [&_th]:border [&_th]:border-slate-300 [&_th]:bg-slate-100 [&_th]:px-2 [&_th]:py-1.5 [&_th]:text-left [&_td]:border [&_td]:border-slate-300 [&_td]:px-2 [&_td]:py-1.5"
+              dangerouslySetInnerHTML={{ __html: descriptionHtml }}
+            />
 
             {/* Variedades (Tamanhos/Cores) */}
             {variationGroups.length > 0 && (
@@ -4238,6 +4831,7 @@ function StatCard({ title, value, icon, color }) {
 }
 
 function ProductManager({ products, showToast, storeSettings }) {
+  const descriptionEditorRef = useRef(null);
   const [isAdding, setIsAdding] = useState(false);
   const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
   const [bulkFileName, setBulkFileName] = useState("");
@@ -4251,7 +4845,9 @@ function ProductManager({ products, showToast, storeSettings }) {
     price: "",
     priceTag: "",
     category: "",
+    subcategories: [],
     subcategory: "",
+    subsubcategory: "",
     showcaseSections: [],
     description: "",
     stock: "",
@@ -4271,6 +4867,62 @@ function ProductManager({ products, showToast, storeSettings }) {
     );
     return selected?.subcategories || [];
   }, [formData.category, productCatalog.categories]);
+
+  const availableSubsubcategories = useMemo(() => {
+    const selected = productCatalog.categories.find(
+      (cat) => cat.name === formData.category,
+    );
+    return selected?.subsubcategories || [];
+  }, [formData.category, productCatalog.categories]);
+
+  const selectedSubcategories = Array.isArray(formData.subcategories)
+    ? formData.subcategories
+    : getProductSubcategories(formData);
+
+  const syncEditorDescription = useCallback((html) => {
+    if (descriptionEditorRef.current) {
+      descriptionEditorRef.current.innerHTML = html;
+    }
+    setFormData((prev) => ({ ...prev, description: html }));
+  }, []);
+
+  const handleInsertSizeTableTemplate = () => {
+    const templateHtml =
+      "<table><thead><tr><th>Tamanho</th><th>Largura (Peito)</th><th>Comprimento (Altura)</th></tr></thead><tbody><tr><td>S (P)</td><td>50 cm</td><td>70 cm</td></tr><tr><td>M (M)</td><td>52 cm</td><td>72 cm</td></tr><tr><td>L (G)</td><td>54 cm</td><td>74 cm</td></tr><tr><td>XL (GG)</td><td>56 cm</td><td>76 cm</td></tr><tr><td>2XL (XG)</td><td>58 cm</td><td>78 cm</td></tr></tbody></table>";
+
+    const currentHtml = String(descriptionEditorRef.current?.innerHTML || "");
+    const nextHtml = currentHtml
+      ? `${currentHtml}<br />${templateHtml}`
+      : templateHtml;
+    syncEditorDescription(nextHtml);
+    showToast("Tabela de medidas inserida na descrição.");
+  };
+
+  useEffect(() => {
+    if (!isAdding || !descriptionEditorRef.current) return;
+    const html = String(formData.description || "");
+    if (descriptionEditorRef.current.innerHTML !== html) {
+      descriptionEditorRef.current.innerHTML = html;
+    }
+  }, [editingId, isAdding]);
+
+  const toggleSubcategory = (subcategory) => {
+    setFormData((prev) => {
+      const current = Array.isArray(prev.subcategories)
+        ? prev.subcategories
+        : getProductSubcategories(prev);
+
+      const next = current.includes(subcategory)
+        ? current.filter((item) => item !== subcategory)
+        : [...current, subcategory];
+
+      return {
+        ...prev,
+        subcategories: next,
+        subcategory: next[0] || "",
+      };
+    });
+  };
 
   const availableShowcaseSections = productCatalog.sections || [];
 
@@ -4403,6 +5055,39 @@ function ProductManager({ products, showToast, storeSettings }) {
     return values;
   };
 
+  const decodeCsvText = async (file) => {
+    try {
+      if (typeof TextDecoder === "undefined" || !file.arrayBuffer) {
+        return await file.text();
+      }
+
+      const buffer = await file.arrayBuffer();
+      const encodings = ["utf-8", "windows-1252", "iso-8859-1", "latin1"];
+      const candidates = encodings
+        .map((encoding) => {
+          try {
+            const text = new TextDecoder(encoding, { fatal: false }).decode(
+              buffer,
+            );
+            const badChars = (text.match(/�/g) || []).length;
+            return { text, badChars };
+          } catch {
+            return null;
+          }
+        })
+        .filter(Boolean);
+
+      if (candidates.length === 0) {
+        return await file.text();
+      }
+
+      candidates.sort((a, b) => a.badChars - b.badChars);
+      return candidates[0].text;
+    } catch {
+      return await file.text();
+    }
+  };
+
   const parseCsvText = (text) => {
     const lines = String(text || "")
       .replace(/\r/g, "")
@@ -4414,15 +5099,22 @@ function ProductManager({ products, showToast, storeSettings }) {
       return [];
     }
 
-    const normalizeHeader = (header) =>
-      String(header || "")
-        .replace(/^\uFEFF/, "")
-        .normalize("NFD")
+    const normalizeHeader = (header) => {
+      const text = String(header || "").replace(/^\uFEFF/, "");
+      let normalizedText = text;
+      try {
+        normalizedText = text.normalize("NFD");
+      } catch {
+        normalizedText = text;
+      }
+
+      return normalizedText
         .replace(/[\u0300-\u036f]/g, "")
         .toLowerCase()
         .replace(/\s+/g, "")
         .replace(/_/g, "")
         .replace(/\./g, "");
+    };
 
     const headerAliasMap = {
       name: "name",
@@ -4439,6 +5131,9 @@ function ProductManager({ products, showToast, storeSettings }) {
       categoria: "category",
       subcategory: "subcategory",
       subcategoria: "subcategory",
+      subsubcategory: "subsubcategory",
+      subsubcategoria: "subsubcategory",
+      segmento: "subsubcategory",
       description: "description",
       descricao: "description",
       desc: "description",
@@ -4673,6 +5368,12 @@ function ProductManager({ products, showToast, storeSettings }) {
       return Number(normalized);
     };
 
+    const parseBulkSubcategories = (value) =>
+      String(value || "")
+        .split(/[|,]/)
+        .map((item) => String(item || "").trim())
+        .filter(Boolean);
+
     rows.forEach((row, index) => {
       const lineNo = index + 2;
       const name = String(row.name || "").trim();
@@ -4724,18 +5425,22 @@ function ProductManager({ products, showToast, storeSettings }) {
         row.variationsByType || row.variationsByTypeJson || "",
         allowedTypes,
       );
-      const showcaseSections = parseShowcaseSectionIds(row.showcaseSections);
+      const rawShowcaseSections = String(row.showcaseSections || "").trim();
+      const showcaseSections = parseShowcaseSectionIds(rawShowcaseSections);
+      const subcategories = parseBulkSubcategories(row.subcategory);
 
       const flattenedVariations = Object.values(variationsByType)
         .flat()
         .join(", ");
 
       productsResult.push({
+        _sourceLineNo: lineNo,
         name,
         price,
         priceTag,
         category: String(row.category || "").trim(),
-        subcategory: String(row.subcategory || "").trim(),
+        subcategories,
+        subcategory: subcategories[0] || "",
         description: String(row.description || "").trim(),
         stock: Math.floor(stock),
         images,
@@ -4754,15 +5459,16 @@ function ProductManager({ products, showToast, storeSettings }) {
     if (!file) return;
 
     try {
-      const text = await file.text();
+      const isJson = file.name.toLowerCase().endsWith(".json");
+      const text = isJson ? await file.text() : await decodeCsvText(file);
       setBulkFileName(file.name);
 
       let rows = [];
-      if (file.name.toLowerCase().endsWith(".json")) {
+      if (isJson) {
         const parsed = JSON.parse(text);
         rows = Array.isArray(parsed) ? parsed : [];
       } else {
-        rows = parseCsvText(text);
+        rows = parseCsvText(String(text || "").replace(/\u0000/g, ""));
       }
 
       const { productsResult, errorsResult } =
@@ -4775,8 +5481,12 @@ function ProductManager({ products, showToast, storeSettings }) {
       }
     } catch (error) {
       setBulkProductsPreview([]);
-      setBulkErrors(["Não foi possível ler o arquivo. Verifique o formato."]);
-      showToast("Falha ao processar arquivo de cadastro massivo.", "error");
+      const reason = error?.message || "Não foi possível ler o arquivo.";
+      setBulkErrors([`Falha ao ler arquivo: ${reason}`]);
+      showToast(
+        `Falha ao processar arquivo de cadastro massivo: ${reason}`,
+        "error",
+      );
     } finally {
       e.target.value = "";
     }
@@ -4787,23 +5497,63 @@ function ProductManager({ products, showToast, storeSettings }) {
 
     setIsBulkImporting(true);
     let importedCount = 0;
+    const importErrors = [];
 
     try {
       for (const productData of bulkProductsPreview) {
-        await addDoc(
-          collection(db, "artifacts", appId, "public", "data", "products"),
-          { ...productData, createdAt: serverTimestamp() },
-        );
-        importedCount += 1;
+        try {
+          const { _sourceLineNo, ...cleanData } = productData;
+          const candidateBytes = estimateUtf8Bytes(JSON.stringify(cleanData));
+
+          let finalData = cleanData;
+          if (candidateBytes > 900000) {
+            const optimized = await optimizeProductImagesForPayload(
+              cleanData,
+              900000,
+            );
+            finalData = optimized.data;
+          }
+
+          const finalBytes = estimateUtf8Bytes(JSON.stringify(finalData));
+          if (finalBytes > 900000) {
+            importErrors.push(
+              `Linha ${_sourceLineNo || "?"}: produto excede limite de tamanho (${Math.round(finalBytes / 1024)}KB).`,
+            );
+            continue;
+          }
+
+          await addDoc(
+            collection(db, "artifacts", appId, "public", "data", "products"),
+            { ...finalData, createdAt: serverTimestamp() },
+          );
+          importedCount += 1;
+        } catch (error) {
+          const lineNo = productData?._sourceLineNo || "?";
+          const reason = error?.message || error?.code || "erro desconhecido";
+          importErrors.push(`Linha ${lineNo}: ${reason}`);
+        }
       }
 
-      showToast(`${importedCount} produto(s) importado(s) com sucesso!`);
+      if (importedCount > 0) {
+        showToast(`${importedCount} produto(s) importado(s) com sucesso!`);
+      }
+
+      if (importErrors.length > 0) {
+        setBulkErrors(importErrors.slice(0, 40));
+        showToast(
+          `Importacao parcial: ${importedCount} ok, ${importErrors.length} com erro.`,
+          "error",
+        );
+        return;
+      }
+
       setIsBulkModalOpen(false);
       setBulkProductsPreview([]);
       setBulkErrors([]);
       setBulkFileName("");
-    } catch {
-      showToast("Erro ao importar produtos em massa.", "error");
+    } catch (error) {
+      const reason = error?.message || error?.code || "erro desconhecido";
+      showToast(`Erro ao importar produtos em massa: ${reason}`, "error");
     } finally {
       setIsBulkImporting(false);
     }
@@ -4812,6 +5562,11 @@ function ProductManager({ products, showToast, storeSettings }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
+      const rawDescription = descriptionEditorRef.current
+        ? descriptionEditorRef.current.innerHTML
+        : formData.description;
+      const normalizedDescription = sanitizeDescriptionHtml(rawDescription);
+
       const allowedTypes = new Set(
         (productCatalog.variationTypes || [])
           .map((item) => String(item?.name || "").trim())
@@ -4842,10 +5597,13 @@ function ProductManager({ products, showToast, storeSettings }) {
 
       const productData = {
         ...formData,
+        description: normalizedDescription,
         price: Number(formData.price),
         priceTag: normalizedPriceTag,
         stock: Number(formData.stock),
-        subcategory: formData.subcategory || "",
+        subcategories: selectedSubcategories,
+        subcategory: selectedSubcategories[0] || "",
+        subsubcategory: formData.subsubcategory || "",
         showcaseSections: Array.isArray(formData.showcaseSections)
           ? formData.showcaseSections
           : [],
@@ -4854,23 +5612,84 @@ function ProductManager({ products, showToast, storeSettings }) {
         image: formData.images?.[0] || "", // Mantém compatibilidade com dados antigos
       };
 
+      let finalProductData = productData;
+      let payloadBytes = estimateUtf8Bytes(JSON.stringify(finalProductData));
+      const hasInlineBase64Image = /<img[^>]+src=["']data:/i.test(
+        normalizedDescription,
+      );
+
+      // Quando a descrição tem imagem inline (base64), tentamos salvar removendo apenas essas imagens.
+      if (payloadBytes > 900000 && hasInlineBase64Image) {
+        const strippedDescription = sanitizeDescriptionHtml(
+          stripInlineBase64Images(normalizedDescription),
+        );
+        const strippedPayload = {
+          ...finalProductData,
+          description: strippedDescription,
+        };
+        const strippedBytes = estimateUtf8Bytes(
+          JSON.stringify(strippedPayload),
+        );
+
+        if (strippedBytes <= 900000) {
+          finalProductData = strippedPayload;
+          payloadBytes = strippedBytes;
+          showToast(
+            "Descricao salva sem imagens coladas (base64). Use URL para manter imagens no texto.",
+            "error",
+          );
+        }
+      }
+
+      // Se o peso vier da galeria, tenta compressao progressiva automaticamente.
+      if (payloadBytes > 900000) {
+        const optimization = await optimizeProductImagesForPayload(
+          finalProductData,
+          900000,
+        );
+
+        if (optimization.bytes < payloadBytes) {
+          finalProductData = optimization.data;
+          payloadBytes = optimization.bytes;
+          showToast(
+            `Galeria comprimida automaticamente para ${Math.round(payloadBytes / 1024)}KB.`,
+            "success",
+          );
+        }
+      }
+
+      const descriptionBytes = estimateUtf8Bytes(finalProductData.description);
+      const galleryBytes = estimateUtf8Bytes(
+        JSON.stringify(finalProductData.images || []),
+      );
+
+      if (payloadBytes > 900000) {
+        return showToast(
+          `Produto muito grande (${Math.round(payloadBytes / 1024)}KB). Descricao: ${Math.round(descriptionBytes / 1024)}KB, galeria: ${Math.round(galleryBytes / 1024)}KB. Reduza quantidade de imagens no produto.`,
+          "error",
+        );
+      }
+
       if (editingId) {
         await updateDoc(
           doc(db, "artifacts", appId, "public", "data", "products", editingId),
-          { ...productData, updatedAt: serverTimestamp() },
+          { ...finalProductData, updatedAt: serverTimestamp() },
         );
         showToast("Produto atualizado com sucesso!");
       } else {
         await addDoc(
           collection(db, "artifacts", appId, "public", "data", "products"),
-          { ...productData, createdAt: serverTimestamp() },
+          { ...finalProductData, createdAt: serverTimestamp() },
         );
         showToast("Produto salvo com sucesso!");
       }
 
       closeForm();
     } catch (error) {
-      showToast("Erro ao salvar", "error");
+      console.error("ERRO AO SALVAR PRODUTO", error);
+      const debugMessage =
+        error?.message || error?.code || "Falha desconhecida ao salvar";
+      showToast(`Erro ao salvar: ${debugMessage}`, "error");
     }
   };
 
@@ -4880,7 +5699,9 @@ function ProductManager({ products, showToast, storeSettings }) {
       price: product.price || "",
       priceTag: product.priceTag || "",
       category: product.category || "",
-      subcategory: product.subcategory || "",
+      subcategories: getProductSubcategories(product),
+      subcategory: String(product.subcategory || "").trim(),
+      subsubcategory: product.subsubcategory || "",
       showcaseSections: Array.isArray(product.showcaseSections)
         ? product.showcaseSections
         : [],
@@ -4923,7 +5744,9 @@ function ProductManager({ products, showToast, storeSettings }) {
       price: "",
       priceTag: "",
       category: "",
+      subcategories: [],
       subcategory: "",
+      subsubcategory: "",
       showcaseSections: [],
       description: "",
       stock: "",
@@ -5052,7 +5875,9 @@ function ProductManager({ products, showToast, storeSettings }) {
                   setFormData({
                     ...formData,
                     category: e.target.value,
+                    subcategories: [],
                     subcategory: "",
+                    subsubcategory: "",
                   })
                 }
                 className="p-3 border rounded-lg outline-none focus:border-indigo-400 bg-white"
@@ -5066,23 +5891,55 @@ function ProductManager({ products, showToast, storeSettings }) {
               </select>
             </div>
 
+            <div className="flex flex-col md:col-span-2">
+              <label className="text-xs font-bold text-slate-500 mb-2 uppercase tracking-wider">
+                Subcategorias (pode selecionar mais de uma)
+              </label>
+              {availableSubcategories.length > 0 ? (
+                <div className="flex flex-wrap gap-2 p-2.5 border rounded-lg bg-white min-h-[48px]">
+                  {availableSubcategories.map((subcategory) => {
+                    const isActive =
+                      selectedSubcategories.includes(subcategory);
+                    return (
+                      <button
+                        key={subcategory}
+                        type="button"
+                        onClick={() => toggleSubcategory(subcategory)}
+                        className={`px-3 py-1.5 rounded-full text-sm font-semibold border transition ${
+                          isActive
+                            ? "bg-indigo-600 text-white border-indigo-600"
+                            : "bg-slate-50 text-slate-700 border-slate-200 hover:border-indigo-300"
+                        }`}
+                      >
+                        {subcategory}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="p-3 border rounded-lg bg-slate-50 text-sm text-slate-500">
+                  Sem subcategorias nessa categoria.
+                </div>
+              )}
+            </div>
+
             <div className="flex flex-col">
               <select
-                value={formData.subcategory}
+                value={formData.subsubcategory}
                 onChange={(e) =>
-                  setFormData({ ...formData, subcategory: e.target.value })
+                  setFormData({ ...formData, subsubcategory: e.target.value })
                 }
                 className="p-3 border rounded-lg outline-none focus:border-indigo-400 bg-white"
-                disabled={availableSubcategories.length === 0}
+                disabled={availableSubsubcategories.length === 0}
               >
                 <option value="">
-                  {availableSubcategories.length > 0
-                    ? "Selecione a subcategoria"
-                    : "Sem subcategorias nessa categoria"}
+                  {availableSubsubcategories.length > 0
+                    ? "Selecione o segmento"
+                    : "Sem segmentos nessa categoria"}
                 </option>
-                {availableSubcategories.map((subcategory) => (
-                  <option key={subcategory} value={subcategory}>
-                    {subcategory}
+                {availableSubsubcategories.map((seg) => (
+                  <option key={seg} value={seg}>
+                    {seg}
                   </option>
                 ))}
               </select>
@@ -5215,8 +6072,42 @@ function ProductManager({ products, showToast, storeSettings }) {
               onChange={(e) =>
                 setFormData({ ...formData, description: e.target.value })
               }
-              className="md:col-span-2 p-3 border rounded-lg outline-none focus:border-indigo-400"
+              className="hidden"
             />
+
+            <div className="md:col-span-2 space-y-2">
+              <label className="text-xs font-black text-slate-500 uppercase tracking-wider">
+                Descrição rica (aceita HTML)
+              </label>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={handleInsertSizeTableTemplate}
+                  className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold"
+                >
+                  Inserir Tabela de Medidas
+                </button>
+              </div>
+              <div
+                ref={descriptionEditorRef}
+                contentEditable
+                suppressContentEditableWarning
+                onInput={(e) => {
+                  const html = e.currentTarget?.innerHTML || "";
+                  setFormData((prev) => ({
+                    ...prev,
+                    description: html,
+                  }));
+                }}
+                className="min-h-[180px] md:min-h-[220px] p-3 border rounded-lg outline-none focus:border-indigo-400 bg-white"
+                style={{ whiteSpace: "pre-wrap" }}
+              />
+              <p className="text-xs text-slate-500">
+                Pode colar conteúdo formatado (texto com estilos e HTML). Se
+                colar imagem inline (base64), o Firestore pode recusar por
+                limite de tamanho do documento.
+              </p>
+            </div>
           </div>
           <button
             type="submit"
@@ -6768,6 +7659,7 @@ function AdminSettings({ showToast, storeSettings }) {
   const [newCategory, setNewCategory] = useState({
     name: "",
     subcategories: "",
+    subsubcategories: "",
     featured: false,
   });
   const [newSectionName, setNewSectionName] = useState("");
@@ -6780,6 +7672,7 @@ function AdminSettings({ showToast, storeSettings }) {
   const [editCategoryDraft, setEditCategoryDraft] = useState({
     name: "",
     subcategories: "",
+    subsubcategories: "",
     featured: false,
   });
   const [newVariationType, setNewVariationType] = useState({
@@ -6792,27 +7685,91 @@ function AdminSettings({ showToast, storeSettings }) {
     options: "",
   });
   const [contactPhonesDraft, setContactPhonesDraft] = useState("");
+  const [isAutoSaving, setIsAutoSaving] = useState(false);
+  const lastPersistedConfigRef = useRef("");
+
+  const buildSettingsPayload = useCallback(
+    (sourceConfig) => ({
+      ...sourceConfig,
+      contactPhones: normalizePhoneList(sourceConfig.contactPhones),
+      socialLinks: normalizeSocialLinks(sourceConfig.socialLinks),
+      catalog: normalizeCatalog(sourceConfig.catalog),
+    }),
+    [],
+  );
+
+  const persistSettings = useCallback(
+    async (sourceConfig, options = {}) => {
+      const { withToast = false } = options;
+      const payload = buildSettingsPayload(sourceConfig);
+      await setDoc(
+        doc(db, "artifacts", appId, "public", "data", "settings", "config"),
+        payload,
+        { merge: true },
+      );
+      lastPersistedConfigRef.current = JSON.stringify(payload);
+      if (withToast) {
+        showToast("Configurações salvas e aplicadas na loja!");
+      }
+    },
+    [buildSettingsPayload, showToast],
+  );
 
   // Carrega as configurações globais para o formulário local
   useEffect(() => {
     if (storeSettings) {
-      setConfig((prev) => ({
-        ...prev,
-        ...storeSettings,
-        catalog: normalizeCatalog(storeSettings.catalog),
-        socialLinks: normalizeSocialLinks(storeSettings.socialLinks),
-        contactPhones: normalizePhoneList(storeSettings.contactPhones),
-        shipping: storeSettings.shipping || {
-          pickupEnabled: true,
-          correiosBaseRate: 25.0,
-          localCities: [],
-        },
-      }));
+      setConfig((prev) => {
+        const hydratedConfig = {
+          ...prev,
+          ...storeSettings,
+          catalog: normalizeCatalog(storeSettings.catalog),
+          socialLinks: normalizeSocialLinks(storeSettings.socialLinks),
+          contactPhones: normalizePhoneList(storeSettings.contactPhones),
+          shipping: storeSettings.shipping || {
+            pickupEnabled: true,
+            correiosBaseRate: 25.0,
+            localCities: [],
+          },
+        };
+
+        lastPersistedConfigRef.current = JSON.stringify(
+          buildSettingsPayload(hydratedConfig),
+        );
+
+        return hydratedConfig;
+      });
       setContactPhonesDraft(
         normalizePhoneList(storeSettings.contactPhones).join("\n"),
       );
     }
-  }, [storeSettings]);
+  }, [buildSettingsPayload, storeSettings]);
+
+  useEffect(() => {
+    if (!storeSettings) return;
+
+    const payload = buildSettingsPayload(config);
+    const serializedPayload = JSON.stringify(payload);
+    if (serializedPayload === lastPersistedConfigRef.current) return;
+
+    const timeoutId = setTimeout(async () => {
+      try {
+        setIsAutoSaving(true);
+        await setDoc(
+          doc(db, "artifacts", appId, "public", "data", "settings", "config"),
+          payload,
+          { merge: true },
+        );
+        lastPersistedConfigRef.current = serializedPayload;
+      } catch (error) {
+        console.error(error);
+        showToast("Erro ao salvar automaticamente", "error");
+      } finally {
+        setIsAutoSaving(false);
+      }
+    }, 700);
+
+    return () => clearTimeout(timeoutId);
+  }, [buildSettingsPayload, config, showToast, storeSettings]);
 
   // Redimensionador de Imagens (evita limite de 1MB do Firestore)
   const processImage = (file, maxWidth, quality = 0.8) => {
@@ -6895,6 +7852,7 @@ function AdminSettings({ showToast, storeSettings }) {
     }
 
     const subcategories = normalizeTextList(newCategory.subcategories);
+    const subsubcategories = normalizeTextList(newCategory.subsubcategories);
     const alreadyExists = (config.catalog?.categories || []).some(
       (item) => item.name.toLowerCase() === name.toLowerCase(),
     );
@@ -6909,11 +7867,21 @@ function AdminSettings({ showToast, storeSettings }) {
         ...normalizeCatalog(prev.catalog),
         categories: [
           ...(prev.catalog?.categories || []),
-          { name, subcategories, featured: Boolean(newCategory.featured) },
+          {
+            name,
+            subcategories,
+            subsubcategories,
+            featured: Boolean(newCategory.featured),
+          },
         ],
       },
     }));
-    setNewCategory({ name: "", subcategories: "", featured: false });
+    setNewCategory({
+      name: "",
+      subcategories: "",
+      subsubcategories: "",
+      featured: false,
+    });
   };
 
   const handleAddSection = () => {
@@ -7048,13 +8016,19 @@ function AdminSettings({ showToast, storeSettings }) {
     setEditCategoryDraft({
       name: category.name,
       subcategories: (category.subcategories || []).join(", "),
+      subsubcategories: (category.subsubcategories || []).join(", "),
       featured: Boolean(category.featured),
     });
   };
 
   const handleCancelEditCategory = () => {
     setEditingCategoryName("");
-    setEditCategoryDraft({ name: "", subcategories: "", featured: false });
+    setEditCategoryDraft({
+      name: "",
+      subcategories: "",
+      subsubcategories: "",
+      featured: false,
+    });
   };
 
   const handleSaveCategoryEdit = () => {
@@ -7083,6 +8057,9 @@ function AdminSettings({ showToast, storeSettings }) {
                 name: nextName,
                 subcategories: normalizeTextList(
                   editCategoryDraft.subcategories,
+                ),
+                subsubcategories: normalizeTextList(
+                  editCategoryDraft.subsubcategories,
                 ),
                 featured: Boolean(editCategoryDraft.featured),
               }
@@ -7184,20 +8161,9 @@ function AdminSettings({ showToast, storeSettings }) {
   };
 
   const saveSettings = async (e) => {
-    e.preventDefault();
+    if (e?.preventDefault) e.preventDefault();
     try {
-      const payload = {
-        ...config,
-        contactPhones: normalizePhoneList(contactPhonesDraft),
-        socialLinks: normalizeSocialLinks(config.socialLinks),
-      };
-
-      await setDoc(
-        doc(db, "artifacts", appId, "public", "data", "settings", "config"),
-        payload,
-        { merge: true },
-      );
-      showToast("Configurações salvas e aplicadas na loja!");
+      await persistSettings(config, { withToast: true });
     } catch (error) {
       console.error(error);
       showToast("Erro ao salvar", "error");
@@ -7214,7 +8180,7 @@ function AdminSettings({ showToast, storeSettings }) {
           onClick={saveSettings}
           className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-6 rounded-lg transition shadow-sm w-full sm:w-auto"
         >
-          Salvar Alterações
+          {isAutoSaving ? "Salvando..." : "Salvar Alterações"}
         </button>
       </div>
 
@@ -7473,7 +8439,7 @@ function AdminSettings({ showToast, storeSettings }) {
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
           <div className="space-y-4">
             <h4 className="text-sm font-black uppercase tracking-wider text-slate-600">
-              Tabela de Categorias e Subcategorias
+              Tabela de Categorias, Subcategorias e Segmentos
             </h4>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 bg-slate-50 p-3 rounded-xl border border-slate-200">
@@ -7493,6 +8459,17 @@ function AdminSettings({ showToast, storeSettings }) {
                   setNewCategory({
                     ...newCategory,
                     subcategories: e.target.value,
+                  })
+                }
+              />
+              <input
+                placeholder="Segmentos / 3o nivel (virgula) - ex: Torcedor, Jogador"
+                className="sm:col-span-3 p-2.5 border rounded-lg text-sm outline-none"
+                value={newCategory.subsubcategories}
+                onChange={(e) =>
+                  setNewCategory({
+                    ...newCategory,
+                    subsubcategories: e.target.value,
                   })
                 }
               />
@@ -7524,6 +8501,7 @@ function AdminSettings({ showToast, storeSettings }) {
                   <tr>
                     <th className="text-left p-3">Categoria</th>
                     <th className="text-left p-3">Subcategorias</th>
+                    <th className="text-left p-3">Segmentos</th>
                     <th className="text-left p-3">Destaque</th>
                     <th className="text-right p-3">Ação</th>
                   </tr>
@@ -7562,6 +8540,23 @@ function AdminSettings({ showToast, storeSettings }) {
                           />
                         ) : (
                           category.subcategories?.join(", ") || "-"
+                        )}
+                      </td>
+                      <td className="p-3 text-slate-600">
+                        {editingCategoryName === category.name ? (
+                          <input
+                            value={editCategoryDraft.subsubcategories}
+                            onChange={(e) =>
+                              setEditCategoryDraft((prev) => ({
+                                ...prev,
+                                subsubcategories: e.target.value,
+                              }))
+                            }
+                            placeholder="Segmentos separados por virgula"
+                            className="w-full p-2 border border-slate-200 rounded-lg text-sm outline-none"
+                          />
+                        ) : (
+                          category.subsubcategories?.join(", ") || "-"
                         )}
                       </td>
                       <td className="p-3 text-slate-600">
@@ -7794,14 +8789,24 @@ function AdminSettings({ showToast, storeSettings }) {
               <textarea
                 rows={5}
                 value={contactPhonesDraft}
-                onChange={(e) => setContactPhonesDraft(e.target.value)}
-                onBlur={() =>
-                  setContactPhonesDraft(
-                    normalizePhoneList(contactPhonesDraft)
-                      .map((phone) => formatContactPhone(phone))
-                      .join("\n"),
-                  )
-                }
+                onChange={(e) => {
+                  const draft = e.target.value;
+                  setContactPhonesDraft(draft);
+                  setConfig((prev) => ({
+                    ...prev,
+                    contactPhones: normalizePhoneList(draft),
+                  }));
+                }}
+                onBlur={(e) => {
+                  const normalizedPhones = normalizePhoneList(e.target.value)
+                    .map((phone) => formatContactPhone(phone))
+                    .join("\n");
+                  setContactPhonesDraft(normalizedPhones);
+                  setConfig((prev) => ({
+                    ...prev,
+                    contactPhones: normalizePhoneList(normalizedPhones),
+                  }));
+                }}
                 placeholder="(11) 99999-9999\n(11) 3333-3333"
                 className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
               />
@@ -8039,7 +9044,7 @@ function AdminSettings({ showToast, storeSettings }) {
                     className="flex justify-between items-center bg-white p-3 border rounded-lg shadow-sm"
                   >
                     <div className="flex items-center gap-2">
-                      <Map size={16} className="text-slate-400" />
+                      <MapIcon size={16} className="text-slate-400" />
                       <span className="font-semibold text-sm">
                         {city.name} - {city.state}
                       </span>

@@ -1,3 +1,3 @@
-name,price,priceTag,category,subcategory,description,stock,showcaseSections,images,variationsByType
-Camiseta Premium,149.9,199.9,Camisetas,Masculina,Camiseta em algodao premium,25,"Novidades da Semana|Ofertas em Destaque",https://exemplo.com/camisa1.jpg|https://exemplo.com/camisa2.jpg,"Tamanho:PP|P|M|G|GG;Cor:Preto|Branco|Azul"
-Calca Jeans Slim,219.9,289.9,Calcas,Jeans,Calca jeans com elastano,12,"Jeans em Alta",https://exemplo.com/calca1.jpg|https://exemplo.com/calca2.jpg,"Tamanho:38|40|42|44;Cor:Azul Escuro|Preto"
+name;price;priceTag;category;subcategory;subsubcategory;description;stock;images;variationsByType;showcaseSections
+Camisa Argentina Copa 2026 Reserva Torcedor;149.99;499.99;Camisa Time;Selecao|Copa do Mundo;Torcedor;Camisa Argentina Reserva;100;https://photo.yupoo.com/minkang/50c94a85/b09b3ded.jpg|https://photo.yupoo.com/minkang/2815a392/43f8f90e.jpg|https://photo.yupoo.com/minkang/1e835537/0f2e716d.jpg;Tamanho:P|M|G|GG|XGG;Copa do Mundo|Selecao
+Camisa Brasil Home Jogador 2026;159.90;329.90;Camisa Time;Selecao|Copa do Mundo;Jogador;Versao jogador com tecido leve;80;https://exemplo.com/brasil1.jpg|https://exemplo.com/brasil2.jpg;Tamanho:P|M|G|GG;Copa do Mundo|Selecao
