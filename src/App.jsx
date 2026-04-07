@@ -3099,10 +3099,29 @@ function BannerCarousel({ banners }) {
   const [touchStartX, setTouchStartX] = useState(null);
   const [touchEndX, setTouchEndX] = useState(null);
 
+  const extractBannerUrl = (item) => {
+    if (typeof item === "string") {
+      return item;
+    }
+
+    if (item && typeof item === "object") {
+      return (
+        item.url ||
+        item.src ||
+        item.image ||
+        item.imageUrl ||
+        item.bannerUrl ||
+        ""
+      );
+    }
+
+    return "";
+  };
+
   const normalizedBanners = useMemo(
     () =>
       (Array.isArray(banners) ? banners : [])
-        .map((item) => String(item || "").trim())
+        .map((item) => String(extractBannerUrl(item) || "").trim())
         .map((item) => normalizeExternalImageUrl(item))
         .filter(Boolean),
     [banners],
@@ -3176,7 +3195,7 @@ function BannerCarousel({ banners }) {
         {activeBanners.map((banner, index) => (
           <div key={index} className="min-w-full h-full relative shrink-0">
             <img
-              src={normalizeExternalImageUrl(banner)}
+              src={banner}
               alt={`Banner ${index + 1}`}
               loading="eager"
               decoding="async"
@@ -7052,6 +7071,8 @@ function PointOfSale({ products, showToast, storeSettings }) {
 function OrdersList({ orders, showToast }) {
   const [savingOrderId, setSavingOrderId] = useState(null);
   const [trackingDrafts, setTrackingDrafts] = useState({});
+  const [orderToDelete, setOrderToDelete] = useState(null);
+  const stockReturnStatuses = new Set(["estornado", "cancelado"]);
 
   const statusCatalog = {
     pendente_pagamento: {
@@ -7110,16 +7131,85 @@ function OrdersList({ orders, showToast }) {
     return ["pendente_pagamento", "concluido", "estornado", "cancelado"];
   };
 
+  const applyOrderStockAdjustment = async (order, mode) => {
+    const items = Array.isArray(order?.items) ? order.items : [];
+
+    for (const item of items) {
+      if (!item?.id) continue;
+
+      const qty = Number(item.qty || 0);
+      if (!Number.isFinite(qty) || qty <= 0) continue;
+
+      const productRef = doc(
+        db,
+        "artifacts",
+        appId,
+        "public",
+        "data",
+        "products",
+        item.id,
+      );
+      const productSnap = await getDoc(productRef);
+      if (!productSnap.exists()) continue;
+
+      const currentStock = Number(productSnap.data()?.stock || 0);
+      const nextStock =
+        mode === "restore"
+          ? currentStock + qty
+          : Math.max(0, currentStock - qty);
+
+      await updateDoc(productRef, { stock: nextStock });
+    }
+  };
+
+  const updateOrderStatusWithStock = async (
+    order,
+    nextStatus,
+    actionLabel,
+    extraPayload = {},
+  ) => {
+    const isReturningStockStatus = stockReturnStatuses.has(nextStatus);
+    const hasStockRestored = Boolean(order.stockRestored);
+
+    if (isReturningStockStatus && !hasStockRestored) {
+      await applyOrderStockAdjustment(order, "restore");
+    }
+
+    if (!isReturningStockStatus && hasStockRestored) {
+      await applyOrderStockAdjustment(order, "deduct");
+    }
+
+    const payload = {
+      status: nextStatus,
+      statusUpdatedAt: serverTimestamp(),
+      statusHistory: statusHistoryPush(order, nextStatus, actionLabel),
+      ...extraPayload,
+    };
+
+    if (isReturningStockStatus && !hasStockRestored) {
+      payload.stockRestored = true;
+      payload.stockRestoredAt = serverTimestamp();
+    }
+
+    if (!isReturningStockStatus && hasStockRestored) {
+      payload.stockRestored = false;
+      payload.stockRestoredAt = null;
+      payload.stockReappliedAt = serverTimestamp();
+    }
+
+    await updateDoc(
+      doc(db, "artifacts", appId, "public", "data", "orders", order.id),
+      payload,
+    );
+  };
+
   const handleStatusChange = async (order, nextStatus) => {
     if (!order?.id || !nextStatus) return;
+    if (nextStatus === getOrderStatus(order)) return;
+
     setSavingOrderId(order.id);
     try {
-      const payload = {
-        status: nextStatus,
-        statusUpdatedAt: serverTimestamp(),
-        statusHistory: statusHistoryPush(order, nextStatus, "status_update"),
-      };
-
+      const payload = {};
       if (nextStatus === "enviado" && !order.shippedAt) {
         payload.shippedAt = serverTimestamp();
       }
@@ -7127,8 +7217,10 @@ function OrdersList({ orders, showToast }) {
         payload.deliveredAt = serverTimestamp();
       }
 
-      await updateDoc(
-        doc(db, "artifacts", appId, "public", "data", "orders", order.id),
+      await updateOrderStatusWithStock(
+        order,
+        nextStatus,
+        "status_update",
         payload,
       );
       showToast("Status do pedido atualizado com sucesso!");
@@ -7201,22 +7293,46 @@ function OrdersList({ orders, showToast }) {
 
     setSavingOrderId(order.id);
     try {
-      await updateDoc(
-        doc(db, "artifacts", appId, "public", "data", "orders", order.id),
-        {
-          status: "estornado",
-          refundedAt: serverTimestamp(),
-          statusUpdatedAt: serverTimestamp(),
-          refundRequestedBy: "painel_admin",
-          statusHistory: statusHistoryPush(order, "estornado", "refund"),
-        },
-      );
+      await updateOrderStatusWithStock(order, "estornado", "refund", {
+        refundedAt: serverTimestamp(),
+        refundRequestedBy: "painel_admin",
+      });
       showToast("Pedido marcado como estornado.");
     } catch (error) {
       console.error("Erro ao estornar pedido:", error);
       showToast("Erro ao estornar pedido", "error");
     } finally {
       setSavingOrderId(null);
+    }
+  };
+
+  const executeDeleteOrder = async () => {
+    if (!orderToDelete) return;
+
+    const order = orders.find((item) => item.id === orderToDelete);
+    setSavingOrderId(orderToDelete);
+    try {
+      if (order) {
+        const status = getOrderStatus(order);
+        const hasStockRestored = Boolean(order.stockRestored);
+        const shouldRestoreBeforeDelete =
+          !hasStockRestored && !stockReturnStatuses.has(status);
+
+        if (shouldRestoreBeforeDelete) {
+          await applyOrderStockAdjustment(order, "restore");
+        }
+      }
+
+      await deleteDoc(
+        doc(db, "artifacts", appId, "public", "data", "orders", orderToDelete),
+      );
+      showToast("Compra excluída com sucesso!");
+    } catch (error) {
+      console.error("Erro ao excluir compra:", error);
+      showToast("Erro ao excluir compra", "error");
+    } finally {
+      setSavingOrderId(null);
+      setOrderToDelete(null);
     }
   };
 
@@ -7336,17 +7452,26 @@ function OrdersList({ orders, showToast }) {
                   R$ {Number(o.total).toFixed(2)}
                 </td>
                 <td className="p-4 text-center min-w-[150px]">
-                  {o.type === "online" ? (
+                  <div className="flex items-center justify-center gap-2">
+                    {o.type === "online" ? (
+                      <button
+                        onClick={() => handleRefund(o)}
+                        disabled={isSaving || status === "estornado"}
+                        className="bg-rose-100 text-rose-700 hover:bg-rose-200 disabled:bg-slate-100 disabled:text-slate-400 text-xs font-bold px-3 py-2 rounded-lg"
+                      >
+                        Estornar
+                      </button>
+                    ) : (
+                      <span className="text-xs text-slate-400">-</span>
+                    )}
                     <button
-                      onClick={() => handleRefund(o)}
-                      disabled={isSaving || status === "estornado"}
-                      className="bg-rose-100 text-rose-700 hover:bg-rose-200 disabled:bg-slate-100 disabled:text-slate-400 text-xs font-bold px-3 py-2 rounded-lg"
+                      onClick={() => setOrderToDelete(o.id)}
+                      disabled={isSaving}
+                      className="bg-slate-100 text-slate-700 hover:bg-slate-200 disabled:bg-slate-100 disabled:text-slate-400 text-xs font-bold px-3 py-2 rounded-lg"
                     >
-                      Estornar
+                      Excluir
                     </button>
-                  ) : (
-                    <span className="text-xs text-slate-400">-</span>
-                  )}
+                  </div>
                 </td>
               </tr>
             );
@@ -7360,6 +7485,15 @@ function OrdersList({ orders, showToast }) {
           )}
         </tbody>
       </table>
+
+      <ConfirmModal
+        isOpen={!!orderToDelete}
+        title="Excluir Compra"
+        message="Tem certeza que deseja excluir esta compra? Esta ação remove o pedido do banco de dados e não pode ser desfeita."
+        onConfirm={executeDeleteOrder}
+        onCancel={() => setOrderToDelete(null)}
+        confirmText="Excluir Compra"
+      />
     </div>
   );
 }
