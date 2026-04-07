@@ -2912,8 +2912,8 @@ function ProductModal({ product, close, addToCart }) {
   const hasStock = Number(product.stock) > 0;
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center p-2 sm:p-4 md:p-6 bg-slate-900/60 backdrop-blur-sm overflow-y-auto print:hidden">
-      <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-5xl max-h-[96vh] overflow-hidden flex flex-col md:flex-row animate-slide-up relative">
+    <div className="fixed inset-0 z-[70] flex items-start justify-center px-2 pb-10 pt-10 sm:items-center sm:p-4 md:p-6 bg-slate-900/60 backdrop-blur-sm overflow-y-auto print:hidden">
+      <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-5xl max-h-[calc(100dvh-5rem)] sm:max-h-[96vh] overflow-hidden flex flex-col md:flex-row animate-slide-up relative">
         {/* Botão Fechar */}
         <button
           onClick={close}
