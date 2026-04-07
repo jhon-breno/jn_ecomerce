@@ -3757,7 +3757,7 @@ function CheckoutFlow({
           }));
           showToast("Endereço preenchido via CEP", "success");
         } else {
-          showToast("CEP não encontrado", "error");
+          showToast("CEP não localizado", "error");
         }
       } catch (err) {
         console.error("Erro ao buscar CEP", err);
