@@ -88,6 +88,61 @@ app.get("/api/health", (req, res) => {
   res.json({ ok: true, mpConfigured: hasMpToken });
 });
 
+app.get("/api/image-proxy", async (req, res) => {
+  const rawUrl = String(req.query?.url || "").trim();
+
+  if (!rawUrl) {
+    return res.status(400).json({ error: "Informe a URL da imagem." });
+  }
+
+  let targetUrl;
+  try {
+    targetUrl = new URL(rawUrl);
+  } catch {
+    return res.status(400).json({ error: "URL de imagem inválida." });
+  }
+
+  if (targetUrl.protocol !== "https:") {
+    return res.status(400).json({ error: "Apenas imagens HTTPS são aceitas." });
+  }
+
+  if (targetUrl.hostname !== "photo.yupoo.com") {
+    return res.status(403).json({ error: "Host de imagem não permitido." });
+  }
+
+  try {
+    const upstream = await fetch(targetUrl.toString(), {
+      headers: {
+        "user-agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+        referer: "https://x.yupoo.com/",
+        accept:
+          "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+      },
+    });
+
+    if (!upstream.ok) {
+      return res.status(upstream.status).json({
+        error: `Falha ao buscar imagem remota (${upstream.status}).`,
+      });
+    }
+
+    const contentType = upstream.headers.get("content-type") || "image/jpeg";
+    const cacheControl =
+      upstream.headers.get("cache-control") || "public, max-age=86400";
+    const arrayBuffer = await upstream.arrayBuffer();
+
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("Cache-Control", cacheControl);
+    return res.send(Buffer.from(arrayBuffer));
+  } catch (error) {
+    console.error("Erro no proxy de imagem:", error?.message || error);
+    return res
+      .status(502)
+      .json({ error: "Não foi possível carregar a imagem." });
+  }
+});
+
 app.post("/api/pix", ensureMercadoPagoConfigured, async (req, res) => {
   try {
     const amount = clampAmount(req.body?.transaction_amount);

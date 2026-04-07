@@ -77,8 +77,50 @@ import {
   getDoc,
 } from "firebase/firestore";
 
-// URL do backend de pagamentos (defina a URL correta para produção)
-const BACKEND_URL = "http://localhost:3000";
+const BACKEND_URL = String(import.meta.env.VITE_BACKEND_URL || "")
+  .trim()
+  .replace(/\/$/, "");
+
+const buildApiUrl = (path) =>
+  BACKEND_URL ? `${BACKEND_URL}${path}` : String(path || "");
+
+const shouldUseImageProxy = () => {
+  if (BACKEND_URL) return true;
+  if (typeof window === "undefined") return !import.meta.env.DEV;
+
+  const hostname = String(window.location.hostname || "").toLowerCase();
+  const isLocalhost =
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "0.0.0.0";
+
+  return !isLocalhost;
+};
+
+const normalizeExternalImageUrl = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+
+  if (
+    raw.startsWith("data:") ||
+    raw.startsWith("blob:") ||
+    raw.startsWith("/") ||
+    raw.startsWith("./") ||
+    raw.startsWith("../")
+  ) {
+    return raw;
+  }
+
+  if (/^https?:\/\/photo\.yupoo\.com\//i.test(raw)) {
+    if (!shouldUseImageProxy()) {
+      return raw;
+    }
+
+    return `${buildApiUrl("/api/image-proxy")}?url=${encodeURIComponent(raw)}`;
+  }
+
+  return raw;
+};
 
 const createIdempotencyKey = (scope) =>
   `${scope}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -729,6 +771,9 @@ function StoreProductCard({
     product.description,
     110,
   );
+  const coverImage = normalizeExternalImageUrl(
+    product.images?.[0] || product.image,
+  );
 
   return (
     <div
@@ -740,9 +785,9 @@ function StoreProductCard({
       <div
         className={`relative ${isShelf ? "aspect-[5/4]" : "aspect-[4/5] sm:aspect-[4/5]"} overflow-hidden bg-slate-50`}
       >
-        {product.images?.[0] || product.image ? (
+        {coverImage ? (
           <img
-            src={product.images?.[0] || product.image}
+            src={coverImage}
             alt={product.name}
             className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700 ease-out"
           />
@@ -781,22 +826,10 @@ function StoreProductCard({
           <div className="flex items-end justify-between gap-3">
             <div className="flex flex-col min-w-0">
               {priceTag > 0 ? (
-                <>
-                  <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-0.5">
-                    De
-                  </span>
-                  <span className="text-[11px] text-slate-400 line-through font-semibold mb-0.5 line-clamp-1">
-                    {formatCurrencyBRL(priceTag)}
-                  </span>
-                  <span className="text-[10px] text-emerald-600 font-black uppercase tracking-wider">
-                    Por
-                  </span>
-                </>
-              ) : (
-                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-1">
-                  Valor
+                <span className="text-xs sm:text-sm text-rose-600 line-through font-black mb-1 line-clamp-1 tracking-wide">
+                  {formatCurrencyBRL(priceTag)}
                 </span>
-              )}
+              ) : null}
               <span className="text-lg sm:text-xl font-black text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-purple-600 leading-none line-clamp-1">
                 {formatCurrencyBRL(product.price)}
               </span>
@@ -2519,7 +2552,7 @@ function ImageLightbox({ images, currentIndex, onClose }) {
     lastTy: 0,
   });
 
-  const src = images[activeIdx];
+  const src = normalizeExternalImageUrl(images[activeIdx]);
 
   const getTouchDist = (touches) => {
     const dx = touches[0].clientX - touches[1].clientX;
@@ -2721,7 +2754,11 @@ function ImageLightbox({ images, currentIndex, onClose }) {
               }}
               className={`w-12 h-12 shrink-0 rounded-lg overflow-hidden border-2 transition-all ${activeIdx === i ? "border-white" : "border-white/20 opacity-50 hover:opacity-80"}`}
             >
-              <img src={img} className="w-full h-full object-cover" alt="" />
+              <img
+                src={normalizeExternalImageUrl(img)}
+                className="w-full h-full object-cover"
+                alt=""
+              />
             </button>
           ))}
         </div>
@@ -2740,7 +2777,7 @@ function ImageZoomViewer({ images, currentIndex, alt }) {
 
   const LENS = 220;
   const ZOOM = 4.5;
-  const src = images[currentIndex] || "";
+  const src = normalizeExternalImageUrl(images[currentIndex] || "");
 
   const handleMouseMove = useCallback((e) => {
     const img = imgRef.current;
@@ -2931,7 +2968,7 @@ function ProductModal({ product, close, addToCart }) {
                   className={`w-14 h-14 md:w-16 md:h-16 shrink-0 rounded-lg overflow-hidden border-2 transition-all ${currentImgIndex === idx ? "border-indigo-600 shadow-md" : "border-transparent opacity-70 hover:opacity-100"}`}
                 >
                   <img
-                    src={img}
+                    src={normalizeExternalImageUrl(img)}
                     className="w-full h-full object-cover"
                     alt={`Thumb ${idx}`}
                   />
@@ -3076,6 +3113,7 @@ function BannerCarousel({ banners }) {
     () =>
       (Array.isArray(banners) ? banners : [])
         .map((item) => String(item || "").trim())
+        .map((item) => normalizeExternalImageUrl(item))
         .filter(Boolean),
     [banners],
   );
@@ -3178,7 +3216,7 @@ function BannerCarousel({ banners }) {
         {activeBanners.map((banner, index) => (
           <div key={index} className="min-w-full h-full relative shrink-0">
             <img
-              src={banner}
+              src={normalizeExternalImageUrl(banner)}
               alt={`Banner ${index + 1}`}
               loading="eager"
               decoding="async"
@@ -3566,7 +3604,9 @@ function CartModal({
                 <div className="w-16 h-16 rounded-lg bg-slate-100 overflow-hidden shrink-0">
                   {item.images?.[0] || item.image ? (
                     <img
-                      src={item.images?.[0] || item.image}
+                      src={normalizeExternalImageUrl(
+                        item.images?.[0] || item.image,
+                      )}
                       className="w-full h-full object-cover"
                     />
                   ) : (
@@ -3864,7 +3904,7 @@ function CheckoutFlow({
 
       // 2. Processa pagamento real no backend seguro
       if (paymentMethod === "PIX") {
-        const res = await fetch(`${BACKEND_URL}/api/pix`, {
+        const res = await fetch(buildApiUrl("/api/pix"), {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -3890,7 +3930,7 @@ function CheckoutFlow({
         order.mpPaymentId = data.id;
         order.mpExternalReference = externalReference;
       } else {
-        const res = await fetch(`${BACKEND_URL}/api/checkout/preference`, {
+        const res = await fetch(buildApiUrl("/api/checkout/preference"), {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -5428,6 +5468,7 @@ function ProductManager({ products, showToast, storeSettings }) {
       const rawShowcaseSections = String(row.showcaseSections || "").trim();
       const showcaseSections = parseShowcaseSectionIds(rawShowcaseSections);
       const subcategories = parseBulkSubcategories(row.subcategory);
+      const subsubcategory = String(row.subsubcategory || "").trim();
 
       const flattenedVariations = Object.values(variationsByType)
         .flat()
@@ -5441,6 +5482,7 @@ function ProductManager({ products, showToast, storeSettings }) {
         category: String(row.category || "").trim(),
         subcategories,
         subcategory: subcategories[0] || "",
+        subsubcategory,
         description: String(row.description || "").trim(),
         stock: Math.floor(stock),
         images,
@@ -6524,7 +6566,7 @@ function PointOfSale({ products, showToast, storeSettings }) {
           order.pixType = "pix_key";
           order.mpExternalReference = externalReference;
         } else {
-          const res = await fetch(`${BACKEND_URL}/api/pix`, {
+          const res = await fetch(buildApiUrl("/api/pix"), {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
@@ -8270,7 +8312,7 @@ function AdminSettings({ showToast, storeSettings }) {
                   className="relative group rounded-lg overflow-hidden border bg-slate-100 h-24 sm:h-32"
                 >
                   <img
-                    src={banner}
+                    src={normalizeExternalImageUrl(banner)}
                     className="w-full h-full object-cover"
                     alt={`Banner ${idx}`}
                   />
