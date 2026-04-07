@@ -5806,7 +5806,7 @@ function ProductManager({ products, showToast, storeSettings }) {
                   className="relative w-24 h-24 sm:w-32 sm:h-32 rounded-xl overflow-hidden border border-slate-200 shadow-sm group"
                 >
                   <img
-                    src={imgBase64}
+                    src={normalizeExternalImageUrl(imgBase64)}
                     alt={`Upload ${idx}`}
                     className="w-full h-full object-cover"
                   />
@@ -6181,7 +6181,9 @@ function ProductManager({ products, showToast, storeSettings }) {
                   <div className="w-10 h-10 bg-slate-100 rounded overflow-hidden shrink-0">
                     {(p.images?.[0] || p.image) && (
                       <img
-                        src={p.images?.[0] || p.image}
+                        src={normalizeExternalImageUrl(
+                          p.images?.[0] || p.image,
+                        )}
                         className="w-full h-full object-cover"
                       />
                     )}
@@ -6823,7 +6825,7 @@ function PointOfSale({ products, showToast, storeSettings }) {
               <div className="w-full aspect-[4/3] bg-slate-50 rounded-xl mb-3 overflow-hidden shrink-0">
                 {p.images?.[0] || p.image ? (
                   <img
-                    src={p.images?.[0] || p.image}
+                    src={normalizeExternalImageUrl(p.images?.[0] || p.image)}
                     className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
                   />
                 ) : (
