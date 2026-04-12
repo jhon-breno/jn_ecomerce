@@ -2283,6 +2283,10 @@ function StoreFront({ products, user, showToast, storeSettings }) {
 function CustomerAccountModal({ user, userProfile, orders, close, showToast }) {
   const [isSaving, setIsSaving] = useState(false);
   const [processingOrderId, setProcessingOrderId] = useState(null);
+  const [paymentModalOrder, setPaymentModalOrder] = useState(null);
+  const [retryPaymentMethod, setRetryPaymentMethod] = useState("");
+  const [retryPixData, setRetryPixData] = useState(null);
+  const [retryPaymentError, setRetryPaymentError] = useState("");
   const [cancelModalOrder, setCancelModalOrder] = useState(null);
   const [cancelReasonDraft, setCancelReasonDraft] = useState("");
   const [cancelReasonError, setCancelReasonError] = useState("");
@@ -2375,9 +2379,117 @@ function CustomerAccountModal({ user, userProfile, orders, close, showToast }) {
       );
     }
 
-    setProcessingOrderId(order.id);
+    setPaymentModalOrder(order);
+    setRetryPaymentMethod("");
+    setRetryPixData(null);
+    setRetryPaymentError("");
+  };
+
+  const closePaymentModal = () => {
+    if (
+      paymentModalOrder?.id &&
+      processingOrderId &&
+      processingOrderId === paymentModalOrder.id
+    ) {
+      return;
+    }
+
+    setPaymentModalOrder(null);
+    setRetryPaymentMethod("");
+    setRetryPixData(null);
+    setRetryPaymentError("");
+  };
+
+  const submitRetryPayment = async () => {
+    if (!paymentModalOrder?.id) return;
+
+    const status = resolveOrderStatus(paymentModalOrder);
+    if (
+      paymentModalOrder.type !== "online" ||
+      status !== "pendente_pagamento"
+    ) {
+      return showToast(
+        "Este pedido não está elegível para novo pagamento.",
+        "error",
+      );
+    }
+
+    const items = buildCheckoutItemsFromOrder(paymentModalOrder);
+    if (!items.length) {
+      return showToast(
+        "Não foi possível montar os itens do pagamento deste pedido.",
+        "error",
+      );
+    }
+
+    if (!retryPaymentMethod) {
+      setRetryPaymentError("Selecione uma forma de pagamento para continuar.");
+      return;
+    }
+
+    setRetryPaymentError("");
+    setProcessingOrderId(paymentModalOrder.id);
     try {
-      const externalReference = `retry-${order.id}-${Date.now()}`;
+      const baseExternalReference = `retry-${paymentModalOrder.id}-${Date.now()}`;
+
+      if (retryPaymentMethod === "PIX") {
+        const res = await fetch(buildApiUrl("/api/pix"), {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-idempotency-key": createIdempotencyKey("retry-pix"),
+          },
+          body: JSON.stringify({
+            transaction_amount: Number(paymentModalOrder.total || 0),
+            description: `Pagamento do pedido #${paymentModalOrder.id.slice(0, 8).toUpperCase()}`,
+            external_reference: `${baseExternalReference}-pix`,
+            payer: {
+              email:
+                paymentModalOrder.customerEmail ||
+                user?.email ||
+                "cliente@loja.com",
+              first_name:
+                paymentModalOrder.customerName ||
+                userProfile?.firstName ||
+                user?.email?.split("@")[0] ||
+                "Cliente",
+            },
+          }),
+        });
+
+        const data = await res.json();
+        if (!res.ok || !data?.qr_code_base64 || !data?.qr_code) {
+          throw new Error(
+            data?.error || data?.providerMessage || "Falha ao gerar PIX.",
+          );
+        }
+
+        await updateDoc(
+          doc(
+            db,
+            "artifacts",
+            appId,
+            "public",
+            "data",
+            "orders",
+            paymentModalOrder.id,
+          ),
+          {
+            mpPaymentId: data.id || null,
+            mpExternalReference: `${baseExternalReference}-pix`,
+            paymentMethod: "PIX",
+            lastPaymentAttemptAt: serverTimestamp(),
+            paymentRetryCount:
+              Number(paymentModalOrder.paymentRetryCount || 0) + 1,
+            updatedAt: serverTimestamp(),
+          },
+        );
+
+        setRetryPixData(data);
+        showToast("PIX gerado com sucesso para este pedido.");
+        return;
+      }
+
       const res = await fetch(buildApiUrl("/api/checkout/preference"), {
         method: "POST",
         headers: {
@@ -2386,11 +2498,14 @@ function CustomerAccountModal({ user, userProfile, orders, close, showToast }) {
         },
         body: JSON.stringify({
           items,
-          external_reference: externalReference,
+          external_reference: `${baseExternalReference}-card`,
           payer: {
-            email: order.customerEmail || user?.email || "cliente@loja.com",
+            email:
+              paymentModalOrder.customerEmail ||
+              user?.email ||
+              "cliente@loja.com",
             first_name:
-              order.customerName ||
+              paymentModalOrder.customerName ||
               userProfile?.firstName ||
               user?.email?.split("@")[0] ||
               "Cliente",
@@ -2407,12 +2522,22 @@ function CustomerAccountModal({ user, userProfile, orders, close, showToast }) {
       }
 
       await updateDoc(
-        doc(db, "artifacts", appId, "public", "data", "orders", order.id),
+        doc(
+          db,
+          "artifacts",
+          appId,
+          "public",
+          "data",
+          "orders",
+          paymentModalOrder.id,
+        ),
         {
           mpPreferenceId: data.preferenceId || null,
-          mpExternalReference: externalReference,
+          mpExternalReference: `${baseExternalReference}-card`,
+          paymentMethod: "Cartão de Crédito",
           lastPaymentAttemptAt: serverTimestamp(),
-          paymentRetryCount: Number(order.paymentRetryCount || 0) + 1,
+          paymentRetryCount:
+            Number(paymentModalOrder.paymentRetryCount || 0) + 1,
           updatedAt: serverTimestamp(),
         },
       );
@@ -2832,6 +2957,139 @@ function CustomerAccountModal({ user, userProfile, orders, close, showToast }) {
                 {processingOrderId === cancelModalOrder.id
                   ? "Enviando..."
                   : "Enviar solicitação"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {paymentModalOrder && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center p-4 bg-slate-900/65 backdrop-blur-sm">
+          <div className="w-full max-w-xl rounded-3xl border border-indigo-100 bg-white shadow-2xl overflow-hidden animate-slide-up">
+            <div className="px-6 py-5 bg-gradient-to-r from-indigo-50 via-white to-cyan-50 border-b border-indigo-100">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h4 className="text-xl font-black text-slate-800">
+                    Realizar pagamento
+                  </h4>
+                  <p className="text-sm text-slate-600 mt-1">
+                    Pedido #{paymentModalOrder.id.slice(0, 8).toUpperCase()} |
+                    Total: R$ {Number(paymentModalOrder.total || 0).toFixed(2)}
+                  </p>
+                </div>
+                <button
+                  onClick={closePaymentModal}
+                  disabled={processingOrderId === paymentModalOrder.id}
+                  className="p-2 rounded-full hover:bg-slate-100 transition disabled:opacity-50"
+                  aria-label="Fechar modal de pagamento"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRetryPaymentMethod("PIX");
+                    setRetryPaymentError("");
+                  }}
+                  className={`p-4 rounded-xl border text-left transition ${retryPaymentMethod === "PIX" ? "border-teal-500 bg-teal-50 ring-2 ring-teal-200" : "border-slate-200 hover:bg-slate-50"}`}
+                >
+                  <p className="font-bold text-slate-800 flex items-center gap-2">
+                    <QrCode size={18} className="text-teal-600" /> PIX
+                  </p>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Gera QR Code e código Copia e cola na própria tela.
+                  </p>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRetryPaymentMethod("CARD");
+                    setRetryPaymentError("");
+                  }}
+                  className={`p-4 rounded-xl border text-left transition ${retryPaymentMethod === "CARD" ? "border-indigo-500 bg-indigo-50 ring-2 ring-indigo-200" : "border-slate-200 hover:bg-slate-50"}`}
+                >
+                  <p className="font-bold text-slate-800 flex items-center gap-2">
+                    <CreditCard size={18} className="text-indigo-600" /> Cartão
+                  </p>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Redireciona para o checkout seguro do Mercado Pago.
+                  </p>
+                </button>
+              </div>
+
+              {retryPaymentError && (
+                <div className="text-xs rounded-lg bg-rose-50 border border-rose-200 text-rose-700 p-2">
+                  {retryPaymentError}
+                </div>
+              )}
+
+              {retryPixData && (
+                <div className="bg-teal-50 border border-teal-200 rounded-2xl p-4 space-y-3">
+                  <h5 className="font-black text-teal-800 flex items-center gap-2">
+                    <QrCode size={18} /> PIX gerado
+                  </h5>
+                  <div className="flex justify-center">
+                    <img
+                      src={
+                        retryPixData?.qr_code_base64?.startsWith("http")
+                          ? retryPixData.qr_code_base64
+                          : `data:image/jpeg;base64,${retryPixData?.qr_code_base64}`
+                      }
+                      className="w-44 h-44 rounded-xl bg-white object-contain border border-teal-100"
+                      alt="QR Code PIX do pedido"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-teal-700 uppercase tracking-wider mb-1 block">
+                      Código Copia e cola
+                    </label>
+                    <div className="flex">
+                      <input
+                        readOnly
+                        value={retryPixData?.qr_code || ""}
+                        className="flex-1 p-2.5 bg-white border border-teal-100 rounded-l-lg text-xs font-mono outline-none text-slate-600 truncate"
+                      />
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(
+                            retryPixData?.qr_code || "",
+                          );
+                          showToast("Código PIX copiado com sucesso!");
+                        }}
+                        className="bg-teal-600 text-white px-4 font-bold rounded-r-lg hover:bg-teal-700 transition"
+                      >
+                        Copiar
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="px-6 pb-6 flex flex-col sm:flex-row gap-2 sm:justify-end">
+              <button
+                onClick={closePaymentModal}
+                disabled={processingOrderId === paymentModalOrder.id}
+                className="px-4 py-2.5 rounded-xl border border-slate-300 text-slate-600 font-bold hover:bg-slate-50 disabled:opacity-50"
+              >
+                Fechar
+              </button>
+              <button
+                onClick={submitRetryPayment}
+                disabled={processingOrderId === paymentModalOrder.id}
+                className="px-4 py-2.5 rounded-xl bg-indigo-600 text-white font-black hover:bg-indigo-700 disabled:bg-slate-300"
+              >
+                {processingOrderId === paymentModalOrder.id
+                  ? "Processando..."
+                  : retryPaymentMethod === "PIX"
+                    ? "Gerar PIX"
+                    : "Continuar"}
               </button>
             </div>
           </div>
@@ -7892,6 +8150,7 @@ function OrdersList({ orders, showToast, quickFilter = "all" }) {
       <table className="w-full text-left text-sm min-w-[1120px]">
         <thead className="bg-slate-50 border-b">
           <tr>
+            <th className="p-4">ID Pedido</th>
             <th className="p-4">Data/Hora</th>
             <th className="p-4">Tipo</th>
             <th className="p-4">Cliente</th>
@@ -7922,6 +8181,9 @@ function OrdersList({ orders, showToast, quickFilter = "all" }) {
 
             return (
               <tr key={o.id} className="hover:bg-slate-50 align-top">
+                <td className="p-4 font-mono text-xs text-slate-600 whitespace-nowrap">
+                  <span title={o.id}>{o.id.slice(0, 12).toUpperCase()}</span>
+                </td>
                 <td className="p-4 font-medium text-slate-700 whitespace-nowrap">
                   {o.createdAt
                     ? new Date(o.createdAt.toMillis()).toLocaleString()
@@ -8073,7 +8335,7 @@ function OrdersList({ orders, showToast, quickFilter = "all" }) {
           })}
           {filteredOrders.length === 0 && (
             <tr>
-              <td colSpan="8" className="p-8 text-center text-slate-400">
+              <td colSpan="9" className="p-8 text-center text-slate-400">
                 Nenhuma venda encontrada com os filtros aplicados.
               </td>
             </tr>
