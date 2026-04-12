@@ -2283,6 +2283,9 @@ function StoreFront({ products, user, showToast, storeSettings }) {
 function CustomerAccountModal({ user, userProfile, orders, close, showToast }) {
   const [isSaving, setIsSaving] = useState(false);
   const [processingOrderId, setProcessingOrderId] = useState(null);
+  const [cancelModalOrder, setCancelModalOrder] = useState(null);
+  const [cancelReasonDraft, setCancelReasonDraft] = useState("");
+  const [cancelReasonError, setCancelReasonError] = useState("");
   const [formData, setFormData] = useState({
     firstName: "",
     lastName: "",
@@ -2435,20 +2438,47 @@ function CustomerAccountModal({ user, userProfile, orders, close, showToast }) {
       );
     }
 
-    const reason = window.prompt(
-      "Informe o motivo do cancelamento (mínimo 10 caracteres):",
-    );
-    if (reason === null) return;
+    setCancelModalOrder(order);
+    setCancelReasonDraft("");
+    setCancelReasonError("");
+  };
 
-    const trimmedReason = String(reason || "").trim();
-    if (trimmedReason.length < 10) {
-      return showToast("Descreva melhor o motivo do cancelamento.", "error");
+  const closeCancelModal = () => {
+    if (
+      cancelModalOrder?.id &&
+      processingOrderId &&
+      processingOrderId === cancelModalOrder.id
+    ) {
+      return;
     }
 
-    setProcessingOrderId(order.id);
+    setCancelModalOrder(null);
+    setCancelReasonDraft("");
+    setCancelReasonError("");
+  };
+
+  const submitCancellationRequest = async () => {
+    if (!cancelModalOrder?.id) return;
+
+    const trimmedReason = String(cancelReasonDraft || "").trim();
+    if (trimmedReason.length < 10) {
+      setCancelReasonError("Descreva melhor o motivo do cancelamento.");
+      return;
+    }
+
+    setCancelReasonError("");
+    setProcessingOrderId(cancelModalOrder.id);
     try {
       await updateDoc(
-        doc(db, "artifacts", appId, "public", "data", "orders", order.id),
+        doc(
+          db,
+          "artifacts",
+          appId,
+          "public",
+          "data",
+          "orders",
+          cancelModalOrder.id,
+        ),
         {
           cancellationRequest: {
             status: "requested",
@@ -2456,17 +2486,21 @@ function CustomerAccountModal({ user, userProfile, orders, close, showToast }) {
             requestedAt: serverTimestamp(),
             requestedBy: user.uid,
             customerName:
-              order.customerName ||
+              cancelModalOrder.customerName ||
               `${formData.firstName || ""} ${formData.lastName || ""}`.trim(),
-            customerEmail: order.customerEmail || user.email || "",
+            customerEmail: cancelModalOrder.customerEmail || user.email || "",
             customerPhone:
-              order.customerPhone || formData.phone || userProfile?.phone || "",
+              cancelModalOrder.customerPhone ||
+              formData.phone ||
+              userProfile?.phone ||
+              "",
           },
           updatedAt: serverTimestamp(),
         },
       );
 
       showToast("Solicitação de cancelamento enviada para o admin.");
+      closeCancelModal();
     } catch (error) {
       console.error("Erro ao solicitar cancelamento:", error);
       showToast("Erro ao solicitar cancelamento", "error");
@@ -2727,6 +2761,82 @@ function CustomerAccountModal({ user, userProfile, orders, close, showToast }) {
           </div>
         </div>
       </div>
+
+      {cancelModalOrder && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center p-4 bg-slate-900/65 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-3xl border border-rose-100 bg-white shadow-2xl overflow-hidden animate-slide-up">
+            <div className="px-6 py-5 bg-gradient-to-r from-rose-50 via-white to-orange-50 border-b border-rose-100">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h4 className="text-xl font-black text-slate-800">
+                    Solicitar cancelamento
+                  </h4>
+                  <p className="text-sm text-slate-600 mt-1">
+                    Informe o motivo para enviarmos ao admin e agilizar o
+                    contato sobre o pedido #
+                    {cancelModalOrder.id.slice(0, 8).toUpperCase()}.
+                  </p>
+                </div>
+                <button
+                  onClick={closeCancelModal}
+                  disabled={processingOrderId === cancelModalOrder.id}
+                  className="p-2 rounded-full hover:bg-slate-100 transition disabled:opacity-50"
+                  aria-label="Fechar modal de cancelamento"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+            </div>
+
+            <div className="p-6 space-y-3">
+              <label className="block text-xs font-black text-slate-500 uppercase tracking-wider">
+                Motivo do cancelamento
+              </label>
+              <textarea
+                rows={4}
+                value={cancelReasonDraft}
+                onChange={(e) => {
+                  setCancelReasonDraft(e.target.value);
+                  if (cancelReasonError) setCancelReasonError("");
+                }}
+                placeholder="Ex: Preciso alterar o endereço e forma de entrega."
+                className="w-full p-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-rose-300 outline-none resize-none"
+              />
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-slate-500">Mínimo de 10 caracteres.</span>
+                <span className="text-slate-400">
+                  {String(cancelReasonDraft || "").trim().length}/300
+                </span>
+              </div>
+
+              {cancelReasonError && (
+                <div className="text-xs rounded-lg bg-rose-50 border border-rose-200 text-rose-700 p-2">
+                  {cancelReasonError}
+                </div>
+              )}
+            </div>
+
+            <div className="px-6 pb-6 flex flex-col sm:flex-row gap-2 sm:justify-end">
+              <button
+                onClick={closeCancelModal}
+                disabled={processingOrderId === cancelModalOrder.id}
+                className="px-4 py-2.5 rounded-xl border border-slate-300 text-slate-600 font-bold hover:bg-slate-50 disabled:opacity-50"
+              >
+                Voltar
+              </button>
+              <button
+                onClick={submitCancellationRequest}
+                disabled={processingOrderId === cancelModalOrder.id}
+                className="px-4 py-2.5 rounded-xl bg-rose-600 text-white font-black hover:bg-rose-700 disabled:bg-slate-300"
+              >
+                {processingOrderId === cancelModalOrder.id
+                  ? "Enviando..."
+                  : "Enviar solicitação"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -4820,6 +4930,7 @@ function AdminDashboard({
 }) {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [ordersQuickFilter, setOrdersQuickFilter] = useState("all");
 
   const tabs = [
     { id: "dashboard", name: "Painel", icon: <LayoutDashboard size={20} /> },
@@ -4862,6 +4973,9 @@ function AdminDashboard({
               key={tab.id}
               onClick={() => {
                 setActiveTab(tab.id);
+                if (tab.id === "orders") {
+                  setOrdersQuickFilter("all");
+                }
                 setIsMobileMenuOpen(false);
               }}
               className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-xl transition-all duration-300 ${activeTab === tab.id ? "bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg shadow-indigo-500/20 font-bold scale-[1.02]" : "hover:bg-slate-800 hover:text-white font-medium hover:scale-[1.02]"}`}
@@ -4894,6 +5008,10 @@ function AdminDashboard({
               products={products}
               orders={orders}
               abandonedCarts={abandonedCarts}
+              onOpenLosses={() => {
+                setActiveTab("orders");
+                setOrdersQuickFilter("losses");
+              }}
             />
           )}
         </div>
@@ -4917,7 +5035,11 @@ function AdminDashboard({
         </div>
         <div className={activeTab !== "orders" ? "print:hidden" : ""}>
           {activeTab === "orders" && (
-            <OrdersList orders={orders} showToast={showToast} />
+            <OrdersList
+              orders={orders}
+              showToast={showToast}
+              quickFilter={ordersQuickFilter}
+            />
           )}
         </div>
         <div className={activeTab !== "carts" ? "print:hidden" : ""}>
@@ -4938,13 +5060,27 @@ function AdminDashboard({
   );
 }
 
-function AdminOverview({ products, orders, abandonedCarts }) {
-  const totalRevenue = orders.reduce(
-    (sum, order) => sum + (Number(order.total) || 0),
-    0,
-  );
+function AdminOverview({ products, orders, abandonedCarts, onOpenLosses }) {
+  const resolveOrderStatus = (order) => {
+    if (order?.status) return order.status;
+    return order?.type === "online" ? "pendente_pagamento" : "concluido";
+  };
+
+  const totalRevenue = orders
+    .filter((order) => {
+      const status = resolveOrderStatus(order);
+      return status !== "estornado" && status !== "cancelado";
+    })
+    .reduce((sum, order) => sum + (Number(order.total) || 0), 0);
+
+  const totalLosses = orders
+    .filter((order) => {
+      const status = resolveOrderStatus(order);
+      return status === "estornado" || status === "cancelado";
+    })
+    .reduce((sum, order) => sum + (Number(order.total) || 0), 0);
+
   const totalOnline = orders.filter((o) => o.type === "online").length;
-  const totalPresencial = orders.filter((o) => o.type === "presencial").length;
 
   return (
     <div className="space-y-6">
@@ -4957,6 +5093,15 @@ function AdminOverview({ products, orders, abandonedCarts }) {
           value={`R$ ${totalRevenue.toFixed(2)}`}
           icon={<DollarSign size={24} />}
           color="bg-gradient-to-br from-emerald-400 to-emerald-600 shadow-emerald-500/30"
+        />
+        <StatCard
+          title="Perdas (Estorno/Cancel.)"
+          value={`R$ ${totalLosses.toFixed(2)}`}
+          helperText="Clique para abrir vendas com perda"
+          onClick={onOpenLosses}
+          clickable
+          icon={<AlertTriangle size={24} />}
+          color="bg-gradient-to-br from-rose-500 to-orange-500 shadow-rose-500/30"
         />
         <StatCard
           title="Vendas Online"
@@ -4981,9 +5126,25 @@ function AdminOverview({ products, orders, abandonedCarts }) {
   );
 }
 
-function StatCard({ title, value, icon, color }) {
+function StatCard({
+  title,
+  value,
+  icon,
+  color,
+  helperText = "",
+  onClick,
+  clickable = false,
+}) {
+  const interactiveClass = clickable
+    ? "cursor-pointer hover:scale-[1.01] focus-visible:ring-2 focus-visible:ring-indigo-300"
+    : "";
+
   return (
-    <div className="bg-white rounded-3xl p-5 md:p-6 shadow-sm border border-slate-200/60 flex items-center gap-5 hover:shadow-xl hover:shadow-indigo-500/5 hover:-translate-y-1 transition-all duration-300">
+    <button
+      type="button"
+      onClick={clickable ? onClick : undefined}
+      className={`w-full text-left bg-white rounded-3xl p-5 md:p-6 shadow-sm border border-slate-200/60 flex items-center gap-5 hover:shadow-xl hover:shadow-indigo-500/5 hover:-translate-y-1 transition-all duration-300 ${interactiveClass}`}
+    >
       <div
         className={`w-14 h-14 md:w-16 md:h-16 shrink-0 rounded-2xl flex items-center justify-center text-white shadow-lg ${color}`}
       >
@@ -4996,8 +5157,13 @@ function StatCard({ title, value, icon, color }) {
         <p className="text-2xl md:text-3xl font-black text-slate-800 bg-clip-text text-transparent bg-gradient-to-r from-slate-800 to-slate-500 line-clamp-1">
           {value}
         </p>
+        {helperText && (
+          <p className="text-[11px] text-slate-400 font-semibold mt-1">
+            {helperText}
+          </p>
+        )}
       </div>
-    </div>
+    </button>
   );
 }
 
@@ -5011,6 +5177,9 @@ function ProductManager({ products, showToast, storeSettings }) {
   const [isBulkImporting, setIsBulkImporting] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [productToDelete, setProductToDelete] = useState(null); // Estado para o modal de confirmação
+  const [productSearch, setProductSearch] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("all");
+  const [stockFilter, setStockFilter] = useState("all");
   const [formData, setFormData] = useState({
     name: "",
     price: "",
@@ -5031,6 +5200,52 @@ function ProductManager({ products, showToast, storeSettings }) {
     () => normalizeCatalog(storeSettings?.catalog),
     [storeSettings?.catalog],
   );
+
+  const availableCategoriesFilter = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          products
+            .map((product) => String(product?.category || "").trim())
+            .filter(Boolean),
+        ),
+      ).sort((a, b) => a.localeCompare(b)),
+    [products],
+  );
+
+  const filteredProducts = useMemo(() => {
+    const query = String(productSearch || "")
+      .trim()
+      .toLowerCase();
+
+    return products.filter((product) => {
+      const category = String(product?.category || "").trim();
+      const name = String(product?.name || "").toLowerCase();
+      const subcategory = String(product?.subcategory || "").toLowerCase();
+      const subsubcategory = String(
+        product?.subsubcategory || "",
+      ).toLowerCase();
+      const stock = Number(product?.stock || 0);
+
+      const matchesQuery =
+        !query ||
+        name.includes(query) ||
+        category.toLowerCase().includes(query) ||
+        subcategory.includes(query) ||
+        subsubcategory.includes(query);
+
+      const matchesCategory =
+        categoryFilter === "all" || category === categoryFilter;
+
+      const matchesStock =
+        stockFilter === "all" ||
+        (stockFilter === "available" && stock > 0) ||
+        (stockFilter === "low" && stock > 0 && stock <= 5) ||
+        (stockFilter === "out" && stock <= 0);
+
+      return matchesQuery && matchesCategory && matchesStock;
+    });
+  }, [products, productSearch, categoryFilter, stockFilter]);
 
   const availableSubcategories = useMemo(() => {
     const selected = productCatalog.categories.find(
@@ -6315,6 +6530,39 @@ function ProductManager({ products, showToast, storeSettings }) {
         </div>
       </div>
       <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-x-auto">
+        <div className="p-4 md:p-5 border-b border-slate-100 bg-slate-50 flex flex-col md:flex-row gap-3">
+          <div className="flex-1">
+            <input
+              type="text"
+              placeholder="Buscar por nome, categoria ou subcategoria"
+              value={productSearch}
+              onChange={(e) => setProductSearch(e.target.value)}
+              className="w-full p-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-300"
+            />
+          </div>
+          <select
+            value={categoryFilter}
+            onChange={(e) => setCategoryFilter(e.target.value)}
+            className="p-3 border border-slate-200 rounded-xl bg-white min-w-[190px]"
+          >
+            <option value="all">Todas as categorias</option>
+            {availableCategoriesFilter.map((categoryName) => (
+              <option key={categoryName} value={categoryName}>
+                {categoryName}
+              </option>
+            ))}
+          </select>
+          <select
+            value={stockFilter}
+            onChange={(e) => setStockFilter(e.target.value)}
+            className="p-3 border border-slate-200 rounded-xl bg-white min-w-[170px]"
+          >
+            <option value="all">Todos os estoques</option>
+            <option value="available">Com estoque</option>
+            <option value="low">Estoque baixo (1-5)</option>
+            <option value="out">Sem estoque</option>
+          </select>
+        </div>
         <table className="w-full text-left min-w-[600px]">
           <thead className="bg-slate-50 text-slate-500">
             <tr className="border-b">
@@ -6327,7 +6575,7 @@ function ProductManager({ products, showToast, storeSettings }) {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {products.map((p) => (
+            {filteredProducts.map((p) => (
               <tr key={p.id} className="hover:bg-slate-50 transition-colors">
                 <td className="p-4 font-medium flex items-center gap-3">
                   <div className="w-10 h-10 bg-slate-100 rounded overflow-hidden shrink-0">
@@ -6376,10 +6624,10 @@ function ProductManager({ products, showToast, storeSettings }) {
                 </td>
               </tr>
             ))}
-            {products.length === 0 && (
+            {filteredProducts.length === 0 && (
               <tr>
                 <td colSpan="6" className="p-8 text-center text-slate-400">
-                  Nenhum produto cadastrado.
+                  Nenhum produto encontrado com os filtros atuais.
                 </td>
               </tr>
             )}
@@ -7222,10 +7470,14 @@ function PointOfSale({ products, showToast, storeSettings }) {
   );
 }
 
-function OrdersList({ orders, showToast }) {
+function OrdersList({ orders, showToast, quickFilter = "all" }) {
   const [savingOrderId, setSavingOrderId] = useState(null);
   const [trackingDrafts, setTrackingDrafts] = useState({});
   const [orderToDelete, setOrderToDelete] = useState(null);
+  const [orderToRefund, setOrderToRefund] = useState(null);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [typeFilter, setTypeFilter] = useState("all");
   const stockReturnStatuses = new Set(["estornado", "cancelado"]);
 
   const statusCatalog = {
@@ -7255,6 +7507,51 @@ function OrdersList({ orders, showToast }) {
     if (order.status) return order.status;
     return order.type === "online" ? "pendente_pagamento" : "concluido";
   };
+
+  useEffect(() => {
+    if (quickFilter === "losses") {
+      setStatusFilter("losses");
+    }
+  }, [quickFilter]);
+
+  const filteredOrders = useMemo(() => {
+    const query = String(searchTerm || "")
+      .trim()
+      .toLowerCase();
+
+    return orders.filter((order) => {
+      const status = getOrderStatus(order);
+      const type = String(order?.type || "").toLowerCase();
+      const orderRef = String(order?.id || "").toLowerCase();
+      const customer = String(
+        order?.customerName || order?.address?.recebedorNome || "",
+      ).toLowerCase();
+      const email = String(order?.customerEmail || "").toLowerCase();
+      const phone = String(
+        order?.customerPhone || order?.address?.recebedorTelefone || "",
+      ).toLowerCase();
+      const tracking = String(order?.trackingCode || "").toLowerCase();
+      const paymentMethod = String(order?.paymentMethod || "").toLowerCase();
+
+      const matchesQuery =
+        !query ||
+        orderRef.includes(query) ||
+        customer.includes(query) ||
+        email.includes(query) ||
+        phone.includes(query) ||
+        tracking.includes(query) ||
+        paymentMethod.includes(query);
+
+      const matchesType = typeFilter === "all" || type === typeFilter;
+      const matchesStatus =
+        statusFilter === "all" ||
+        (statusFilter === "losses"
+          ? status === "estornado" || status === "cancelado"
+          : status === statusFilter);
+
+      return matchesQuery && matchesType && matchesStatus;
+    });
+  }, [orders, searchTerm, statusFilter, typeFilter]);
 
   const statusHistoryPush = (order, nextStatus, actionLabel) => {
     const prevHistory = Array.isArray(order.statusHistory)
@@ -7439,11 +7736,17 @@ function OrdersList({ orders, showToast }) {
 
   const handleRefund = async (order) => {
     if (!order?.id) return;
+    setOrderToRefund(order.id);
+  };
 
-    const confirmed = window.confirm(
-      "Confirmar estorno deste pedido? O status será alterado para ESTORNADO.",
-    );
-    if (!confirmed) return;
+  const executeRefundOrder = async () => {
+    if (!orderToRefund) return;
+
+    const order = orders.find((item) => item.id === orderToRefund);
+    if (!order) {
+      setOrderToRefund(null);
+      return showToast("Pedido não encontrado para estorno.", "error");
+    }
 
     setSavingOrderId(order.id);
     try {
@@ -7457,6 +7760,7 @@ function OrdersList({ orders, showToast }) {
       showToast("Erro ao estornar pedido", "error");
     } finally {
       setSavingOrderId(null);
+      setOrderToRefund(null);
     }
   };
 
@@ -7547,6 +7851,39 @@ function OrdersList({ orders, showToast }) {
 
   return (
     <div className="bg-white rounded-2xl shadow-sm border overflow-x-auto">
+      <div className="p-4 border-b border-slate-100 bg-slate-50 flex flex-col lg:flex-row gap-3">
+        <input
+          type="text"
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          placeholder="Buscar por pedido, cliente, e-mail, telefone ou rastreio"
+          className="flex-1 p-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-300 bg-white"
+        />
+        <select
+          value={typeFilter}
+          onChange={(e) => setTypeFilter(e.target.value)}
+          className="p-3 border border-slate-200 rounded-xl bg-white min-w-[160px]"
+        >
+          <option value="all">Todos os tipos</option>
+          <option value="online">Online</option>
+          <option value="presencial">Presencial</option>
+        </select>
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+          className="p-3 border border-slate-200 rounded-xl bg-white min-w-[220px]"
+        >
+          <option value="all">Todos os status</option>
+          <option value="losses">Perdas (Estornado/Cancelado)</option>
+          <option value="pendente_pagamento">Pendente de Pagamento</option>
+          <option value="separacao">Em Separação</option>
+          <option value="enviado">Enviado</option>
+          <option value="entregue">Entregue</option>
+          <option value="concluido">Concluído</option>
+          <option value="estornado">Estornado</option>
+          <option value="cancelado">Cancelado</option>
+        </select>
+      </div>
       <table className="w-full text-left text-sm min-w-[1120px]">
         <thead className="bg-slate-50 border-b">
           <tr>
@@ -7561,7 +7898,7 @@ function OrdersList({ orders, showToast }) {
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
-          {orders.map((o) => {
+          {filteredOrders.map((o) => {
             const status = getOrderStatus(o);
             const statusMeta = statusCatalog[status] ||
               statusCatalog.pendente || {
@@ -7729,10 +8066,10 @@ function OrdersList({ orders, showToast }) {
               </tr>
             );
           })}
-          {orders.length === 0 && (
+          {filteredOrders.length === 0 && (
             <tr>
               <td colSpan="8" className="p-8 text-center text-slate-400">
-                Nenhuma venda registrada ainda.
+                Nenhuma venda encontrada com os filtros aplicados.
               </td>
             </tr>
           )}
@@ -7746,6 +8083,16 @@ function OrdersList({ orders, showToast }) {
         onConfirm={executeDeleteOrder}
         onCancel={() => setOrderToDelete(null)}
         confirmText="Excluir Compra"
+      />
+
+      <ConfirmModal
+        isOpen={!!orderToRefund}
+        title="Confirmar Estorno"
+        message="Deseja realmente estornar este pedido? O status será alterado para ESTORNADO e o estoque será ajustado automaticamente."
+        onConfirm={executeRefundOrder}
+        onCancel={() => setOrderToRefund(null)}
+        confirmText="Estornar Pedido"
+        confirmStyle="bg-rose-600 hover:bg-rose-700"
       />
     </div>
   );
