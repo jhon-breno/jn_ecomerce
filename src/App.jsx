@@ -80,6 +80,9 @@ import {
 const BACKEND_URL = String(import.meta.env.VITE_BACKEND_URL || "")
   .trim()
   .replace(/\/$/, "");
+const DEFAULT_MP_PUBLIC_KEY = String(
+  import.meta.env.VITE_MERCADO_PAGO_PUBLIC_KEY || "",
+).trim();
 
 const buildApiUrl = (path) =>
   BACKEND_URL ? `${BACKEND_URL}${path}` : String(path || "");
@@ -918,7 +921,7 @@ export default function App() {
       youtube: "",
       tiktok: "",
     },
-    mpPublicKey: "",
+    mpPublicKey: DEFAULT_MP_PUBLIC_KEY,
     pixKey: "",
     catalog: DEFAULT_PRODUCT_CATALOG,
     shipping: {
@@ -7791,7 +7794,7 @@ function AdminSettings({ showToast, storeSettings }) {
       youtube: "",
       tiktok: "",
     },
-    mpPublicKey: "",
+    mpPublicKey: DEFAULT_MP_PUBLIC_KEY,
     pixKey: "",
     catalog: DEFAULT_PRODUCT_CATALOG,
     shipping: {
@@ -7837,6 +7840,10 @@ function AdminSettings({ showToast, storeSettings }) {
   const buildSettingsPayload = useCallback(
     (sourceConfig) => ({
       ...sourceConfig,
+      mpPublicKey: String(
+        sourceConfig.mpPublicKey || DEFAULT_MP_PUBLIC_KEY,
+      ).trim(),
+      pixKey: String(sourceConfig.pixKey || "").trim(),
       contactPhones: normalizePhoneList(sourceConfig.contactPhones),
       socialLinks: normalizeSocialLinks(sourceConfig.socialLinks),
       catalog: normalizeCatalog(sourceConfig.catalog),
@@ -7868,6 +7875,9 @@ function AdminSettings({ showToast, storeSettings }) {
         const hydratedConfig = {
           ...prev,
           ...storeSettings,
+          mpPublicKey: String(
+            storeSettings.mpPublicKey || DEFAULT_MP_PUBLIC_KEY,
+          ).trim(),
           catalog: normalizeCatalog(storeSettings.catalog),
           socialLinks: normalizeSocialLinks(storeSettings.socialLinks),
           contactPhones: normalizePhoneList(storeSettings.contactPhones),
@@ -9223,6 +9233,10 @@ function AdminSettings({ showToast, storeSettings }) {
           <strong>Segurança em primeiro lugar!</strong> <br />
           <br />A sua <strong>Public Key</strong> pode ficar salva aqui na loja
           para gerar os componentes de pagamento do Mercado Pago. <br />
+          <br />
+          Se preferir, defina a chave pública por ambiente com
+          <strong> VITE_MERCADO_PAGO_PUBLIC_KEY</strong> no frontend de
+          produção. <br />
           <br />O seu <strong>Access Token</strong> NÃO DEVE ser configurado ou
           salvo aqui no frontend. Ele deve ser colocado de forma exclusiva no
           ficheiro <code className="bg-blue-100 px-1 rounded">.env</code> do seu
@@ -9238,9 +9252,13 @@ function AdminSettings({ showToast, storeSettings }) {
             onChange={(e) =>
               setConfig({ ...config, mpPublicKey: e.target.value })
             }
-            placeholder="APP_USR-xxxx-xxxx..."
+            placeholder="APP_USR-xxxxxxxx-xxxxxx-xxxxxxxxxxxxxxxxxxxxxxxx"
             className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none font-mono text-sm"
           />
+          <p className="text-xs text-slate-500 mt-2">
+            Opcional: se essa chave não for salva aqui, o app usa o valor de
+            VITE_MERCADO_PAGO_PUBLIC_KEY quando existir no ambiente.
+          </p>
         </div>
 
         <div>

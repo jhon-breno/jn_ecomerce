@@ -12,6 +12,14 @@ const frontendUrls = (process.env.FRONTEND_URLS || "http://localhost:5173")
   .split(",")
   .map((url) => url.trim())
   .filter(Boolean);
+const mercadoPagoAccessToken = String(process.env.MP_ACCESS_TOKEN || "").trim();
+
+const detectMercadoPagoMode = (token) => {
+  if (!token) return "unconfigured";
+  if (token.startsWith("APP_USR-")) return "production";
+  if (token.startsWith("TEST-")) return "sandbox";
+  return "unknown";
+};
 
 app.use(helmet({ crossOriginResourcePolicy: false }));
 app.use(
@@ -35,10 +43,11 @@ app.use(
   }),
 );
 
-const hasMpToken = Boolean(process.env.MP_ACCESS_TOKEN);
+const mpMode = detectMercadoPagoMode(mercadoPagoAccessToken);
+const hasMpToken = Boolean(mercadoPagoAccessToken);
 const client = hasMpToken
   ? new MercadoPagoConfig({
-      accessToken: process.env.MP_ACCESS_TOKEN,
+      accessToken: mercadoPagoAccessToken,
       options: { timeout: 5000 },
     })
   : null;
@@ -85,7 +94,7 @@ const ensureMercadoPagoConfigured = (req, res, next) => {
 };
 
 app.get("/api/health", (req, res) => {
-  res.json({ ok: true, mpConfigured: hasMpToken });
+  res.json({ ok: true, mpConfigured: hasMpToken, mpMode });
 });
 
 app.get("/api/image-proxy", async (req, res) => {
@@ -258,5 +267,7 @@ app.post(
 );
 
 app.listen(PORT, () => {
-  console.log(`Servidor de pagamentos rodando na porta ${PORT}`);
+  console.log(
+    `Servidor de pagamentos rodando na porta ${PORT} com Mercado Pago em modo ${mpMode}`,
+  );
 });

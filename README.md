@@ -27,6 +27,12 @@ Este projeto está configurado para:
 VITE_BACKEND_URL=http://localhost:3000
 ```
 
+Opcional para produção, caso queira fornecer a Public Key sem depender do painel admin:
+
+```env
+VITE_MERCADO_PAGO_PUBLIC_KEY=APP_USR-...
+```
+
 Em produção, se o frontend estiver publicado separado do backend (ex.: Firebase Hosting para o site e Render/Railway para a API), `VITE_BACKEND_URL` deve apontar para a URL pública do backend. Isso é necessário para:
 
 - pagamentos (`/api/pix` e `/api/checkout/preference`)
@@ -99,5 +105,13 @@ npm run dev
 
 - Nunca coloque `MP_ACCESS_TOKEN` no frontend.
 - Use token `TEST-...` em homologação e `APP_USR-...` em produção.
+- O endpoint `GET /api/health` agora retorna `mpMode` para confirmar se a API está em `sandbox` ou `production`.
 - Para receber confirmação automática de status, configure `MP_WEBHOOK_URL` no backend e um endpoint de webhook.
 - Se o frontend estiver no Firebase Hosting, a regra atual reescreve tudo para `index.html`. Isso significa que `/api/*` não funciona no mesmo domínio sem uma configuração adicional de proxy/rewrite para o backend.
+
+## 6. Checklist de Produção
+
+1. No arquivo local [loja-backend/.env.example](loja-backend/.env.example), use como base para configurar `MP_ACCESS_TOKEN=APP_USR-...` no seu `loja-backend/.env`.
+2. No arquivo local [.env.example](.env.example), use como base para configurar `VITE_BACKEND_URL` com a URL pública da API.
+3. Se for usar componentes/client SDK do Mercado Pago, configure `VITE_MERCADO_PAGO_PUBLIC_KEY=APP_USR-...` no `.env` do frontend ou salve a Public Key pelo painel administrativo.
+4. Suba o backend e valide `GET /api/health`; o campo `mpMode` precisa vir como `production`.
