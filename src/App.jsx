@@ -3180,9 +3180,13 @@ function BannerCarousel({ banners }) {
 
   if (!normalizedBanners.length || !activeBanners.length) return null;
 
+  const trackWidth = `${activeBanners.length * 100}%`;
+  const slideWidth = `${100 / activeBanners.length}%`;
+  const trackTransform = `translate3d(-${currentIndex * (100 / activeBanners.length)}%, 0, 0)`;
+
   return (
     <div
-      className="w-full h-64 sm:h-72 md:h-80 lg:h-96 bg-slate-900 relative group overflow-hidden"
+      className="w-full h-64 sm:h-72 md:h-80 lg:h-96 bg-slate-900 relative group overflow-hidden touch-pan-y"
       onTouchStart={onTouchStart}
       onTouchMove={onTouchMove}
       onTouchEnd={onTouchEnd}
@@ -3190,17 +3194,21 @@ function BannerCarousel({ banners }) {
       {/* Slides (Container com Transição Animada) */}
       <div
         className="flex w-full h-full transition-transform duration-700 ease-in-out"
-        style={{ transform: `translateX(-${currentIndex * 100}%)` }}
+        style={{ width: trackWidth, transform: trackTransform }}
       >
         {activeBanners.map((banner, index) => (
-          <div key={index} className="min-w-full h-full relative shrink-0">
+          <div
+            key={index}
+            className="h-full relative shrink-0 overflow-hidden"
+            style={{ width: slideWidth }}
+          >
             <img
               src={banner}
               alt={`Banner ${index + 1}`}
               loading="eager"
               decoding="async"
               draggable={false}
-              className="w-full h-full object-cover"
+              className="block w-full h-full object-cover select-none"
             />
             <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent sm:from-black/40"></div>
           </div>
