@@ -55,6 +55,64 @@ const client = hasMpToken
 const paymentClient = client ? new Payment(client) : null;
 const preferenceClient = client ? new Preference(client) : null;
 
+const isValidEmail = (value) =>
+  /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || "").trim());
+
+const normalizeExternalReference = (value, fallbackPrefix) => {
+  const raw = String(value || "")
+    .trim()
+    .replace(/[^a-zA-Z0-9\-_.:]/g, "")
+    .slice(0, 64);
+
+  if (raw.length >= 3) return raw;
+  return `${fallbackPrefix}-${Date.now()}`;
+};
+
+const normalizeIdempotencyKey = (value) => {
+  const key = String(value || "")
+    .trim()
+    .replace(/[^a-zA-Z0-9\-_.:]/g, "")
+    .slice(0, 128);
+
+  if (key.length < 8) return null;
+  return key;
+};
+
+const buildRequestOptions = (req) => ({
+  idempotencyKey:
+    normalizeIdempotencyKey(req.headers["x-idempotency-key"]) ||
+    crypto.randomUUID(),
+});
+
+const extractGatewayError = (error) => {
+  const details = error?.cause || error?.response?.data || null;
+  const message =
+    details?.message ||
+    details?.error ||
+    error?.message ||
+    "Falha no provedor de pagamentos.";
+
+  return {
+    message,
+    details,
+  };
+};
+
+const buildFrontendBaseUrl = () => {
+  const raw = String(process.env.FRONTEND_PUBLIC_URL || "").trim();
+  if (!raw) return "http://localhost:5173";
+
+  try {
+    const url = new URL(raw);
+    if (!/^https?:$/.test(url.protocol)) {
+      return "http://localhost:5173";
+    }
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return "http://localhost:5173";
+  }
+};
+
 const clampAmount = (value) => {
   const amount = Number(value);
   if (!Number.isFinite(amount)) return null;
@@ -71,7 +129,7 @@ const normalizePayer = (payer = {}) => {
   const email = String(payer.email || "")
     .trim()
     .toLowerCase();
-  if (!email || !email.includes("@")) {
+  if (!isValidEmail(email)) {
     return null;
   }
 
@@ -154,37 +212,50 @@ app.get("/api/image-proxy", async (req, res) => {
 
 app.post("/api/pix", ensureMercadoPagoConfigured, async (req, res) => {
   try {
+    if (!req.body || typeof req.body !== "object" || Array.isArray(req.body)) {
+      return res.status(400).json({
+        error: "Payload inválido para geração de PIX.",
+      });
+    }
+
     const amount = clampAmount(req.body?.transaction_amount);
     const payer = normalizePayer(req.body?.payer);
+    const description = normalizeDescription(
+      req.body?.description,
+      "Pagamento via PIX",
+    );
+    const externalReference = normalizeExternalReference(
+      req.body?.external_reference,
+      "pix",
+    );
 
     if (!amount || !payer) {
       return res.status(400).json({
-        error: "Dados inválidos para gerar PIX.",
+        error:
+          "Dados inválidos para gerar PIX. Verifique valor da transação e e-mail do pagador.",
       });
     }
 
     const result = await paymentClient.create({
       body: {
         transaction_amount: amount,
-        description: normalizeDescription(
-          req.body?.description,
-          "Pagamento via PIX",
-        ),
+        description,
         payment_method_id: "pix",
         payer,
-        external_reference:
-          String(req.body?.external_reference || "")
-            .trim()
-            .slice(0, 64) || `pix-${Date.now()}`,
+        external_reference: externalReference,
         notification_url: process.env.MP_WEBHOOK_URL || undefined,
       },
-      requestOptions: {
-        idempotencyKey:
-          req.headers["x-idempotency-key"]?.toString() || crypto.randomUUID(),
-      },
+      requestOptions: buildRequestOptions(req),
     });
 
     const txData = result.point_of_interaction?.transaction_data || {};
+
+    if (!result?.id || !txData?.qr_code || !txData?.qr_code_base64) {
+      return res.status(502).json({
+        error:
+          "PIX criado sem dados completos de QR Code. Tente novamente em instantes.",
+      });
+    }
 
     return res.json({
       id: result.id,
@@ -195,8 +266,12 @@ app.post("/api/pix", ensureMercadoPagoConfigured, async (req, res) => {
       ticket_url: txData.ticket_url || null,
     });
   } catch (error) {
-    console.error("Erro ao gerar PIX Mercado Pago:", error?.message || error);
-    return res.status(500).json({ error: "Erro ao gerar pagamento PIX" });
+    const gatewayError = extractGatewayError(error);
+    console.error("Erro ao gerar PIX Mercado Pago:", gatewayError.message);
+    return res.status(502).json({
+      error: "Erro ao gerar pagamento PIX no provedor.",
+      providerMessage: gatewayError.message,
+    });
   }
 });
 
@@ -205,17 +280,66 @@ app.post(
   ensureMercadoPagoConfigured,
   async (req, res) => {
     try {
+      if (
+        !req.body ||
+        typeof req.body !== "object" ||
+        Array.isArray(req.body)
+      ) {
+        return res.status(400).json({
+          error: "Payload inválido para criação de checkout.",
+        });
+      }
+
       const items = Array.isArray(req.body?.items) ? req.body.items : [];
-      const sanitizedItems = items
-        .map((item) => ({
-          title: String(item.title || item.name || "Item")
-            .trim()
-            .slice(0, 80),
-          quantity: Math.max(1, Number(item.quantity || item.qty || 1)),
-          unit_price: clampAmount(item.unit_price || item.price || 0),
+
+      if (!items.length || items.length > 50) {
+        return res.status(400).json({
+          error: "Checkout deve conter entre 1 e 50 itens.",
+        });
+      }
+
+      const sanitizedItems = [];
+      let checkoutTotal = 0;
+
+      for (let idx = 0; idx < items.length; idx += 1) {
+        const item = items[idx] || {};
+        const title = String(item.title || item.name || "")
+          .trim()
+          .slice(0, 80);
+        const quantityRaw = Number(item.quantity || item.qty || 0);
+        const quantity = Number.isInteger(quantityRaw) ? quantityRaw : null;
+        const unitPrice = clampAmount(item.unit_price || item.price || 0);
+
+        if (
+          !title ||
+          !quantity ||
+          quantity < 1 ||
+          quantity > 100 ||
+          !unitPrice
+        ) {
+          return res.status(400).json({
+            error: `Item inválido na posição ${idx + 1}.`,
+          });
+        }
+
+        checkoutTotal += quantity * unitPrice;
+        sanitizedItems.push({
+          title,
+          quantity,
+          unit_price: unitPrice,
           currency_id: "BRL",
-        }))
-        .filter((item) => item.unit_price);
+        });
+      }
+
+      if (
+        !Number.isFinite(checkoutTotal) ||
+        checkoutTotal <= 0 ||
+        checkoutTotal > 50000
+      ) {
+        return res.status(400).json({
+          error: "Valor total do checkout inválido.",
+        });
+      }
 
       if (!sanitizedItems.length) {
         return res
@@ -224,13 +348,18 @@ app.post(
       }
 
       const payer = normalizePayer(req.body?.payer || {});
-      const externalReference =
-        String(req.body?.external_reference || "")
-          .trim()
-          .slice(0, 64) || `checkout-${Date.now()}`;
+      if (req.body?.payer && !payer) {
+        return res.status(400).json({
+          error: "Dados do pagador inválidos para checkout.",
+        });
+      }
 
-      const frontendBaseUrl =
-        process.env.FRONTEND_PUBLIC_URL || "http://localhost:5173";
+      const externalReference = normalizeExternalReference(
+        req.body?.external_reference,
+        "checkout",
+      );
+
+      const frontendBaseUrl = buildFrontendBaseUrl();
 
       const response = await preferenceClient.create({
         body: {
@@ -245,11 +374,17 @@ app.post(
           auto_return: "approved",
           notification_url: process.env.MP_WEBHOOK_URL || undefined,
         },
-        requestOptions: {
-          idempotencyKey:
-            req.headers["x-idempotency-key"]?.toString() || crypto.randomUUID(),
-        },
+        requestOptions: buildRequestOptions(req),
       });
+
+      if (
+        !response?.id ||
+        (!response?.init_point && !response?.sandbox_init_point)
+      ) {
+        return res.status(502).json({
+          error: "Checkout criado sem URL de pagamento.",
+        });
+      }
 
       return res.json({
         preferenceId: response.id,
@@ -257,11 +392,15 @@ app.post(
         sandboxCheckoutUrl: response.sandbox_init_point,
       });
     } catch (error) {
+      const gatewayError = extractGatewayError(error);
       console.error(
         "Erro ao criar preferência de checkout:",
-        error?.message || error,
+        gatewayError.message,
       );
-      return res.status(500).json({ error: "Erro ao criar checkout online" });
+      return res.status(502).json({
+        error: "Erro ao criar checkout online no provedor.",
+        providerMessage: gatewayError.message,
+      });
     }
   },
 );

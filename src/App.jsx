@@ -4009,7 +4009,7 @@ function CheckoutFlow({
       showToast("Pedido gerado com sucesso!");
     } catch (error) {
       console.error("ERRO AO SALVAR PEDIDO:", error);
-      showToast("Erro ao processar pedido", "error");
+      showToast(error?.message || "Erro ao processar pedido", "error");
     } finally {
       setIsProcessing(false);
     }
@@ -4379,15 +4379,6 @@ function CheckoutFlow({
 
           {step === 3 && (
             <div className="space-y-6">
-              <div className="flex items-center gap-3 bg-amber-50 border border-amber-200 text-amber-800 p-4 rounded-xl shadow-sm">
-                <AlertTriangle size={24} className="shrink-0" />
-                <p className="text-sm">
-                  <strong>Aviso:</strong> Você está no ambiente de simulação da
-                  interface. Nenhuma cobrança real será efetuada com o seu
-                  cartão.
-                </p>
-              </div>
-
               <h3 className="text-lg font-bold flex items-center gap-2">
                 <CreditCard size={20} /> Método de Pagamento
               </h3>
@@ -4399,7 +4390,7 @@ function CheckoutFlow({
                       Pagamento Seguro
                     </p>
                     <p className="text-sm text-slate-600">
-                      Checkout com Mercado Pago: PIX, Cartao e Boleto.
+                      Checkout com Mercado Pago: PIX, Cartão e Boleto.
                     </p>
                   </div>
                   <span className="px-3 py-1.5 rounded-full bg-sky-600 text-white text-xs font-black uppercase tracking-wider">
@@ -4431,7 +4422,7 @@ function CheckoutFlow({
                 {[
                   {
                     title: "PIX",
-                    subtitle: "Aprovacao rapida com QR Code e Copia e Cola",
+                    subtitle: "Aprovação rápida com QR Code e Copia e cola",
                   },
                   {
                     title: "Cartão de Crédito",
@@ -4439,7 +4430,7 @@ function CheckoutFlow({
                   },
                   {
                     title: "Boleto",
-                    subtitle: "Pagamento bancario com vencimento",
+                    subtitle: "Pagamento bancário com vencimento",
                   },
                 ].map((method) => (
                   <div key={method} className="flex flex-col">
@@ -4513,7 +4504,7 @@ function CheckoutFlow({
                 className="mx-auto text-emerald-500 mb-4"
               />
               <h3 className="text-2xl font-bold text-slate-800">
-                Pedido Registado!
+                Pedido registrado!
               </h3>
               <p className="text-slate-600">
                 Aguardando confirmação de pagamento.
@@ -4563,9 +4554,6 @@ function CheckoutFlow({
 
               {paymentMethod === "Boleto" && (
                 <div className="bg-white p-6 rounded-2xl border border-slate-200 mt-6 text-left w-full shadow-sm mx-auto max-w-sm relative overflow-hidden">
-                  <div className="absolute top-0 right-0 bg-rose-500 text-white text-[8px] font-bold px-2 py-0.5 rounded-bl-lg z-10">
-                    BOLETO DE TESTE
-                  </div>
                   <h4 className="font-bold text-slate-800 mb-2 flex items-center justify-center gap-2">
                     <FileText className="text-slate-600" /> Boleto Bancário
                   </h4>
@@ -4607,11 +4595,11 @@ function CheckoutFlow({
                 paymentMethod.toLowerCase().includes("cartão")) && (
                 <div className="bg-emerald-50 p-6 rounded-2xl border border-emerald-200 mt-6 text-left w-full mx-auto max-w-sm shadow-sm">
                   <h4 className="font-bold text-emerald-800 mb-2 flex items-center gap-2">
-                    <CreditCard /> Pagamento Simulado
+                    <CreditCard /> Pagamento no Checkout Seguro
                   </h4>
                   <p className="text-sm text-emerald-700">
                     Seu cartão seria processado aqui e o pagamento confirmado
-                    através do Backend. O pedido de simulação foi gravado.
+                    através do backend.
                   </p>
                 </div>
               )}
@@ -6612,7 +6600,7 @@ function PointOfSale({ products, showToast, storeSettings }) {
       showToast("Venda finalizada com sucesso!");
     } catch (error) {
       console.error(error);
-      showToast("Erro ao finalizar venda", "error");
+      showToast(error?.message || "Erro ao finalizar venda", "error");
     }
   };
 
