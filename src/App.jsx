@@ -2912,8 +2912,8 @@ function ProductModal({ product, close, addToCart }) {
   const hasStock = Number(product.stock) > 0;
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center p-2 sm:p-4 md:p-6 bg-slate-900/60 backdrop-blur-sm overflow-y-auto print:hidden">
-      <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-5xl max-h-[96vh] overflow-hidden flex flex-col md:flex-row animate-slide-up relative">
+    <div className="fixed inset-0 z-[70] flex items-start justify-center px-2 pb-10 pt-10 sm:items-center sm:p-4 md:p-6 bg-slate-900/60 backdrop-blur-sm overflow-y-auto print:hidden">
+      <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-5xl max-h-[calc(100dvh-5rem)] sm:max-h-[96vh] overflow-hidden flex flex-col md:flex-row animate-slide-up relative">
         {/* Botão Fechar */}
         <button
           onClick={close}
@@ -2937,7 +2937,7 @@ function ProductModal({ product, close, addToCart }) {
               </div>
             )}
             {discountPct > 0 ? (
-              <span className="absolute top-4 right-4 bg-emerald-500 text-white text-[15px] font-black px-4 py-2 rounded-2xl shadow-md z-20 pointer-events-none">
+              <span className="absolute top-4 left-4 bg-emerald-500 text-white text-[15px] font-black px-4 py-2 rounded-2xl shadow-md z-20 pointer-events-none">
                 -{discountPct}%
               </span>
             ) : product.category ? (
@@ -2988,11 +2988,6 @@ function ProductModal({ product, close, addToCart }) {
             <div className="text-2xl sm:text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-purple-600 mb-4 md:mb-6">
               {formatCurrencyBRL(product.price)}
             </div>
-
-            <div
-              className="prose prose-sm text-slate-600 mb-6 md:mb-8 max-w-none [&_img]:max-w-full [&_img]:h-auto [&_img]:rounded-xl [&_img]:my-3 [&_a]:text-indigo-600 [&_a]:underline [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:leading-relaxed [&_table]:w-full [&_table]:border-collapse [&_table]:text-sm [&_table]:my-3 [&_th]:border [&_th]:border-slate-300 [&_th]:bg-slate-100 [&_th]:px-2 [&_th]:py-1.5 [&_th]:text-left [&_td]:border [&_td]:border-slate-300 [&_td]:px-2 [&_td]:py-1.5"
-              dangerouslySetInnerHTML={{ __html: descriptionHtml }}
-            />
 
             {/* Variedades (Tamanhos/Cores) */}
             {variationGroups.length > 0 && (
@@ -3058,6 +3053,11 @@ function ProductModal({ product, close, addToCart }) {
                 Estoque disponível: {product.stock} unidades
               </p>
             </div>
+
+            <div
+              className="prose prose-sm text-slate-600 mb-6 md:mb-8 max-w-none [&_img]:max-w-full [&_img]:h-auto [&_img]:rounded-xl [&_img]:my-3 [&_a]:text-indigo-600 [&_a]:underline [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:leading-relaxed [&_table]:w-full [&_table]:border-collapse [&_table]:text-sm [&_table]:my-3 [&_th]:border [&_th]:border-slate-300 [&_th]:bg-slate-100 [&_th]:px-2 [&_th]:py-1.5 [&_th]:text-left [&_td]:border [&_td]:border-slate-300 [&_td]:px-2 [&_td]:py-1.5"
+              dangerouslySetInnerHTML={{ __html: descriptionHtml }}
+            />
           </div>
 
           <div className="px-4 py-3 md:px-8 md:py-5 border-t border-slate-100 bg-white/95 backdrop-blur-sm shrink-0">
