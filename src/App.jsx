@@ -4229,6 +4229,22 @@ function CheckoutFlow({
         order.mpPaymentId = data.id;
         order.mpExternalReference = externalReference;
       } else {
+        const checkoutItems = [
+          ...cleanCart.map((item) => ({
+            title: item.name,
+            quantity: Number(item.qty),
+            unit_price: Number(item.price),
+          })),
+        ];
+
+        if (Number(cleanShipping.price || 0) > 0) {
+          checkoutItems.push({
+            title: `Frete - ${cleanShipping.name}`,
+            quantity: 1,
+            unit_price: Number(cleanShipping.price || 0),
+          });
+        }
+
         const res = await fetch(buildApiUrl("/api/checkout/preference"), {
           method: "POST",
           headers: {
@@ -4236,18 +4252,7 @@ function CheckoutFlow({
             "x-idempotency-key": createIdempotencyKey("online-checkout"),
           },
           body: JSON.stringify({
-            items: [
-              ...cleanCart.map((item) => ({
-                title: item.name,
-                quantity: Number(item.qty),
-                unit_price: Number(item.price),
-              })),
-              {
-                title: `Frete - ${cleanShipping.name}`,
-                quantity: 1,
-                unit_price: Number(cleanShipping.price || 0),
-              },
-            ],
+            items: checkoutItems,
             external_reference: externalReference,
             payer: {
               email: user.email || "cliente@loja.com",
