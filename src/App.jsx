@@ -2282,6 +2282,7 @@ function StoreFront({ products, user, showToast, storeSettings }) {
 
 function CustomerAccountModal({ user, userProfile, orders, close, showToast }) {
   const [isSaving, setIsSaving] = useState(false);
+  const [processingOrderId, setProcessingOrderId] = useState(null);
   const [formData, setFormData] = useState({
     firstName: "",
     lastName: "",
@@ -2324,6 +2325,154 @@ function CustomerAccountModal({ user, userProfile, orders, close, showToast }) {
   const resolveOrderStatus = (order) => {
     if (order.status) return order.status;
     return order.type === "online" ? "pendente_pagamento" : "concluido";
+  };
+
+  const buildCheckoutItemsFromOrder = (order) => {
+    const orderItems = Array.isArray(order?.items) ? order.items : [];
+    const checkoutItems = orderItems
+      .map((item) => ({
+        title: String(item?.name || "Item")
+          .trim()
+          .slice(0, 80),
+        quantity: Math.max(1, Number(item?.qty || 1)),
+        unit_price: Math.max(0, Number(item?.price || 0)),
+      }))
+      .filter((item) => item.title && item.unit_price > 0);
+
+    const shippingPrice = Number(order?.shipping?.price || 0);
+    if (shippingPrice > 0) {
+      checkoutItems.push({
+        title: `Frete - ${String(order?.shipping?.name || "Entrega")
+          .trim()
+          .slice(0, 60)}`,
+        quantity: 1,
+        unit_price: shippingPrice,
+      });
+    }
+
+    return checkoutItems;
+  };
+
+  const handleRetryPayment = async (order) => {
+    if (!order?.id) return;
+
+    const status = resolveOrderStatus(order);
+    if (order.type !== "online" || status !== "pendente_pagamento") {
+      return showToast(
+        "Este pedido não está elegível para novo pagamento.",
+        "error",
+      );
+    }
+
+    const items = buildCheckoutItemsFromOrder(order);
+    if (!items.length) {
+      return showToast(
+        "Não foi possível montar os itens do pagamento deste pedido.",
+        "error",
+      );
+    }
+
+    setProcessingOrderId(order.id);
+    try {
+      const externalReference = `retry-${order.id}-${Date.now()}`;
+      const res = await fetch(buildApiUrl("/api/checkout/preference"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-idempotency-key": createIdempotencyKey("retry-checkout"),
+        },
+        body: JSON.stringify({
+          items,
+          external_reference: externalReference,
+          payer: {
+            email: order.customerEmail || user?.email || "cliente@loja.com",
+            first_name:
+              order.customerName ||
+              userProfile?.firstName ||
+              user?.email?.split("@")[0] ||
+              "Cliente",
+          },
+        }),
+      });
+
+      const data = await res.json();
+      const checkoutUrl = data?.checkoutUrl || data?.sandboxCheckoutUrl;
+      if (!res.ok || !checkoutUrl) {
+        throw new Error(
+          data?.error || data?.providerMessage || "Falha ao reabrir pagamento.",
+        );
+      }
+
+      await updateDoc(
+        doc(db, "artifacts", appId, "public", "data", "orders", order.id),
+        {
+          mpPreferenceId: data.preferenceId || null,
+          mpExternalReference: externalReference,
+          lastPaymentAttemptAt: serverTimestamp(),
+          paymentRetryCount: Number(order.paymentRetryCount || 0) + 1,
+          updatedAt: serverTimestamp(),
+        },
+      );
+
+      showToast("Redirecionando para concluir o pagamento...");
+      window.location.href = checkoutUrl;
+    } catch (error) {
+      console.error("Erro ao tentar novo pagamento:", error);
+      showToast(error?.message || "Erro ao tentar novo pagamento", "error");
+    } finally {
+      setProcessingOrderId(null);
+    }
+  };
+
+  const handleRequestCancellation = async (order) => {
+    if (!order?.id) return;
+    const status = resolveOrderStatus(order);
+
+    if (!["pendente_pagamento", "pendente", "separacao"].includes(status)) {
+      return showToast(
+        "Este pedido não pode solicitar cancelamento nesta etapa.",
+        "error",
+      );
+    }
+
+    const reason = window.prompt(
+      "Informe o motivo do cancelamento (mínimo 10 caracteres):",
+    );
+    if (reason === null) return;
+
+    const trimmedReason = String(reason || "").trim();
+    if (trimmedReason.length < 10) {
+      return showToast("Descreva melhor o motivo do cancelamento.", "error");
+    }
+
+    setProcessingOrderId(order.id);
+    try {
+      await updateDoc(
+        doc(db, "artifacts", appId, "public", "data", "orders", order.id),
+        {
+          cancellationRequest: {
+            status: "requested",
+            reason: trimmedReason,
+            requestedAt: serverTimestamp(),
+            requestedBy: user.uid,
+            customerName:
+              order.customerName ||
+              `${formData.firstName || ""} ${formData.lastName || ""}`.trim(),
+            customerEmail: order.customerEmail || user.email || "",
+            customerPhone:
+              order.customerPhone || formData.phone || userProfile?.phone || "",
+          },
+          updatedAt: serverTimestamp(),
+        },
+      );
+
+      showToast("Solicitação de cancelamento enviada para o admin.");
+    } catch (error) {
+      console.error("Erro ao solicitar cancelamento:", error);
+      showToast("Erro ao solicitar cancelamento", "error");
+    } finally {
+      setProcessingOrderId(null);
+    }
   };
 
   const saveProfile = async (e) => {
@@ -2471,6 +2620,18 @@ function CustomerAccountModal({ user, userProfile, orders, close, showToast }) {
                 const statusCode = resolveOrderStatus(order);
                 const statusMeta =
                   statusCatalog[statusCode] || statusCatalog.pendente;
+                const isProcessingOrder = processingOrderId === order.id;
+                const isCancellationPending =
+                  order?.cancellationRequest?.status === "requested";
+                const canRetryPayment =
+                  order?.type === "online" &&
+                  statusCode === "pendente_pagamento";
+                const canRequestCancellation =
+                  order?.type === "online" &&
+                  ["pendente_pagamento", "pendente", "separacao"].includes(
+                    statusCode,
+                  ) &&
+                  !isCancellationPending;
 
                 return (
                   <div
@@ -2521,6 +2682,44 @@ function CustomerAccountModal({ user, userProfile, orders, close, showToast }) {
                         </p>
                       </div>
                     </div>
+
+                    {(canRetryPayment ||
+                      canRequestCancellation ||
+                      isCancellationPending) && (
+                      <div className="mt-3 pt-3 border-t border-slate-100 space-y-2">
+                        {isCancellationPending && (
+                          <div className="text-xs rounded-lg bg-amber-50 border border-amber-200 text-amber-800 p-2">
+                            <strong>Cancelamento solicitado:</strong>{" "}
+                            {order?.cancellationRequest?.reason ||
+                              "Aguardando análise do admin."}
+                          </div>
+                        )}
+
+                        <div className="flex flex-wrap gap-2">
+                          {canRetryPayment && (
+                            <button
+                              onClick={() => handleRetryPayment(order)}
+                              disabled={isProcessingOrder}
+                              className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 disabled:bg-slate-300"
+                            >
+                              {isProcessingOrder
+                                ? "Processando..."
+                                : "Pagar agora"}
+                            </button>
+                          )}
+
+                          {canRequestCancellation && (
+                            <button
+                              onClick={() => handleRequestCancellation(order)}
+                              disabled={isProcessingOrder}
+                              className="px-3 py-2 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs font-bold hover:bg-rose-100 disabled:bg-slate-100 disabled:text-slate-400"
+                            >
+                              Solicitar cancelamento
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -4390,7 +4589,7 @@ function CheckoutFlow({
                       Pagamento Seguro
                     </p>
                     <p className="text-sm text-slate-600">
-                      Checkout com Mercado Pago: PIX, Cartão e Boleto.
+                      Checkout com Mercado Pago: PIX e Cartão.
                     </p>
                   </div>
                   <span className="px-3 py-1.5 rounded-full bg-sky-600 text-white text-xs font-black uppercase tracking-wider">
@@ -4406,7 +4605,6 @@ function CheckoutFlow({
                     "AMEX",
                     "HIPERCARD",
                     "PIX",
-                    "BOLETO",
                   ].map((flag) => (
                     <span
                       key={flag}
@@ -4428,10 +4626,6 @@ function CheckoutFlow({
                     title: "Cartão de Crédito",
                     subtitle: "Parcelamento e processamento no Mercado Pago",
                   },
-                  {
-                    title: "Boleto",
-                    subtitle: "Pagamento bancário com vencimento",
-                  },
                 ].map((method) => (
                   <div key={method} className="flex flex-col">
                     <label
@@ -4452,9 +4646,6 @@ function CheckoutFlow({
                           size={18}
                           className="mr-2 text-indigo-600"
                         />
-                      )}
-                      {method.title === "Boleto" && (
-                        <FileText size={18} className="mr-2 text-slate-600" />
                       )}
                       <span className="flex flex-col">
                         <span className="font-semibold text-slate-700">
@@ -4549,44 +4740,6 @@ function CheckoutFlow({
                       </div>
                     </div>
                   </div>
-                </div>
-              )}
-
-              {paymentMethod === "Boleto" && (
-                <div className="bg-white p-6 rounded-2xl border border-slate-200 mt-6 text-left w-full shadow-sm mx-auto max-w-sm relative overflow-hidden">
-                  <h4 className="font-bold text-slate-800 mb-2 flex items-center justify-center gap-2">
-                    <FileText className="text-slate-600" /> Boleto Bancário
-                  </h4>
-                  <p className="text-xs text-slate-500 mb-6 text-center">
-                    Seu boleto vence em 3 dias úteis. A compensação pode demorar
-                    até 48h.
-                  </p>
-
-                  <div className="w-full mb-6">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 block">
-                      Linha Digitável
-                    </label>
-                    <div className="flex">
-                      <input
-                        readOnly
-                        value="34191.09008 63571.277308 71444.640008 5 91000000000000"
-                        className="flex-1 p-3 bg-slate-50 border border-slate-200 rounded-l-lg text-[10px] sm:text-xs font-mono outline-none text-slate-600 truncate"
-                      />
-                      <button
-                        onClick={() => showToast("Código copiado!")}
-                        className="bg-slate-800 text-white px-4 font-bold rounded-r-lg hover:bg-slate-900 transition"
-                      >
-                        Copiar
-                      </button>
-                    </div>
-                  </div>
-
-                  <button
-                    onClick={() => showToast("Abrindo boleto...")}
-                    className="w-full py-3.5 bg-indigo-50 text-indigo-700 font-bold rounded-xl border border-indigo-200 hover:bg-indigo-100 transition flex items-center justify-center gap-2"
-                  >
-                    <Printer size={18} /> Visualizar Boleto (PDF)
-                  </button>
                 </div>
               )}
 
@@ -7307,6 +7460,61 @@ function OrdersList({ orders, showToast }) {
     }
   };
 
+  const buildCustomerContactHref = (order) => {
+    const phone = String(
+      order?.customerPhone || order?.address?.recebedorTelefone || "",
+    );
+    const digits = normalizePhoneDigits(phone);
+    if (digits.length < 10) return "";
+    return `https://wa.me/55${digits}`;
+  };
+
+  const handleReviewCancellationRequest = async (order, decision) => {
+    if (!order?.id || order?.cancellationRequest?.status !== "requested")
+      return;
+
+    setSavingOrderId(order.id);
+    try {
+      if (decision === "approved") {
+        await updateOrderStatusWithStock(
+          order,
+          "cancelado",
+          "cancel_request_approved",
+          {
+            cancellationRequest: {
+              ...order.cancellationRequest,
+              status: "approved",
+              reviewedAt: serverTimestamp(),
+              reviewedBy: "admin",
+            },
+            cancellationReviewedAt: serverTimestamp(),
+          },
+        );
+        showToast("Solicitação de cancelamento aprovada.");
+        return;
+      }
+
+      await updateDoc(
+        doc(db, "artifacts", appId, "public", "data", "orders", order.id),
+        {
+          cancellationRequest: {
+            ...order.cancellationRequest,
+            status: "rejected",
+            reviewedAt: serverTimestamp(),
+            reviewedBy: "admin",
+          },
+          cancellationReviewedAt: serverTimestamp(),
+        },
+      );
+      showToast("Solicitação de cancelamento recusada.");
+    } catch (error) {
+      console.error("Erro ao revisar cancelamento:", error);
+      showToast("Erro ao revisar solicitação de cancelamento", "error");
+    } finally {
+      setSavingOrderId(null);
+    }
+  };
+
   const executeDeleteOrder = async () => {
     if (!orderToDelete) return;
 
@@ -7366,6 +7574,9 @@ function OrdersList({ orders, showToast }) {
               trackingDrafts[o.id] !== undefined
                 ? trackingDrafts[o.id]
                 : o.trackingCode || "";
+            const cancellationStatus = o?.cancellationRequest?.status || "";
+            const hasPendingCancellation = cancellationStatus === "requested";
+            const customerContactHref = buildCustomerContactHref(o);
 
             return (
               <tr key={o.id} className="hover:bg-slate-50 align-top">
@@ -7404,6 +7615,15 @@ function OrdersList({ orders, showToast }) {
                   >
                     {statusMeta.label}
                   </span>
+                  {hasPendingCancellation && (
+                    <div className="text-[11px] rounded-lg bg-rose-50 border border-rose-200 text-rose-700 p-2">
+                      <p className="font-bold">Cancelamento solicitado</p>
+                      <p className="mt-1">
+                        {o?.cancellationRequest?.reason ||
+                          "Sem motivo informado."}
+                      </p>
+                    </div>
+                  )}
                   <select
                     value={status}
                     onChange={(e) => handleStatusChange(o, e.target.value)}
@@ -7453,7 +7673,7 @@ function OrdersList({ orders, showToast }) {
                   R$ {Number(o.total).toFixed(2)}
                 </td>
                 <td className="p-4 text-center min-w-[150px]">
-                  <div className="flex items-center justify-center gap-2">
+                  <div className="flex flex-wrap items-center justify-center gap-2">
                     {o.type === "online" ? (
                       <button
                         onClick={() => handleRefund(o)}
@@ -7464,6 +7684,38 @@ function OrdersList({ orders, showToast }) {
                       </button>
                     ) : (
                       <span className="text-xs text-slate-400">-</span>
+                    )}
+                    {hasPendingCancellation && (
+                      <>
+                        <button
+                          onClick={() =>
+                            handleReviewCancellationRequest(o, "approved")
+                          }
+                          disabled={isSaving}
+                          className="bg-emerald-100 text-emerald-700 hover:bg-emerald-200 disabled:bg-slate-100 disabled:text-slate-400 text-xs font-bold px-3 py-2 rounded-lg"
+                        >
+                          Aprovar cancelamento
+                        </button>
+                        <button
+                          onClick={() =>
+                            handleReviewCancellationRequest(o, "rejected")
+                          }
+                          disabled={isSaving}
+                          className="bg-amber-100 text-amber-700 hover:bg-amber-200 disabled:bg-slate-100 disabled:text-slate-400 text-xs font-bold px-3 py-2 rounded-lg"
+                        >
+                          Recusar
+                        </button>
+                      </>
+                    )}
+                    {customerContactHref && (
+                      <a
+                        href={customerContactHref}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="bg-sky-100 text-sky-700 hover:bg-sky-200 text-xs font-bold px-3 py-2 rounded-lg inline-flex items-center gap-1"
+                      >
+                        <MessageCircle size={13} /> Contato
+                      </a>
                     )}
                     <button
                       onClick={() => setOrderToDelete(o.id)}
