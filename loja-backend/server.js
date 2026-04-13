@@ -151,6 +151,17 @@ const ensureMercadoPagoConfigured = (req, res, next) => {
   return next();
 };
 
+const isFinalMpStatus = (status) => {
+  const normalized = String(status || "").toLowerCase();
+  return [
+    "approved",
+    "rejected",
+    "cancelled",
+    "refunded",
+    "charged_back",
+  ].includes(normalized);
+};
+
 app.get("/api/health", (req, res) => {
   res.json({ ok: true, mpConfigured: hasMpToken, mpMode });
 });
@@ -399,6 +410,52 @@ app.post(
       );
       return res.status(502).json({
         error: "Erro ao criar checkout online no provedor.",
+        providerMessage: gatewayError.message,
+      });
+    }
+  },
+);
+
+app.get(
+  "/api/payment-status",
+  ensureMercadoPagoConfigured,
+  async (req, res) => {
+    try {
+      const paymentIdRaw = String(req.query?.paymentId || "").trim();
+      const paymentId = Number(paymentIdRaw);
+
+      if (!paymentIdRaw || !Number.isFinite(paymentId) || paymentId <= 0) {
+        return res.status(400).json({
+          error: "Informe um paymentId válido para consultar o status.",
+        });
+      }
+
+      const payment = await paymentClient.get({ id: paymentId });
+      const status = String(payment?.status || "").toLowerCase();
+
+      if (!status) {
+        return res.status(502).json({
+          error: "Pagamento retornou sem status no provedor.",
+        });
+      }
+
+      return res.json({
+        paymentId: payment?.id || paymentId,
+        status,
+        statusDetail: payment?.status_detail || null,
+        approved: status === "approved",
+        isFinal: isFinalMpStatus(status),
+        externalReference: payment?.external_reference || null,
+        dateApproved: payment?.date_approved || null,
+      });
+    } catch (error) {
+      const gatewayError = extractGatewayError(error);
+      console.error(
+        "Erro ao consultar status do pagamento:",
+        gatewayError.message,
+      );
+      return res.status(502).json({
+        error: "Erro ao consultar status do pagamento no provedor.",
         providerMessage: gatewayError.message,
       });
     }

@@ -75,6 +75,7 @@ import {
   serverTimestamp,
   setDoc,
   getDoc,
+  getDocs,
 } from "firebase/firestore";
 
 const BACKEND_URL = String(import.meta.env.VITE_BACKEND_URL || "")
@@ -118,6 +119,63 @@ const normalizeExternalImageUrl = (value) => {
 
 const createIdempotencyKey = (scope) =>
   `${scope}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+const PAYMENT_PENDING_STORAGE_KEY = "jn_pending_payment_v1";
+
+const savePendingPaymentContext = (payload) => {
+  try {
+    localStorage.setItem(PAYMENT_PENDING_STORAGE_KEY, JSON.stringify(payload));
+  } catch {
+    // no-op: storage indisponivel no contexto atual
+  }
+};
+
+const readPendingPaymentContext = () => {
+  try {
+    const raw = localStorage.getItem(PAYMENT_PENDING_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
+const clearPendingPaymentContext = () => {
+  try {
+    localStorage.removeItem(PAYMENT_PENDING_STORAGE_KEY);
+  } catch {
+    // no-op: storage indisponivel no contexto atual
+  }
+};
+
+const parsePaymentReturnParams = () => {
+  if (typeof window === "undefined") {
+    return { paymentId: "", externalReference: "", rawStatus: "" };
+  }
+
+  const search = new URLSearchParams(window.location.search || "");
+  const hash = String(window.location.hash || "");
+  const hashQuery = hash.includes("?") ? hash.split("?")[1] : "";
+  const hashParams = new URLSearchParams(hashQuery);
+
+  const pick = (key) => search.get(key) || hashParams.get(key) || "";
+
+  return {
+    paymentId: pick("payment_id") || pick("collection_id"),
+    externalReference: pick("external_reference") || pick("externalReference"),
+    rawStatus: pick("status") || pick("collection_status"),
+  };
+};
+
+const clearPaymentReturnParamsFromUrl = () => {
+  if (typeof window === "undefined") return;
+
+  const { pathname, hash } = window.location;
+  const cleanHash = hash.includes("?") ? hash.split("?")[0] : hash;
+  const target = `${pathname}${cleanHash}`;
+  window.history.replaceState({}, document.title, target);
+};
 
 const ADMIN_EMAIL = "admin@jnfutshirt.com.br";
 const ADMIN_PASSWORD = "Joao@2405";
@@ -1429,6 +1487,115 @@ function StoreFront({ products, user, showToast, storeSettings }) {
     return () => unsub();
   }, [isRealUser, user]);
 
+  useEffect(() => {
+    if (!isRealUser || !user?.uid) return;
+
+    const returnParams = parsePaymentReturnParams();
+    const pendingContext = readPendingPaymentContext();
+    const paymentId = String(
+      returnParams.paymentId || pendingContext?.paymentId || "",
+    ).trim();
+
+    if (!paymentId) return;
+
+    let cancelled = false;
+
+    const reconcileReturnedPayment = async () => {
+      try {
+        const res = await fetch(
+          buildApiUrl(
+            `/api/payment-status?paymentId=${encodeURIComponent(paymentId)}`,
+          ),
+        );
+        const data = await res.json();
+
+        if (!res.ok || !data?.status) {
+          throw new Error(
+            data?.error ||
+              data?.providerMessage ||
+              "Falha ao consultar pagamento.",
+          );
+        }
+
+        let orderId = String(pendingContext?.orderId || "").trim();
+        const externalReference = String(
+          returnParams.externalReference ||
+            pendingContext?.externalReference ||
+            data.externalReference ||
+            "",
+        ).trim();
+
+        if (!orderId && externalReference) {
+          const orderByReference = await getDocs(
+            query(
+              collection(db, "artifacts", appId, "public", "data", "orders"),
+              where("mpExternalReference", "==", externalReference),
+            ),
+          );
+
+          const matchedDoc = orderByReference.docs.find(
+            (orderDoc) =>
+              String(orderDoc.data()?.customerId || "") === user.uid,
+          );
+
+          if (matchedDoc) {
+            orderId = matchedDoc.id;
+          }
+        }
+
+        if (!orderId) {
+          clearPendingPaymentContext();
+          clearPaymentReturnParamsFromUrl();
+          return;
+        }
+
+        const paymentStatus = String(data.status || "").toLowerCase();
+        const updatePayload = {
+          paymentStatus,
+          mpPaymentId: Number(data.paymentId || paymentId) || Number(paymentId),
+          lastPaymentCheckAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        };
+
+        if (paymentStatus === "approved") {
+          updatePayload.status = "pendente";
+          updatePayload.paymentApprovedAt = serverTimestamp();
+        }
+
+        await updateDoc(
+          doc(db, "artifacts", appId, "public", "data", "orders", orderId),
+          updatePayload,
+        );
+
+        if (cancelled) return;
+
+        if (paymentStatus === "approved") {
+          showToast("Pagamento confirmado! Seu pedido entrou em preparação.");
+        } else if (data.isFinal) {
+          showToast(
+            `Pagamento retornou com status: ${paymentStatus}.`,
+            "error",
+          );
+        } else {
+          showToast("Pagamento ainda pendente. Acompanhe em Minha Conta.");
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.error("Erro ao reconciliar retorno do checkout:", error);
+        }
+      } finally {
+        clearPendingPaymentContext();
+        clearPaymentReturnParamsFromUrl();
+      }
+    };
+
+    reconcileReturnedPayment();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isRealUser, user?.uid, showToast]);
+
   // Carregar carrinho salvo
   useEffect(() => {
     if (!user) return;
@@ -2287,6 +2454,8 @@ function CustomerAccountModal({ user, userProfile, orders, close, showToast }) {
   const [retryPaymentMethod, setRetryPaymentMethod] = useState("");
   const [retryPixData, setRetryPixData] = useState(null);
   const [retryPaymentError, setRetryPaymentError] = useState("");
+  const [retryPaymentCheckLabel, setRetryPaymentCheckLabel] = useState("");
+  const [isRetryPaymentChecking, setIsRetryPaymentChecking] = useState(false);
   const [cancelModalOrder, setCancelModalOrder] = useState(null);
   const [cancelReasonDraft, setCancelReasonDraft] = useState("");
   const [cancelReasonError, setCancelReasonError] = useState("");
@@ -2360,6 +2529,108 @@ function CustomerAccountModal({ user, userProfile, orders, close, showToast }) {
     return checkoutItems;
   };
 
+  const checkRetryPixPaymentStatus = useCallback(
+    async ({ silent = false } = {}) => {
+      if (!paymentModalOrder?.id || !retryPixData?.id) return false;
+
+      if (!silent) setIsRetryPaymentChecking(true);
+      try {
+        const res = await fetch(
+          buildApiUrl(
+            `/api/payment-status?paymentId=${encodeURIComponent(String(retryPixData.id))}`,
+          ),
+        );
+        const data = await res.json();
+
+        if (!res.ok || !data?.status) {
+          throw new Error(
+            data?.error ||
+              data?.providerMessage ||
+              "Falha ao consultar o pagamento deste pedido.",
+          );
+        }
+
+        const paymentStatus = String(data.status || "").toLowerCase();
+        const payload = {
+          paymentStatus,
+          mpPaymentId:
+            Number(data.paymentId || retryPixData.id) ||
+            Number(retryPixData.id),
+          lastPaymentCheckAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        };
+
+        if (paymentStatus === "approved") {
+          payload.status = "pendente";
+          payload.paymentApprovedAt = serverTimestamp();
+        }
+
+        await updateDoc(
+          doc(
+            db,
+            "artifacts",
+            appId,
+            "public",
+            "data",
+            "orders",
+            paymentModalOrder.id,
+          ),
+          payload,
+        );
+
+        if (paymentStatus === "approved") {
+          setRetryPaymentCheckLabel(
+            "Pagamento confirmado. Pedido em preparação.",
+          );
+          showToast("Pagamento confirmado com sucesso!");
+          return true;
+        }
+
+        if (data.isFinal) {
+          setRetryPaymentCheckLabel(
+            `Pagamento finalizado com status: ${paymentStatus}.`,
+          );
+        } else {
+          setRetryPaymentCheckLabel(
+            "Pagamento ainda pendente. Vamos atualizar automaticamente.",
+          );
+        }
+
+        return false;
+      } catch (error) {
+        if (!silent) {
+          showToast(error?.message || "Erro ao consultar pagamento", "error");
+        }
+        return false;
+      } finally {
+        if (!silent) setIsRetryPaymentChecking(false);
+      }
+    },
+    [paymentModalOrder?.id, retryPixData?.id, showToast],
+  );
+
+  useEffect(() => {
+    if (!paymentModalOrder?.id || !retryPixData?.id) return;
+
+    let cancelled = false;
+    let intervalId = null;
+
+    const runCheck = async () => {
+      const approved = await checkRetryPixPaymentStatus({ silent: true });
+      if (approved || cancelled) {
+        if (intervalId) window.clearInterval(intervalId);
+      }
+    };
+
+    runCheck();
+    intervalId = window.setInterval(runCheck, 5000);
+
+    return () => {
+      cancelled = true;
+      if (intervalId) window.clearInterval(intervalId);
+    };
+  }, [paymentModalOrder?.id, retryPixData?.id, checkRetryPixPaymentStatus]);
+
   const handleRetryPayment = async (order) => {
     if (!order?.id) return;
 
@@ -2383,6 +2654,7 @@ function CustomerAccountModal({ user, userProfile, orders, close, showToast }) {
     setRetryPaymentMethod("");
     setRetryPixData(null);
     setRetryPaymentError("");
+    setRetryPaymentCheckLabel("");
   };
 
   const closePaymentModal = () => {
@@ -2398,6 +2670,7 @@ function CustomerAccountModal({ user, userProfile, orders, close, showToast }) {
     setRetryPaymentMethod("");
     setRetryPixData(null);
     setRetryPaymentError("");
+    setRetryPaymentCheckLabel("");
   };
 
   const submitRetryPayment = async () => {
@@ -2486,6 +2759,7 @@ function CustomerAccountModal({ user, userProfile, orders, close, showToast }) {
         );
 
         setRetryPixData(data);
+        setRetryPaymentCheckLabel("Aguardando confirmação do PIX...");
         showToast("PIX gerado com sucesso para este pedido.");
         return;
       }
@@ -2541,6 +2815,14 @@ function CustomerAccountModal({ user, userProfile, orders, close, showToast }) {
           updatedAt: serverTimestamp(),
         },
       );
+
+      savePendingPaymentContext({
+        orderId: paymentModalOrder.id,
+        externalReference: `${baseExternalReference}-card`,
+        paymentId: "",
+        type: "CARD",
+        createdAt: Date.now(),
+      });
 
       showToast("Redirecionando para concluir o pagamento...");
       window.location.href = checkoutUrl;
@@ -2995,6 +3277,7 @@ function CustomerAccountModal({ user, userProfile, orders, close, showToast }) {
                   onClick={() => {
                     setRetryPaymentMethod("PIX");
                     setRetryPaymentError("");
+                    setRetryPaymentCheckLabel("");
                   }}
                   className={`p-4 rounded-xl border text-left transition ${retryPaymentMethod === "PIX" ? "border-teal-500 bg-teal-50 ring-2 ring-teal-200" : "border-slate-200 hover:bg-slate-50"}`}
                 >
@@ -3011,6 +3294,7 @@ function CustomerAccountModal({ user, userProfile, orders, close, showToast }) {
                   onClick={() => {
                     setRetryPaymentMethod("CARD");
                     setRetryPaymentError("");
+                    setRetryPaymentCheckLabel("");
                   }}
                   className={`p-4 rounded-xl border text-left transition ${retryPaymentMethod === "CARD" ? "border-indigo-500 bg-indigo-50 ring-2 ring-indigo-200" : "border-slate-200 hover:bg-slate-50"}`}
                 >
@@ -3067,6 +3351,25 @@ function CustomerAccountModal({ user, userProfile, orders, close, showToast }) {
                         Copiar
                       </button>
                     </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <p className="text-xs text-teal-900 font-semibold">
+                      {retryPaymentCheckLabel ||
+                        "Aguardando confirmação automática do pagamento."}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        checkRetryPixPaymentStatus({ silent: false })
+                      }
+                      disabled={isRetryPaymentChecking}
+                      className="w-full py-2 rounded-lg bg-white border border-teal-200 text-teal-700 font-bold hover:bg-teal-100 disabled:opacity-50"
+                    >
+                      {isRetryPaymentChecking
+                        ? "Verificando..."
+                        : "Já paguei, verificar agora"}
+                    </button>
                   </div>
                 </div>
               )}
@@ -4258,6 +4561,9 @@ function CheckoutFlow({
   const [paymentMethod, setPaymentMethod] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [pixData, setPixData] = useState(null); // Recebe dados reais do PIX
+  const [createdOrderId, setCreatedOrderId] = useState("");
+  const [paymentCheckLabel, setPaymentCheckLabel] = useState("");
+  const [isCheckingPayment, setIsCheckingPayment] = useState(false);
 
   // Fetch user addresses
   useEffect(() => {
@@ -4333,6 +4639,115 @@ function CheckoutFlow({
     return options;
   }, [selectedAddress, storeSettings]);
 
+  const checkPixPaymentStatus = useCallback(
+    async ({ silent = false } = {}) => {
+      if (!pixData?.id || !createdOrderId) return false;
+
+      if (!silent) setIsCheckingPayment(true);
+      try {
+        const res = await fetch(
+          buildApiUrl(
+            `/api/payment-status?paymentId=${encodeURIComponent(String(pixData.id))}`,
+          ),
+        );
+        const data = await res.json();
+
+        if (!res.ok || !data?.status) {
+          throw new Error(
+            data?.error ||
+              data?.providerMessage ||
+              "Falha ao consultar o pagamento PIX.",
+          );
+        }
+
+        const paymentStatus = String(data.status || "").toLowerCase();
+        const payload = {
+          paymentStatus,
+          mpPaymentId:
+            Number(data.paymentId || pixData.id) || Number(pixData.id),
+          lastPaymentCheckAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        };
+
+        if (paymentStatus === "approved") {
+          payload.status = "pendente";
+          payload.paymentApprovedAt = serverTimestamp();
+        }
+
+        await updateDoc(
+          doc(
+            db,
+            "artifacts",
+            appId,
+            "public",
+            "data",
+            "orders",
+            createdOrderId,
+          ),
+          payload,
+        );
+
+        if (paymentStatus === "approved") {
+          setPaymentCheckLabel("Pagamento confirmado. Pedido em preparação.");
+          showToast("Pagamento PIX confirmado com sucesso!");
+          return true;
+        }
+
+        if (data.isFinal) {
+          setPaymentCheckLabel(
+            `Pagamento finalizado com status: ${paymentStatus}.`,
+          );
+        } else {
+          setPaymentCheckLabel(
+            "Pagamento ainda pendente. Vamos atualizar automaticamente.",
+          );
+        }
+
+        return false;
+      } catch (error) {
+        if (!silent) {
+          showToast(
+            error?.message || "Erro ao consultar pagamento PIX",
+            "error",
+          );
+        }
+        return false;
+      } finally {
+        if (!silent) setIsCheckingPayment(false);
+      }
+    },
+    [pixData?.id, createdOrderId, showToast],
+  );
+
+  useEffect(() => {
+    if (
+      step !== 4 ||
+      paymentMethod !== "PIX" ||
+      !pixData?.id ||
+      !createdOrderId
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    let intervalId = null;
+
+    const runCheck = async () => {
+      const approved = await checkPixPaymentStatus({ silent: true });
+      if (approved || cancelled) {
+        if (intervalId) window.clearInterval(intervalId);
+      }
+    };
+
+    runCheck();
+    intervalId = window.setInterval(runCheck, 5000);
+
+    return () => {
+      cancelled = true;
+      if (intervalId) window.clearInterval(intervalId);
+    };
+  }, [step, paymentMethod, pixData?.id, createdOrderId, checkPixPaymentStatus]);
+
   // Busca de CEP na API do ViaCEP
   const handleCepChange = async (e) => {
     const rawCep = e.target.value;
@@ -4401,6 +4816,8 @@ function CheckoutFlow({
       return showToast("Preencha todos os dados e frete", "error");
 
     setIsProcessing(true);
+    setCreatedOrderId("");
+    setPaymentCheckLabel("");
 
     try {
       // 1. Limpamos os dados antes de gravar (Evitar erro de elemento React do Icon)
@@ -4486,6 +4903,7 @@ function CheckoutFlow({
         setPixData(data);
         order.mpPaymentId = data.id;
         order.mpExternalReference = externalReference;
+        setPaymentCheckLabel("Aguardando confirmação do PIX...");
       } else {
         const checkoutItems = [
           ...cleanCart.map((item) => ({
@@ -4548,10 +4966,18 @@ function CheckoutFlow({
           }
         }
 
-        await addDoc(
+        const createdOrder = await addDoc(
           collection(db, "artifacts", appId, "public", "data", "orders"),
           order,
         );
+
+        savePendingPaymentContext({
+          orderId: createdOrder.id,
+          externalReference,
+          paymentId: "",
+          type: "CARD",
+          createdAt: Date.now(),
+        });
 
         clearCart();
         showToast("Redirecionando para o checkout seguro do Mercado Pago...");
@@ -4560,10 +4986,11 @@ function CheckoutFlow({
       }
 
       // 3. Gravar no banco de dados Firebase
-      await addDoc(
+      const createdOrder = await addDoc(
         collection(db, "artifacts", appId, "public", "data", "orders"),
         order,
       );
+      setCreatedOrderId(createdOrder.id);
 
       // Atualizar estoque
       for (const item of cleanCart) {
@@ -5112,6 +5539,23 @@ function CheckoutFlow({
                         </button>
                       </div>
                     </div>
+                  </div>
+
+                  <div className="mt-4 space-y-2">
+                    <p className="text-xs text-slate-600 font-semibold">
+                      {paymentCheckLabel ||
+                        "Aguardando confirmação automática do pagamento."}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => checkPixPaymentStatus({ silent: false })}
+                      disabled={isCheckingPayment}
+                      className="w-full py-2.5 rounded-lg border border-teal-200 text-teal-700 font-bold hover:bg-teal-50 disabled:opacity-50"
+                    >
+                      {isCheckingPayment
+                        ? "Verificando..."
+                        : "Já paguei, verificar agora"}
+                    </button>
                   </div>
                 </div>
               )}
