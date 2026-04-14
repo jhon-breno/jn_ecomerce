@@ -408,6 +408,22 @@ const resolvePickupMapUrl = (value) => {
   return `https://${raw}`;
 };
 
+const normalizeStoreAddress = (value) => {
+  const source = value && typeof value === "object" ? value : {};
+  return {
+    cep: String(source.cep || "").trim(),
+    rua: String(source.rua || "").trim(),
+    numero: String(source.numero || "").trim(),
+    complemento: String(source.complemento || "").trim(),
+    bairro: String(source.bairro || "").trim(),
+    cidade: String(source.cidade || "").trim(),
+    estado: String(source.estado || "")
+      .trim()
+      .toUpperCase()
+      .slice(0, 2),
+  };
+};
+
 const sanitizePixText = (value, maxLength) =>
   String(value || "")
     .normalize("NFD")
@@ -1013,6 +1029,15 @@ export default function App() {
     mpPublicKey: DEFAULT_MP_PUBLIC_KEY,
     pixKey: "",
     pickupMapUrl: "",
+    storeAddress: {
+      cep: "",
+      rua: "",
+      numero: "",
+      complemento: "",
+      bairro: "",
+      cidade: "",
+      estado: "",
+    },
     catalog: DEFAULT_PRODUCT_CATALOG,
     shipping: {
       pickupEnabled: true,
@@ -2534,6 +2559,15 @@ function CustomerAccountModal({
   }, [userProfile, user]);
 
   const pickupMapUrl = resolvePickupMapUrl(storeSettings?.pickupMapUrl);
+  const pickupStoreAddress = normalizeStoreAddress(storeSettings?.storeAddress);
+  const hasPickupStoreAddress = Boolean(
+    pickupStoreAddress.rua ||
+    pickupStoreAddress.numero ||
+    pickupStoreAddress.bairro ||
+    pickupStoreAddress.cidade ||
+    pickupStoreAddress.estado ||
+    pickupStoreAddress.cep,
+  );
 
   const statusCatalog = {
     pendente_pagamento: {
@@ -3237,6 +3271,34 @@ function CustomerAccountModal({
                         <p className="font-bold">
                           Aguardando retirada na loja.
                         </p>
+                        {hasPickupStoreAddress && (
+                          <p className="mt-1 text-cyan-900 leading-relaxed">
+                            {pickupStoreAddress.rua}
+                            {pickupStoreAddress.numero
+                              ? `, ${pickupStoreAddress.numero}`
+                              : ""}
+                            {pickupStoreAddress.complemento
+                              ? ` - ${pickupStoreAddress.complemento}`
+                              : ""}
+                            {(pickupStoreAddress.bairro ||
+                              pickupStoreAddress.cidade ||
+                              pickupStoreAddress.estado ||
+                              pickupStoreAddress.cep) && <br />}
+                            {pickupStoreAddress.bairro}
+                            {pickupStoreAddress.bairro &&
+                            (pickupStoreAddress.cidade ||
+                              pickupStoreAddress.estado)
+                              ? ", "
+                              : ""}
+                            {pickupStoreAddress.cidade}
+                            {pickupStoreAddress.estado
+                              ? `/${pickupStoreAddress.estado}`
+                              : ""}
+                            {pickupStoreAddress.cep
+                              ? ` - CEP: ${pickupStoreAddress.cep}`
+                              : ""}
+                          </p>
+                        )}
                         {pickupMapUrl ? (
                           <a
                             href={pickupMapUrl}
@@ -4695,6 +4757,15 @@ function CheckoutFlow({
   const [paymentCheckLabel, setPaymentCheckLabel] = useState("");
   const [isCheckingPayment, setIsCheckingPayment] = useState(false);
   const checkoutApprovedHandledRef = useRef(false);
+  const pickupStoreAddress = normalizeStoreAddress(storeSettings?.storeAddress);
+  const hasPickupStoreAddress = Boolean(
+    pickupStoreAddress.rua ||
+    pickupStoreAddress.numero ||
+    pickupStoreAddress.bairro ||
+    pickupStoreAddress.cidade ||
+    pickupStoreAddress.estado ||
+    pickupStoreAddress.cep,
+  );
 
   // Fetch user addresses
   useEffect(() => {
@@ -5472,6 +5543,37 @@ function CheckoutFlow({
                       <MapPin size={16} /> Ver localização da loja no mapa
                     </a>
                   )}
+
+                {shippingOption?.id === "pickup" && hasPickupStoreAddress && (
+                  <div className="rounded-xl border border-cyan-200 bg-cyan-50 p-3 text-sm text-cyan-900">
+                    <p className="font-bold mb-1">Endereço para retirada:</p>
+                    <p className="leading-relaxed">
+                      {pickupStoreAddress.rua}
+                      {pickupStoreAddress.numero
+                        ? `, ${pickupStoreAddress.numero}`
+                        : ""}
+                      {pickupStoreAddress.complemento
+                        ? ` - ${pickupStoreAddress.complemento}`
+                        : ""}
+                      {(pickupStoreAddress.bairro ||
+                        pickupStoreAddress.cidade ||
+                        pickupStoreAddress.estado ||
+                        pickupStoreAddress.cep) && <br />}
+                      {pickupStoreAddress.bairro}
+                      {pickupStoreAddress.bairro &&
+                      (pickupStoreAddress.cidade || pickupStoreAddress.estado)
+                        ? ", "
+                        : ""}
+                      {pickupStoreAddress.cidade}
+                      {pickupStoreAddress.estado
+                        ? `/${pickupStoreAddress.estado}`
+                        : ""}
+                      {pickupStoreAddress.cep
+                        ? ` - CEP: ${pickupStoreAddress.cep}`
+                        : ""}
+                    </p>
+                  </div>
+                )}
               </div>
 
               <h3 className="text-lg font-bold flex items-center gap-2 mt-6">
@@ -9303,6 +9405,15 @@ function AdminSettings({ showToast, storeSettings }) {
     mpPublicKey: DEFAULT_MP_PUBLIC_KEY,
     pixKey: "",
     pickupMapUrl: "",
+    storeAddress: {
+      cep: "",
+      rua: "",
+      numero: "",
+      complemento: "",
+      bairro: "",
+      cidade: "",
+      estado: "",
+    },
     catalog: DEFAULT_PRODUCT_CATALOG,
     shipping: {
       pickupEnabled: true,
@@ -9352,6 +9463,7 @@ function AdminSettings({ showToast, storeSettings }) {
       ).trim(),
       pixKey: String(sourceConfig.pixKey || "").trim(),
       pickupMapUrl: String(sourceConfig.pickupMapUrl || "").trim(),
+      storeAddress: normalizeStoreAddress(sourceConfig.storeAddress),
       contactPhones: normalizePhoneList(sourceConfig.contactPhones),
       socialLinks: normalizeSocialLinks(sourceConfig.socialLinks),
       catalog: normalizeCatalog(sourceConfig.catalog),
@@ -9389,6 +9501,7 @@ function AdminSettings({ showToast, storeSettings }) {
           catalog: normalizeCatalog(storeSettings.catalog),
           socialLinks: normalizeSocialLinks(storeSettings.socialLinks),
           contactPhones: normalizePhoneList(storeSettings.contactPhones),
+          storeAddress: normalizeStoreAddress(storeSettings.storeAddress),
           shipping: storeSettings.shipping || {
             pickupEnabled: true,
             correiosBaseRate: 25.0,
@@ -9507,6 +9620,46 @@ function AdminSettings({ showToast, storeSettings }) {
       ...config,
       shipping: { ...config.shipping, localCities: updatedCities },
     });
+  };
+
+  const handleStoreAddressCepChange = async (value) => {
+    const maskedCep = maskCEP(value);
+    setConfig((prev) => ({
+      ...prev,
+      storeAddress: {
+        ...normalizeStoreAddress(prev.storeAddress),
+        cep: maskedCep,
+      },
+    }));
+
+    const cleanCep = maskedCep.replace(/\D/g, "");
+    if (cleanCep.length !== 8) return;
+
+    try {
+      const res = await fetch(`https://viacep.com.br/ws/${cleanCep}/json/`);
+      const data = await res.json();
+
+      if (data?.erro) {
+        showToast("CEP da loja não localizado", "error");
+        return;
+      }
+
+      setConfig((prev) => ({
+        ...prev,
+        storeAddress: {
+          ...normalizeStoreAddress(prev.storeAddress),
+          cep: maskedCep,
+          rua: data.logradouro || prev.storeAddress?.rua || "",
+          bairro: data.bairro || prev.storeAddress?.bairro || "",
+          cidade: data.localidade || prev.storeAddress?.cidade || "",
+          estado: data.uf || prev.storeAddress?.estado || "",
+        },
+      }));
+      showToast("Endereço da loja preenchido via CEP", "success");
+    } catch (error) {
+      console.error("Erro ao buscar CEP da loja:", error);
+      showToast("Erro ao buscar CEP da loja", "error");
+    }
   };
 
   const handleAddCategory = () => {
@@ -10643,6 +10796,144 @@ function AdminSettings({ showToast, storeSettings }) {
                 Esse link será exibido nos pedidos de retirada para abrir o mapa
                 com a localização da loja.
               </p>
+            </div>
+
+            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+              <h4 className="font-semibold text-slate-700">
+                Endereço da loja para retirada
+              </h4>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 mb-1">
+                    CEP
+                  </label>
+                  <input
+                    value={config.storeAddress?.cep || ""}
+                    onChange={(e) =>
+                      handleStoreAddressCepChange(e.target.value)
+                    }
+                    placeholder="00000-000"
+                    maxLength={9}
+                    className="w-full p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 mb-1">
+                    Cidade
+                  </label>
+                  <input
+                    value={config.storeAddress?.cidade || ""}
+                    onChange={(e) =>
+                      setConfig((prev) => ({
+                        ...prev,
+                        storeAddress: {
+                          ...normalizeStoreAddress(prev.storeAddress),
+                          cidade: e.target.value,
+                        },
+                      }))
+                    }
+                    className="w-full p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 mb-1">
+                    Estado (UF)
+                  </label>
+                  <input
+                    value={config.storeAddress?.estado || ""}
+                    onChange={(e) =>
+                      setConfig((prev) => ({
+                        ...prev,
+                        storeAddress: {
+                          ...normalizeStoreAddress(prev.storeAddress),
+                          estado: e.target.value.toUpperCase(),
+                        },
+                      }))
+                    }
+                    maxLength={2}
+                    className="w-full p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 mb-1">
+                    Bairro
+                  </label>
+                  <input
+                    value={config.storeAddress?.bairro || ""}
+                    onChange={(e) =>
+                      setConfig((prev) => ({
+                        ...prev,
+                        storeAddress: {
+                          ...normalizeStoreAddress(prev.storeAddress),
+                          bairro: e.target.value,
+                        },
+                      }))
+                    }
+                    className="w-full p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-semibold text-slate-500 mb-1">
+                    Rua / Logradouro
+                  </label>
+                  <input
+                    value={config.storeAddress?.rua || ""}
+                    onChange={(e) =>
+                      setConfig((prev) => ({
+                        ...prev,
+                        storeAddress: {
+                          ...normalizeStoreAddress(prev.storeAddress),
+                          rua: e.target.value,
+                        },
+                      }))
+                    }
+                    className="w-full p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 mb-1">
+                    Número
+                  </label>
+                  <input
+                    value={config.storeAddress?.numero || ""}
+                    onChange={(e) =>
+                      setConfig((prev) => ({
+                        ...prev,
+                        storeAddress: {
+                          ...normalizeStoreAddress(prev.storeAddress),
+                          numero: e.target.value,
+                        },
+                      }))
+                    }
+                    className="w-full p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 mb-1">
+                    Complemento
+                  </label>
+                  <input
+                    value={config.storeAddress?.complemento || ""}
+                    onChange={(e) =>
+                      setConfig((prev) => ({
+                        ...prev,
+                        storeAddress: {
+                          ...normalizeStoreAddress(prev.storeAddress),
+                          complemento: e.target.value,
+                        },
+                      }))
+                    }
+                    className="w-full p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+              </div>
             </div>
 
             <div>
