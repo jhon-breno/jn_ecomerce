@@ -121,6 +121,7 @@ const createIdempotencyKey = (scope) =>
   `${scope}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
 const PAYMENT_PENDING_STORAGE_KEY = "jn_pending_payment_v1";
+const ACCOUNT_AUTO_OPEN_KEY = "jn_open_account_after_reload_v1";
 
 const savePendingPaymentContext = (payload) => {
   try {
@@ -146,6 +147,27 @@ const clearPendingPaymentContext = () => {
     localStorage.removeItem(PAYMENT_PENDING_STORAGE_KEY);
   } catch {
     // no-op: storage indisponivel no contexto atual
+  }
+};
+
+const markOpenAccountAfterReload = () => {
+  try {
+    localStorage.setItem(ACCOUNT_AUTO_OPEN_KEY, "1");
+  } catch {
+    // no-op: storage indisponivel no contexto atual
+  }
+};
+
+const consumeOpenAccountAfterReload = () => {
+  try {
+    const value = localStorage.getItem(ACCOUNT_AUTO_OPEN_KEY);
+    if (value) {
+      localStorage.removeItem(ACCOUNT_AUTO_OPEN_KEY);
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
   }
 };
 
@@ -1558,7 +1580,7 @@ function StoreFront({ products, user, showToast, storeSettings }) {
         };
 
         if (paymentStatus === "approved") {
-          updatePayload.status = "pendente";
+          updatePayload.status = "pago";
           updatePayload.paymentApprovedAt = serverTimestamp();
         }
 
@@ -1570,7 +1592,14 @@ function StoreFront({ products, user, showToast, storeSettings }) {
         if (cancelled) return;
 
         if (paymentStatus === "approved") {
-          showToast("Pagamento confirmado! Seu pedido entrou em preparação.");
+          showToast(
+            "Pagamento confirmado! Abrindo seus pedidos em 5 segundos.",
+          );
+          markOpenAccountAfterReload();
+          setIsAccountOpen(true);
+          window.setTimeout(() => {
+            window.location.reload();
+          }, 5000);
         } else if (data.isFinal) {
           showToast(
             `Pagamento retornou com status: ${paymentStatus}.`,
@@ -1874,6 +1903,13 @@ function StoreFront({ products, user, showToast, storeSettings }) {
       setIsCheckoutOpen(true);
     }
   };
+
+  useEffect(() => {
+    if (!isRealUser) return;
+    if (consumeOpenAccountAfterReload()) {
+      setIsAccountOpen(true);
+    }
+  }, [isRealUser]);
 
   return (
     <div className="relative min-h-[calc(100vh-36px)] bg-slate-50/50 print:hidden flex flex-col">
@@ -2456,6 +2492,7 @@ function CustomerAccountModal({ user, userProfile, orders, close, showToast }) {
   const [retryPaymentError, setRetryPaymentError] = useState("");
   const [retryPaymentCheckLabel, setRetryPaymentCheckLabel] = useState("");
   const [isRetryPaymentChecking, setIsRetryPaymentChecking] = useState(false);
+  const retryApprovedHandledRef = useRef(false);
   const [cancelModalOrder, setCancelModalOrder] = useState(null);
   const [cancelReasonDraft, setCancelReasonDraft] = useState("");
   const [cancelReasonError, setCancelReasonError] = useState("");
@@ -2487,6 +2524,10 @@ function CustomerAccountModal({ user, userProfile, orders, close, showToast }) {
     },
     enviado: { label: "Enviado", color: "bg-indigo-100 text-indigo-700" },
     entregue: { label: "Entregue", color: "bg-emerald-100 text-emerald-700" },
+    pago: {
+      label: "Pago",
+      color: "bg-emerald-100 text-emerald-700",
+    },
     concluido: {
       label: "Concluído",
       color: "bg-emerald-100 text-emerald-700",
@@ -2561,7 +2602,7 @@ function CustomerAccountModal({ user, userProfile, orders, close, showToast }) {
         };
 
         if (paymentStatus === "approved") {
-          payload.status = "pendente";
+          payload.status = "pago";
           payload.paymentApprovedAt = serverTimestamp();
         }
 
@@ -2583,6 +2624,15 @@ function CustomerAccountModal({ user, userProfile, orders, close, showToast }) {
             "Pagamento confirmado. Pedido em preparação.",
           );
           showToast("Pagamento confirmado com sucesso!");
+
+          if (!retryApprovedHandledRef.current) {
+            retryApprovedHandledRef.current = true;
+            markOpenAccountAfterReload();
+            window.setTimeout(() => {
+              window.location.reload();
+            }, 5000);
+          }
+
           return true;
         }
 
@@ -2655,6 +2705,7 @@ function CustomerAccountModal({ user, userProfile, orders, close, showToast }) {
     setRetryPixData(null);
     setRetryPaymentError("");
     setRetryPaymentCheckLabel("");
+    retryApprovedHandledRef.current = false;
   };
 
   const closePaymentModal = () => {
@@ -2671,6 +2722,7 @@ function CustomerAccountModal({ user, userProfile, orders, close, showToast }) {
     setRetryPixData(null);
     setRetryPaymentError("");
     setRetryPaymentCheckLabel("");
+    retryApprovedHandledRef.current = false;
   };
 
   const submitRetryPayment = async () => {
@@ -4564,6 +4616,7 @@ function CheckoutFlow({
   const [createdOrderId, setCreatedOrderId] = useState("");
   const [paymentCheckLabel, setPaymentCheckLabel] = useState("");
   const [isCheckingPayment, setIsCheckingPayment] = useState(false);
+  const checkoutApprovedHandledRef = useRef(false);
 
   // Fetch user addresses
   useEffect(() => {
@@ -4670,7 +4723,7 @@ function CheckoutFlow({
         };
 
         if (paymentStatus === "approved") {
-          payload.status = "pendente";
+          payload.status = "pago";
           payload.paymentApprovedAt = serverTimestamp();
         }
 
@@ -4690,6 +4743,15 @@ function CheckoutFlow({
         if (paymentStatus === "approved") {
           setPaymentCheckLabel("Pagamento confirmado. Pedido em preparação.");
           showToast("Pagamento PIX confirmado com sucesso!");
+
+          if (!checkoutApprovedHandledRef.current) {
+            checkoutApprovedHandledRef.current = true;
+            markOpenAccountAfterReload();
+            window.setTimeout(() => {
+              window.location.reload();
+            }, 5000);
+          }
+
           return true;
         }
 
@@ -4818,6 +4880,7 @@ function CheckoutFlow({
     setIsProcessing(true);
     setCreatedOrderId("");
     setPaymentCheckLabel("");
+    checkoutApprovedHandledRef.current = false;
 
     try {
       // 1. Limpamos os dados antes de gravar (Evitar erro de elemento React do Icon)
@@ -8199,6 +8262,10 @@ function OrdersList({ orders, showToast, quickFilter = "all" }) {
     },
     enviado: { label: "Enviado", color: "bg-indigo-100 text-indigo-700" },
     entregue: { label: "Entregue", color: "bg-emerald-100 text-emerald-700" },
+    pago: {
+      label: "Pago",
+      color: "bg-emerald-100 text-emerald-700",
+    },
     concluido: {
       label: "Concluído",
       color: "bg-emerald-100 text-emerald-700",
@@ -8279,6 +8346,7 @@ function OrdersList({ orders, showToast, quickFilter = "all" }) {
     if (order.type === "online") {
       return [
         "pendente_pagamento",
+        "pago",
         "separacao",
         "enviado",
         "entregue",
@@ -8286,7 +8354,13 @@ function OrdersList({ orders, showToast, quickFilter = "all" }) {
         "cancelado",
       ];
     }
-    return ["pendente_pagamento", "concluido", "estornado", "cancelado"];
+    return [
+      "pendente_pagamento",
+      "pago",
+      "concluido",
+      "estornado",
+      "cancelado",
+    ];
   };
 
   const applyOrderStockAdjustment = async (order, mode) => {
@@ -8583,6 +8657,7 @@ function OrdersList({ orders, showToast, quickFilter = "all" }) {
           <option value="all">Todos os status</option>
           <option value="losses">Perdas (Estornado/Cancelado)</option>
           <option value="pendente_pagamento">Pendente de Pagamento</option>
+          <option value="pago">Pago</option>
           <option value="separacao">Em Separação</option>
           <option value="enviado">Enviado</option>
           <option value="entregue">Entregue</option>
