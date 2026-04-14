@@ -3232,6 +3232,28 @@ function CustomerAccountModal({
                       </div>
                     </div>
 
+                    {isPickupOrder(order) && (
+                      <div className="mt-3 rounded-lg border border-cyan-200 bg-cyan-50 p-2.5 text-xs text-cyan-900">
+                        <p className="font-bold">
+                          Aguardando retirada na loja.
+                        </p>
+                        {pickupMapUrl ? (
+                          <a
+                            href={pickupMapUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 mt-1 font-bold text-cyan-800 hover:text-cyan-900"
+                          >
+                            <MapPin size={12} /> Clique para abrir no mapa
+                          </a>
+                        ) : (
+                          <p className="mt-1 text-cyan-800">
+                            A localização da loja será disponibilizada em breve.
+                          </p>
+                        )}
+                      </div>
+                    )}
+
                     {(canRetryPayment ||
                       canRequestCancellation ||
                       isCancellationPending) && (
