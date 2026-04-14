@@ -399,6 +399,15 @@ const resolveSocialUrl = (platform, value) => {
   }
 };
 
+const isPickupOrder = (order) => String(order?.shipping?.id || "") === "pickup";
+
+const resolvePickupMapUrl = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (/^https?:\/\//i.test(raw)) return raw;
+  return `https://${raw}`;
+};
+
 const sanitizePixText = (value, maxLength) =>
   String(value || "")
     .normalize("NFD")
@@ -1003,6 +1012,7 @@ export default function App() {
     },
     mpPublicKey: DEFAULT_MP_PUBLIC_KEY,
     pixKey: "",
+    pickupMapUrl: "",
     catalog: DEFAULT_PRODUCT_CATALOG,
     shipping: {
       pickupEnabled: true,
@@ -1540,6 +1550,7 @@ function StoreFront({ products, user, showToast, storeSettings }) {
         }
 
         let orderId = String(pendingContext?.orderId || "").trim();
+        let shippingId = String(pendingContext?.shippingId || "").trim();
         const externalReference = String(
           returnParams.externalReference ||
             pendingContext?.externalReference ||
@@ -1562,6 +1573,7 @@ function StoreFront({ products, user, showToast, storeSettings }) {
 
           if (matchedDoc) {
             orderId = matchedDoc.id;
+            shippingId = String(matchedDoc.data()?.shipping?.id || "").trim();
           }
         }
 
@@ -1580,7 +1592,8 @@ function StoreFront({ products, user, showToast, storeSettings }) {
         };
 
         if (paymentStatus === "approved") {
-          updatePayload.status = "pago";
+          updatePayload.status =
+            shippingId === "pickup" ? "aguardando_retirada" : "pago";
           updatePayload.paymentApprovedAt = serverTimestamp();
         }
 
@@ -2464,6 +2477,7 @@ function StoreFront({ products, user, showToast, storeSettings }) {
           user={user}
           userProfile={userProfile}
           orders={myOrders}
+          storeSettings={storeSettings}
           close={() => setIsAccountOpen(false)}
           showToast={showToast}
         />
@@ -2483,7 +2497,14 @@ function StoreFront({ products, user, showToast, storeSettings }) {
   );
 }
 
-function CustomerAccountModal({ user, userProfile, orders, close, showToast }) {
+function CustomerAccountModal({
+  user,
+  userProfile,
+  orders,
+  storeSettings,
+  close,
+  showToast,
+}) {
   const [isSaving, setIsSaving] = useState(false);
   const [processingOrderId, setProcessingOrderId] = useState(null);
   const [paymentModalOrder, setPaymentModalOrder] = useState(null);
@@ -2512,6 +2533,8 @@ function CustomerAccountModal({ user, userProfile, orders, close, showToast }) {
     });
   }, [userProfile, user]);
 
+  const pickupMapUrl = resolvePickupMapUrl(storeSettings?.pickupMapUrl);
+
   const statusCatalog = {
     pendente_pagamento: {
       label: "Pendente de Pagamento",
@@ -2521,6 +2544,10 @@ function CustomerAccountModal({ user, userProfile, orders, close, showToast }) {
     separacao: {
       label: "Em Separação",
       color: "bg-sky-100 text-sky-700",
+    },
+    aguardando_retirada: {
+      label: "Aguardando Retirada",
+      color: "bg-cyan-100 text-cyan-700",
     },
     enviado: { label: "Enviado", color: "bg-indigo-100 text-indigo-700" },
     entregue: { label: "Entregue", color: "bg-emerald-100 text-emerald-700" },
@@ -2602,7 +2629,9 @@ function CustomerAccountModal({ user, userProfile, orders, close, showToast }) {
         };
 
         if (paymentStatus === "approved") {
-          payload.status = "pago";
+          payload.status = isPickupOrder(paymentModalOrder)
+            ? "aguardando_retirada"
+            : "pago";
           payload.paymentApprovedAt = serverTimestamp();
         }
 
@@ -2873,6 +2902,7 @@ function CustomerAccountModal({ user, userProfile, orders, close, showToast }) {
         externalReference: `${baseExternalReference}-card`,
         paymentId: "",
         type: "CARD",
+        shippingId: String(paymentModalOrder?.shipping?.id || ""),
         createdAt: Date.now(),
       });
 
@@ -2890,7 +2920,14 @@ function CustomerAccountModal({ user, userProfile, orders, close, showToast }) {
     if (!order?.id) return;
     const status = resolveOrderStatus(order);
 
-    if (!["pendente_pagamento", "pendente", "separacao"].includes(status)) {
+    if (
+      ![
+        "pendente_pagamento",
+        "pendente",
+        "separacao",
+        "aguardando_retirada",
+      ].includes(status)
+    ) {
       return showToast(
         "Este pedido não pode solicitar cancelamento nesta etapa.",
         "error",
@@ -3121,9 +3158,12 @@ function CustomerAccountModal({ user, userProfile, orders, close, showToast }) {
                   statusCode === "pendente_pagamento";
                 const canRequestCancellation =
                   order?.type === "online" &&
-                  ["pendente_pagamento", "pendente", "separacao"].includes(
-                    statusCode,
-                  ) &&
+                  [
+                    "pendente_pagamento",
+                    "pendente",
+                    "separacao",
+                    "aguardando_retirada",
+                  ].includes(statusCode) &&
                   !isCancellationPending;
 
                 return (
@@ -3170,9 +3210,25 @@ function CustomerAccountModal({ user, userProfile, orders, close, showToast }) {
                       </div>
                       <div>
                         <p className="text-slate-400">Rastreio</p>
-                        <p className="font-semibold text-slate-700 break-all">
-                          {order.trackingCode || "Aguardando postagem"}
-                        </p>
+                        {isPickupOrder(order) ? (
+                          <p className="font-semibold text-slate-700 break-all">
+                            Retirada na loja
+                          </p>
+                        ) : (
+                          <p className="font-semibold text-slate-700 break-all">
+                            {order.trackingCode || "Aguardando postagem"}
+                          </p>
+                        )}
+                        {isPickupOrder(order) && pickupMapUrl && (
+                          <a
+                            href={pickupMapUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 mt-1 text-xs font-bold text-cyan-700 hover:text-cyan-800"
+                          >
+                            <MapPin size={12} /> Ver localização da loja
+                          </a>
+                        )}
                       </div>
                     </div>
 
@@ -4723,7 +4779,8 @@ function CheckoutFlow({
         };
 
         if (paymentStatus === "approved") {
-          payload.status = "pago";
+          payload.status =
+            shippingOption?.id === "pickup" ? "aguardando_retirada" : "pago";
           payload.paymentApprovedAt = serverTimestamp();
         }
 
@@ -5039,6 +5096,7 @@ function CheckoutFlow({
           externalReference,
           paymentId: "",
           type: "CARD",
+          shippingId: cleanShipping.id,
           createdAt: Date.now(),
         });
 
@@ -5380,6 +5438,18 @@ function CheckoutFlow({
                     </p>
                   )}
                 </div>
+
+                {shippingOption?.id === "pickup" &&
+                  resolvePickupMapUrl(storeSettings?.pickupMapUrl) && (
+                    <a
+                      href={resolvePickupMapUrl(storeSettings?.pickupMapUrl)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-2 text-sm font-bold text-cyan-700 hover:text-cyan-800"
+                    >
+                      <MapPin size={16} /> Ver localização da loja no mapa
+                    </a>
+                  )}
               </div>
 
               <h3 className="text-lg font-bold flex items-center gap-2 mt-6">
@@ -5808,6 +5878,7 @@ function AdminDashboard({
             <OrdersList
               orders={orders}
               showToast={showToast}
+              storeSettings={storeSettings}
               quickFilter={ordersQuickFilter}
             />
           )}
@@ -8240,7 +8311,7 @@ function PointOfSale({ products, showToast, storeSettings }) {
   );
 }
 
-function OrdersList({ orders, showToast, quickFilter = "all" }) {
+function OrdersList({ orders, showToast, storeSettings, quickFilter = "all" }) {
   const [savingOrderId, setSavingOrderId] = useState(null);
   const [trackingDrafts, setTrackingDrafts] = useState({});
   const [orderToDelete, setOrderToDelete] = useState(null);
@@ -8249,6 +8320,7 @@ function OrdersList({ orders, showToast, quickFilter = "all" }) {
   const [statusFilter, setStatusFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
   const stockReturnStatuses = new Set(["estornado", "cancelado"]);
+  const pickupMapUrl = resolvePickupMapUrl(storeSettings?.pickupMapUrl);
 
   const statusCatalog = {
     pendente_pagamento: {
@@ -8259,6 +8331,10 @@ function OrdersList({ orders, showToast, quickFilter = "all" }) {
     separacao: {
       label: "Em Separação",
       color: "bg-sky-100 text-sky-700",
+    },
+    aguardando_retirada: {
+      label: "Aguardando Retirada",
+      color: "bg-cyan-100 text-cyan-700",
     },
     enviado: { label: "Enviado", color: "bg-indigo-100 text-indigo-700" },
     entregue: { label: "Entregue", color: "bg-emerald-100 text-emerald-700" },
@@ -8344,6 +8420,17 @@ function OrdersList({ orders, showToast, quickFilter = "all" }) {
 
   const getAllowedStatuses = (order) => {
     if (order.type === "online") {
+      if (isPickupOrder(order)) {
+        return [
+          "pendente_pagamento",
+          "pago",
+          "aguardando_retirada",
+          "concluido",
+          "estornado",
+          "cancelado",
+        ];
+      }
+
       return [
         "pendente_pagamento",
         "pago",
@@ -8474,6 +8561,13 @@ function OrdersList({ orders, showToast, quickFilter = "all" }) {
 
     if (!trackingCode) {
       return showToast("Informe um código de rastreio válido", "error");
+    }
+
+    if (isPickupOrder(order)) {
+      return showToast(
+        "Pedidos de retirada não precisam de código de rastreio.",
+        "error",
+      );
     }
 
     setSavingOrderId(order.id);
@@ -8658,6 +8752,7 @@ function OrdersList({ orders, showToast, quickFilter = "all" }) {
           <option value="losses">Perdas (Estornado/Cancelado)</option>
           <option value="pendente_pagamento">Pendente de Pagamento</option>
           <option value="pago">Pago</option>
+          <option value="aguardando_retirada">Aguardando Retirada</option>
           <option value="separacao">Em Separação</option>
           <option value="enviado">Enviado</option>
           <option value="entregue">Entregue</option>
@@ -8761,7 +8856,7 @@ function OrdersList({ orders, showToast, quickFilter = "all" }) {
                   </select>
                 </td>
                 <td className="p-4 min-w-[230px]">
-                  {o.type === "online" ? (
+                  {o.type === "online" && !isPickupOrder(o) ? (
                     <div className="space-y-2">
                       <input
                         value={trackingValue}
@@ -8782,6 +8877,22 @@ function OrdersList({ orders, showToast, quickFilter = "all" }) {
                       >
                         {isSaving ? "Salvando..." : "Salvar Rastreio"}
                       </button>
+                    </div>
+                  ) : o.type === "online" && isPickupOrder(o) ? (
+                    <div className="text-xs text-slate-500">
+                      <p className="font-semibold text-slate-700">
+                        Retirada na loja
+                      </p>
+                      {pickupMapUrl && (
+                        <a
+                          href={pickupMapUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 mt-1 font-bold text-cyan-700 hover:text-cyan-800"
+                        >
+                          <MapPin size={12} /> Abrir localização
+                        </a>
+                      )}
                     </div>
                   ) : (
                     <span className="text-xs text-slate-400">
@@ -9169,6 +9280,7 @@ function AdminSettings({ showToast, storeSettings }) {
     },
     mpPublicKey: DEFAULT_MP_PUBLIC_KEY,
     pixKey: "",
+    pickupMapUrl: "",
     catalog: DEFAULT_PRODUCT_CATALOG,
     shipping: {
       pickupEnabled: true,
@@ -9217,6 +9329,7 @@ function AdminSettings({ showToast, storeSettings }) {
         sourceConfig.mpPublicKey || DEFAULT_MP_PUBLIC_KEY,
       ).trim(),
       pixKey: String(sourceConfig.pixKey || "").trim(),
+      pickupMapUrl: String(sourceConfig.pickupMapUrl || "").trim(),
       contactPhones: normalizePhoneList(sourceConfig.contactPhones),
       socialLinks: normalizeSocialLinks(sourceConfig.socialLinks),
       catalog: normalizeCatalog(sourceConfig.catalog),
@@ -10488,6 +10601,25 @@ function AdminSettings({ showToast, storeSettings }) {
               <p className="text-xs text-slate-500 mt-2 ml-8">
                 Ative esta opção para permitir que o cliente compre online e
                 retire o pedido presencialmente sem custo.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-bold mb-2 text-slate-700">
+                Link da localização da loja (Mapa)
+              </label>
+              <input
+                type="text"
+                value={config.pickupMapUrl || ""}
+                onChange={(e) =>
+                  setConfig({ ...config, pickupMapUrl: e.target.value })
+                }
+                placeholder="Ex: https://maps.app.goo.gl/..."
+                className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+              />
+              <p className="text-xs text-slate-500 mt-2">
+                Esse link será exibido nos pedidos de retirada para abrir o mapa
+                com a localização da loja.
               </p>
             </div>
 
