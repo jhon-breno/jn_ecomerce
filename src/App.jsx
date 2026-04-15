@@ -750,6 +750,51 @@ const getProductSubcategories = (product) => {
   return [...new Set(merged)];
 };
 
+const parseBooleanFlag = (value) => {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value === 1;
+
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+
+  return ["true", "1", "sim", "yes", "y", "pickup", "retirada"].includes(
+    normalized,
+  );
+};
+
+const isProductPickupEligible = (product) =>
+  parseBooleanFlag(product?.allowPickup);
+
+const findLocalCityCoverage = (address, shippingConfig) => {
+  if (!address) return null;
+
+  const city = String(address?.cidade || "")
+    .trim()
+    .toLowerCase();
+  const state = String(address?.estado || "")
+    .trim()
+    .toLowerCase();
+
+  if (!city || !state) return null;
+
+  const localCities = Array.isArray(shippingConfig?.localCities)
+    ? shippingConfig.localCities
+    : [];
+
+  return (
+    localCities.find(
+      (item) =>
+        String(item?.name || "")
+          .trim()
+          .toLowerCase() === city &&
+        String(item?.state || "")
+          .trim()
+          .toLowerCase() === state,
+    ) || null
+  );
+};
+
 const normalizeCatalog = (catalog) => {
   const base = catalog || {};
   const sections = Array.isArray(base.sections)
@@ -865,6 +910,7 @@ function StoreProductCard({
   isShelf = false,
 }) {
   const { priceTag, discountPct } = getDiscountMeta(product);
+  const pickupAvailable = isProductPickupEligible(product);
   const hasVariations = getProductVariationGroups(product).length > 0;
   const descriptionPreview = getDescriptionPreviewText(
     product.description,
@@ -915,6 +961,11 @@ function StoreProductCard({
         <h3 className="font-bold text-[15px] sm:text-sm md:text-base text-slate-800 mb-2 line-clamp-2 leading-snug min-h-[2.5rem] group-hover:text-indigo-600 transition-colors">
           {product.name}
         </h3>
+        {pickupAvailable && (
+          <span className="inline-flex items-center w-fit mb-2 px-2.5 py-1 rounded-full bg-cyan-50 text-cyan-700 text-[10px] sm:text-[11px] font-bold border border-cyan-200">
+            Retirada na loja
+          </span>
+        )}
         {descriptionPreview && (
           <p className="text-[11px] sm:text-xs text-slate-500 mb-2 line-clamp-2 leading-relaxed min-h-[2rem]">
             {descriptionPreview}
@@ -1012,6 +1063,7 @@ export default function App() {
   const [products, setProducts] = useState([]);
   const [orders, setOrders] = useState([]);
   const [abandonedCarts, setAbandonedCarts] = useState([]);
+  const [productInterestLeads, setProductInterestLeads] = useState([]);
   const [storeSettings, setStoreSettings] = useState({
     storeName: "NovaLoja",
     storeTagline: "",
@@ -1195,6 +1247,33 @@ export default function App() {
       (err) => console.error(err),
     );
 
+    const leadsRef = collection(
+      db,
+      "artifacts",
+      appId,
+      "public",
+      "data",
+      "product_interest_leads",
+    );
+    const unsubLeads = onSnapshot(
+      leadsRef,
+      (snapshot) => {
+        const leads = snapshot.docs.map((leadDoc) => ({
+          id: leadDoc.id,
+          ...leadDoc.data(),
+        }));
+
+        setProductInterestLeads(
+          leads.sort(
+            (a, b) =>
+              (b.lastClickedAt?.toMillis?.() || 0) -
+              (a.lastClickedAt?.toMillis?.() || 0),
+          ),
+        );
+      },
+      (err) => console.error(err),
+    );
+
     const settingsRef = doc(
       db,
       "artifacts",
@@ -1217,6 +1296,7 @@ export default function App() {
       unsubProducts();
       unsubOrders();
       unsubCarts();
+      unsubLeads();
       unsubSettings();
     };
   }, [user]);
@@ -1279,6 +1359,7 @@ export default function App() {
           products={products}
           orders={orders}
           abandonedCarts={abandonedCarts}
+          productInterestLeads={productInterestLeads}
           showToast={showToast}
           storeSettings={storeSettings}
           onAdminLogout={handleAdminLogout}
@@ -1424,6 +1505,7 @@ function StoreFront({ products, user, showToast, storeSettings }) {
   const [cartLoaded, setCartLoaded] = useState(false);
   const [userProfile, setUserProfile] = useState(null);
   const [myOrders, setMyOrders] = useState([]);
+  const previousAuthUserRef = useRef(null);
 
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
@@ -1492,6 +1574,77 @@ function StoreFront({ products, user, showToast, storeSettings }) {
       short: "TT",
     },
   ].filter((item) => item.href);
+
+  const trackProductInterest = useCallback(
+    async (product) => {
+      if (!user?.uid || !product?.id) return;
+
+      const safeUserId = String(user.uid).replace(/\//g, "_");
+      const safeProductId = String(product.id).replace(/\//g, "_");
+      const leadId = `${safeUserId}__${safeProductId}`;
+
+      const customerName = userProfile
+        ? `${String(userProfile.firstName || "").trim()} ${String(userProfile.lastName || "").trim()}`.trim() ||
+          "Cliente"
+        : user.isAnonymous
+          ? "Visitante"
+          : String(user.email || "")
+              .split("@")[0]
+              .trim() || "Cliente";
+
+      const customerEmail = String(user?.email || "").trim();
+      const customerPhone = String(userProfile?.phone || "").trim();
+
+      const leadRef = doc(
+        db,
+        "artifacts",
+        appId,
+        "public",
+        "data",
+        "product_interest_leads",
+        leadId,
+      );
+
+      const basePayload = {
+        userId: user.uid,
+        isAnonymous: Boolean(user.isAnonymous),
+        customerName,
+        customerEmail,
+        customerPhone,
+        productId: String(product.id || ""),
+        productName: String(product.name || ""),
+        productCategory: String(product.category || ""),
+        productSubcategory: String(product.subcategory || ""),
+        productPrice: Number(product.price || 0),
+        productImage: String(product.images?.[0] || product.image || ""),
+      };
+
+      try {
+        const leadSnap = await getDoc(leadRef);
+        if (leadSnap.exists()) {
+          const currentCount = Number(leadSnap.data()?.clickCount || 0);
+          await updateDoc(leadRef, {
+            ...basePayload,
+            clickCount: currentCount + 1,
+            lastClickedAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+          return;
+        }
+
+        await setDoc(leadRef, {
+          ...basePayload,
+          clickCount: 1,
+          firstClickedAt: serverTimestamp(),
+          lastClickedAt: serverTimestamp(),
+          createdAt: serverTimestamp(),
+        });
+      } catch (error) {
+        console.error("Erro ao registrar interesse no produto:", error);
+      }
+    },
+    [user, userProfile],
+  );
   const hasContactPhones = contactPhones.length > 0;
   const hasSocialLinks = socialItems.length > 0;
   const formattedContactPhones = contactPhones.map((phone) => ({
@@ -1783,7 +1936,15 @@ function StoreFront({ products, user, showToast, storeSettings }) {
             : item,
         );
       }
-      return [...prev, { ...product, cartItemId: cartItemId, qty }];
+      return [
+        ...prev,
+        {
+          ...product,
+          allowPickup: isProductPickupEligible(product),
+          cartItemId: cartItemId,
+          qty,
+        },
+      ];
     });
     showToast(`${product.name} adicionado!`);
   };
@@ -1948,6 +2109,45 @@ function StoreFront({ products, user, showToast, storeSettings }) {
       setIsAccountOpen(true);
     }
   }, [isRealUser]);
+
+  const openProductWithTracking = useCallback(
+    (product) => {
+      setSelectedProduct(product);
+      trackProductInterest(product);
+    },
+    [trackProductInterest],
+  );
+
+  useEffect(() => {
+    const previousUser = previousAuthUserRef.current;
+    previousAuthUserRef.current = user
+      ? { uid: user.uid, isAnonymous: Boolean(user.isAnonymous) }
+      : null;
+
+    if (!previousUser || !user?.uid) return;
+
+    const switchedFromAnonymousToRealUser =
+      previousUser.isAnonymous &&
+      !user.isAnonymous &&
+      previousUser.uid !== user.uid;
+
+    if (!switchedFromAnonymousToRealUser) return;
+
+    // Remove o carrinho anônimo anterior para não duplicar em "carrinhos ativos".
+    deleteDoc(
+      doc(
+        db,
+        "artifacts",
+        appId,
+        "public",
+        "data",
+        "abandoned_carts",
+        previousUser.uid,
+      ),
+    ).catch((error) => {
+      console.error("Erro ao limpar carrinho anônimo antigo:", error);
+    });
+  }, [user]);
 
   return (
     <div className="relative min-h-[calc(100vh-36px)] bg-slate-50/50 print:hidden flex flex-col">
@@ -2119,7 +2319,7 @@ function StoreFront({ products, user, showToast, storeSettings }) {
                           <StoreProductCard
                             key={`${section.id}-${product.id}`}
                             product={product}
-                            onOpenProduct={setSelectedProduct}
+                            onOpenProduct={openProductWithTracking}
                             onAddToCart={addToCart}
                           />
                         ))}
@@ -2130,7 +2330,7 @@ function StoreFront({ products, user, showToast, storeSettings }) {
                           <StoreProductCard
                             key={`${section.id}-${product.id}`}
                             product={product}
-                            onOpenProduct={setSelectedProduct}
+                            onOpenProduct={openProductWithTracking}
                             onAddToCart={addToCart}
                             isShelf
                           />
@@ -2297,7 +2497,7 @@ function StoreFront({ products, user, showToast, storeSettings }) {
                 <StoreProductCard
                   key={product.id}
                   product={product}
-                  onOpenProduct={setSelectedProduct}
+                  onOpenProduct={openProductWithTracking}
                   onAddToCart={addToCart}
                 />
               ))}
@@ -2511,6 +2711,7 @@ function StoreFront({ products, user, showToast, storeSettings }) {
         <CheckoutFlow
           cart={cart}
           cartTotal={cartTotal}
+          products={products}
           user={user}
           storeSettings={storeSettings}
           close={() => setIsCheckoutOpen(false)}
@@ -3926,6 +4127,7 @@ function ImageZoomViewer({ images, currentIndex, alt }) {
 function ProductModal({ product, close, addToCart }) {
   const variationGroups = getProductVariationGroups(product);
   const { priceTag, discountPct } = getDiscountMeta(product);
+  const pickupAvailable = isProductPickupEligible(product);
   const descriptionHtml = useMemo(
     () => toSafeDescriptionHtml(product.description),
     [product.description],
@@ -4043,6 +4245,11 @@ function ProductModal({ product, close, addToCart }) {
             {discountPct > 0 && (
               <div className="inline-flex items-center mb-2 px-3 py-1 rounded-full bg-emerald-100 text-emerald-700 text-xs font-black uppercase tracking-wider">
                 Desconto de {discountPct}%
+              </div>
+            )}
+            {pickupAvailable && (
+              <div className="inline-flex items-center mb-2 ml-2 px-2.5 py-1 rounded-full bg-cyan-50 text-cyan-700 text-[11px] font-bold border border-cyan-200">
+                Retirada na loja
               </div>
             )}
             {priceTag > 0 && (
@@ -4729,6 +4936,7 @@ function CartModal({
 function CheckoutFlow({
   cart,
   cartTotal,
+  products = [],
   user,
   storeSettings,
   close,
@@ -4787,13 +4995,48 @@ function CheckoutFlow({
     setShippingOption(null);
   }, [selectedAddress]);
 
+  const productPickupById = useMemo(
+    () =>
+      new Map(
+        products.map((product) => [
+          product.id,
+          isProductPickupEligible(product),
+        ]),
+      ),
+    [products],
+  );
+
+  const hasPickupEligibleItem = useMemo(
+    () =>
+      cart.some((item) => {
+        if (isProductPickupEligible(item)) return true;
+
+        const itemId = String(item?.id || "").trim();
+        if (!itemId) return false;
+
+        return Boolean(productPickupById.get(itemId));
+      }),
+    [cart, productPickupById],
+  );
+
+  const localCityCoverage = useMemo(
+    () => findLocalCityCoverage(selectedAddress, storeSettings?.shipping),
+    [selectedAddress, storeSettings?.shipping],
+  );
+
+  const isSelectedAddressLocalCoverage = Boolean(localCityCoverage);
+
   // Calcula as opções de frete baseadas no endereço e nas configurações
   const availableShipping = useMemo(() => {
     if (!selectedAddress) return [];
     const options = [];
     const config = storeSettings?.shipping || {};
 
-    if (config.pickupEnabled !== false) {
+    if (
+      config.pickupEnabled !== false &&
+      hasPickupEligibleItem &&
+      isSelectedAddressLocalCoverage
+    ) {
       // Default is true if undefined
       options.push({
         id: "pickup",
@@ -4805,17 +5048,11 @@ function CheckoutFlow({
     }
 
     if (selectedAddress.cidade && selectedAddress.estado) {
-      const localCityMatch = config.localCities?.find(
-        (c) =>
-          c.name.toLowerCase() === selectedAddress.cidade.toLowerCase() &&
-          c.state.toLowerCase() === selectedAddress.estado.toLowerCase(),
-      );
-
-      if (localCityMatch) {
+      if (localCityCoverage && hasPickupEligibleItem) {
         options.push({
           id: "local",
           name: "Entrega Expressa (Motoboy/App)",
-          price: Number(localCityMatch.rate),
+          price: Number(localCityCoverage.rate),
           time: "Entregue no mesmo dia",
           icon: <Truck size={20} />,
         });
@@ -4839,7 +5076,25 @@ function CheckoutFlow({
       }
     }
     return options;
-  }, [selectedAddress, storeSettings]);
+  }, [
+    selectedAddress,
+    storeSettings,
+    hasPickupEligibleItem,
+    localCityCoverage,
+    isSelectedAddressLocalCoverage,
+  ]);
+
+  useEffect(() => {
+    if (!shippingOption) return;
+
+    const currentOptionStillAvailable = availableShipping.some(
+      (option) => option.id === shippingOption.id,
+    );
+
+    if (!currentOptionStillAvailable) {
+      setShippingOption(null);
+    }
+  }, [availableShipping, shippingOption]);
 
   const checkPixPaymentStatus = useCallback(
     async ({ silent = false } = {}) => {
@@ -5050,6 +5305,7 @@ function CheckoutFlow({
         selectedVariation: item.selectedVariation || null,
         image: item.images?.[0] || item.image || null,
         stock: item.stock || 0,
+        allowPickup: isProductPickupEligible(item),
       }));
 
       const cleanAddress = {
@@ -5530,6 +5786,12 @@ function CheckoutFlow({
                       Nenhuma opção de frete disponível para este endereço.
                     </p>
                   )}
+                  {hasPickupEligibleItem && !isSelectedAddressLocalCoverage && (
+                    <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2.5">
+                      Retirada na loja só aparece para endereços em cidades
+                      locais configuradas no admin.
+                    </p>
+                  )}
                 </div>
 
                 {shippingOption?.id === "pickup" &&
@@ -5888,6 +6150,7 @@ function AdminDashboard({
   products,
   orders,
   abandonedCarts,
+  productInterestLeads,
   showToast,
   storeSettings,
   onAdminLogout,
@@ -5902,6 +6165,7 @@ function AdminDashboard({
     { id: "pos", name: "PDV (Caixa)", icon: <Monitor size={20} /> },
     { id: "orders", name: "Vendas", icon: <Clock size={20} /> },
     { id: "carts", name: "Carrinhos Ativos", icon: <ShoppingCart size={20} /> },
+    { id: "leads", name: "Interesse em Produtos", icon: <Eye size={20} /> },
     { id: "settings", name: "Configurações", icon: <Settings size={20} /> },
   ];
 
@@ -5949,6 +6213,11 @@ function AdminDashboard({
               {tab.id === "carts" && abandonedCarts.length > 0 && (
                 <span className="bg-rose-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
                   {abandonedCarts.length}
+                </span>
+              )}
+              {tab.id === "leads" && productInterestLeads.length > 0 && (
+                <span className="bg-cyan-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+                  {productInterestLeads.length}
                 </span>
               )}
             </button>
@@ -6010,6 +6279,14 @@ function AdminDashboard({
         <div className={activeTab !== "carts" ? "print:hidden" : ""}>
           {activeTab === "carts" && (
             <AbandonedCartsList carts={abandonedCarts} showToast={showToast} />
+          )}
+        </div>
+        <div className={activeTab !== "leads" ? "print:hidden" : ""}>
+          {activeTab === "leads" && (
+            <ProductInterestLeads
+              leads={productInterestLeads}
+              showToast={showToast}
+            />
           )}
         </div>
         <div className={activeTab !== "settings" ? "print:hidden" : ""}>
@@ -6156,6 +6433,7 @@ function ProductManager({ products, showToast, storeSettings }) {
     showcaseSections: [],
     description: "",
     stock: "",
+    allowPickup: false,
     images: [],
     variations: "",
     variationsByType: {},
@@ -6490,6 +6768,10 @@ function ProductManager({ products, showToast, storeSettings }) {
       desc: "description",
       stock: "stock",
       estoque: "stock",
+      allowpickup: "allowPickup",
+      retiradaloja: "allowPickup",
+      retirada: "allowPickup",
+      coletarloja: "allowPickup",
       images: "images",
       imagens: "images",
       image: "image",
@@ -6780,6 +7062,7 @@ function ProductManager({ products, showToast, storeSettings }) {
       const showcaseSections = parseShowcaseSectionIds(rawShowcaseSections);
       const subcategories = parseBulkSubcategories(row.subcategory);
       const subsubcategory = String(row.subsubcategory || "").trim();
+      const allowPickup = parseBooleanFlag(row.allowPickup);
 
       const flattenedVariations = Object.values(variationsByType)
         .flat()
@@ -6796,6 +7079,7 @@ function ProductManager({ products, showToast, storeSettings }) {
         subsubcategory,
         description: String(row.description || "").trim(),
         stock: Math.floor(stock),
+        allowPickup,
         images,
         image: images[0] || "",
         showcaseSections,
@@ -6954,6 +7238,7 @@ function ProductManager({ products, showToast, storeSettings }) {
         price: Number(formData.price),
         priceTag: normalizedPriceTag,
         stock: Number(formData.stock),
+        allowPickup: Boolean(formData.allowPickup),
         subcategories: selectedSubcategories,
         subcategory: selectedSubcategories[0] || "",
         subsubcategory: formData.subsubcategory || "",
@@ -7060,6 +7345,7 @@ function ProductManager({ products, showToast, storeSettings }) {
         : [],
       description: product.description || "",
       stock: product.stock || "",
+      allowPickup: isProductPickupEligible(product),
       images: product.images || (product.image ? [product.image] : []),
       variations: product.variations || "",
       variationsByType: getInitialVariationMap(product),
@@ -7103,6 +7389,7 @@ function ProductManager({ products, showToast, storeSettings }) {
       showcaseSections: [],
       description: "",
       stock: "",
+      allowPickup: false,
       images: [],
       variations: "",
       variationsByType: {},
@@ -7337,6 +7624,18 @@ function ProductManager({ products, showToast, storeSettings }) {
                 className="p-3 border rounded-lg outline-none focus:border-indigo-400"
               />
             </div>
+
+            <label className="md:col-span-2 inline-flex items-center gap-3 p-3 rounded-lg border border-slate-200 bg-slate-50 text-sm font-semibold text-slate-700">
+              <input
+                type="checkbox"
+                checked={Boolean(formData.allowPickup)}
+                onChange={(e) =>
+                  setFormData({ ...formData, allowPickup: e.target.checked })
+                }
+                className="w-4 h-4 rounded border-slate-300 text-indigo-600"
+              />
+              Permitir retirada na loja para este produto
+            </label>
 
             <div className="md:col-span-2 space-y-3 p-4 rounded-xl border border-slate-200 bg-slate-50">
               <div className="flex items-center justify-between gap-3">
@@ -9383,6 +9682,190 @@ function AbandonedCartsList({ carts, showToast }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function ProductInterestLeads({ leads, showToast }) {
+  const [searchTerm, setSearchTerm] = useState("");
+
+  const filteredLeads = useMemo(() => {
+    const query = String(searchTerm || "")
+      .trim()
+      .toLowerCase();
+
+    if (!query) return leads;
+
+    return leads.filter((lead) => {
+      const name = String(lead?.customerName || "").toLowerCase();
+      const email = String(lead?.customerEmail || "").toLowerCase();
+      const phone = String(lead?.customerPhone || "").toLowerCase();
+      const product = String(lead?.productName || "").toLowerCase();
+      const category = String(lead?.productCategory || "").toLowerCase();
+
+      return (
+        name.includes(query) ||
+        email.includes(query) ||
+        phone.includes(query) ||
+        product.includes(query) ||
+        category.includes(query)
+      );
+    });
+  }, [leads, searchTerm]);
+
+  const buildLeadContactHref = (lead) => {
+    const digits = normalizePhoneDigits(lead?.customerPhone || "");
+    if (digits.length < 10) return "";
+
+    const productName = String(lead?.productName || "produto").trim();
+    const text = `Olá! Vi que você se interessou por ${productName}. Posso te enviar uma oferta especial com desconto?`;
+    return `https://wa.me/55${digits}?text=${encodeURIComponent(text)}`;
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col gap-2">
+        <h2 className="text-2xl font-bold text-slate-800">
+          Interesse em Produtos
+        </h2>
+        <p className="text-sm text-slate-500 max-w-3xl">
+          Lista de usuários que clicaram em produtos. Use esses contatos para
+          remarketing e ofertas personalizadas.
+        </p>
+      </div>
+
+      <div className="bg-white rounded-2xl shadow-sm border overflow-x-auto">
+        <div className="p-4 border-b border-slate-100 bg-slate-50">
+          <input
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            placeholder="Buscar por cliente, telefone, e-mail ou produto"
+            className="w-full p-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-300 bg-white"
+          />
+        </div>
+
+        <table className="w-full text-left text-sm min-w-[980px]">
+          <thead className="bg-slate-50 border-b">
+            <tr>
+              <th className="p-4">Último Clique</th>
+              <th className="p-4">Cliente</th>
+              <th className="p-4">Produto de Interesse</th>
+              <th className="p-4 text-center">Cliques</th>
+              <th className="p-4 text-center">Contato</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {filteredLeads.map((lead) => {
+              const contactHref = buildLeadContactHref(lead);
+              const hasEmail = Boolean(
+                String(lead?.customerEmail || "").trim(),
+              );
+              const clickCount = Number(lead?.clickCount || 0);
+
+              return (
+                <tr
+                  key={lead.id}
+                  className="hover:bg-slate-50 transition-colors"
+                >
+                  <td className="p-4 text-slate-700 font-medium whitespace-nowrap">
+                    {lead?.lastClickedAt
+                      ? new Date(lead.lastClickedAt.toMillis()).toLocaleString()
+                      : "Recente"}
+                  </td>
+                  <td className="p-4">
+                    <div className="flex flex-col">
+                      <span className="font-bold text-slate-800">
+                        {lead.customerName || "Visitante"}
+                      </span>
+                      <span className="text-xs text-slate-500">
+                        {lead.customerPhone || "Telefone não disponível"}
+                      </span>
+                      <span className="text-xs text-slate-500">
+                        {lead.customerEmail || "E-mail não disponível"}
+                      </span>
+                    </div>
+                  </td>
+                  <td className="p-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-12 h-12 rounded-lg border border-slate-100 bg-slate-50 overflow-hidden shrink-0">
+                        {lead.productImage ? (
+                          <img
+                            src={normalizeExternalImageUrl(lead.productImage)}
+                            alt={lead.productName || "Produto"}
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <ImageIcon className="w-full h-full p-2 text-slate-300" />
+                        )}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="font-semibold text-slate-800 line-clamp-1">
+                          {lead.productName || "Produto"}
+                        </p>
+                        <p className="text-xs text-slate-500">
+                          {lead.productCategory || "Sem categoria"}
+                          {Number.isFinite(Number(lead.productPrice)) &&
+                          Number(lead.productPrice) > 0
+                            ? ` • ${formatCurrencyBRL(lead.productPrice)}`
+                            : ""}
+                        </p>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="p-4 text-center">
+                    <span className="bg-indigo-50 text-indigo-700 px-3 py-1 rounded-full text-xs font-black">
+                      {clickCount}
+                    </span>
+                  </td>
+                  <td className="p-4">
+                    <div className="flex items-center justify-center gap-2">
+                      {contactHref ? (
+                        <a
+                          href={contactHref}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="bg-emerald-100 text-emerald-700 hover:bg-emerald-200 text-xs font-bold px-3 py-2 rounded-lg inline-flex items-center gap-1"
+                        >
+                          <MessageCircle size={13} /> WhatsApp
+                        </a>
+                      ) : (
+                        <span className="text-xs text-slate-400">
+                          Sem WhatsApp
+                        </span>
+                      )}
+                      {hasEmail && (
+                        <button
+                          onClick={() => {
+                            navigator.clipboard
+                              .writeText(String(lead.customerEmail || ""))
+                              .then(() => showToast("E-mail copiado!"))
+                              .catch(() =>
+                                showToast(
+                                  "Não foi possível copiar o e-mail",
+                                  "error",
+                                ),
+                              );
+                          }}
+                          className="bg-slate-100 text-slate-700 hover:bg-slate-200 text-xs font-bold px-3 py-2 rounded-lg"
+                        >
+                          Copiar e-mail
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+            {filteredLeads.length === 0 && (
+              <tr>
+                <td colSpan="5" className="p-8 text-center text-slate-400">
+                  Nenhum registro de interesse encontrado.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
