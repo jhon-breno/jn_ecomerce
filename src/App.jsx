@@ -503,10 +503,20 @@ const DEFAULT_PRODUCT_CATALOG = {
     { name: "Tamanho", options: ["PP", "P", "M", "G", "GG"] },
     { name: "Cor", options: ["Preto", "Branco", "Azul"] },
   ],
+  sizeTables: [
+    {
+      id: "size_table_default",
+      name: "Tabela padrão (Camisetas)",
+      html: "<table><thead><tr><th>Tamanho</th><th>Largura (Peito)</th><th>Comprimento (Altura)</th></tr></thead><tbody><tr><td>S (P)</td><td>50 cm</td><td>70 cm</td></tr><tr><td>M (M)</td><td>52 cm</td><td>72 cm</td></tr><tr><td>L (G)</td><td>54 cm</td><td>74 cm</td></tr><tr><td>XL (GG)</td><td>56 cm</td><td>76 cm</td></tr><tr><td>2XL (XG)</td><td>58 cm</td><td>78 cm</td></tr></tbody></table>",
+    },
+  ],
 };
 
 const createCatalogSectionId = () =>
   `section_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+const createCatalogSizeTableId = () =>
+  `size_table_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
 const normalizeTextList = (value) =>
   String(value || "")
@@ -638,6 +648,38 @@ const buildSizeTableHtmlFromText = (value) => {
     .join("");
 
   return `<table><thead><tr><th>Tamanho</th><th>Largura (Peito)</th><th>Comprimento (Altura)</th></tr></thead><tbody>${body}</tbody></table>`;
+};
+
+const buildSizeTableTextFromHtml = (value) => {
+  if (typeof window === "undefined") return "";
+
+  const html = String(value || "").trim();
+  if (!html) return "";
+
+  try {
+    const wrapper = document.createElement("div");
+    wrapper.innerHTML = html;
+    const rows = Array.from(wrapper.querySelectorAll("tbody tr"));
+
+    if (rows.length === 0) {
+      return wrapper.textContent?.replace(/\s+/g, " ").trim() || "";
+    }
+
+    return rows
+      .map((row) =>
+        Array.from(row.querySelectorAll("td"))
+          .map((cell) => cell.textContent?.replace(/\s+/g, " ").trim() || "")
+          .filter(Boolean)
+          .join(" "),
+      )
+      .filter(Boolean)
+      .join("\n");
+  } catch (error) {
+    return html
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
 };
 
 const getDescriptionPreviewText = (value, maxLength = 120) => {
@@ -839,6 +881,18 @@ const normalizeCatalog = (catalog) => {
         .filter((item) => item.name)
     : [];
 
+  const sizeTables = Array.isArray(base.sizeTables)
+    ? base.sizeTables
+        .map((item) => ({
+          id:
+            String(item?.id || "").trim() ||
+            `size_table_${Math.random().toString(36).slice(2, 8)}`,
+          name: String(item?.name || "").trim(),
+          html: String(item?.html || "").trim(),
+        }))
+        .filter((item) => item.name && item.html)
+    : [];
+
   return {
     sections,
     categories:
@@ -847,6 +901,8 @@ const normalizeCatalog = (catalog) => {
       variationTypes.length > 0
         ? variationTypes
         : DEFAULT_PRODUCT_CATALOG.variationTypes,
+    sizeTables:
+      sizeTables.length > 0 ? sizeTables : DEFAULT_PRODUCT_CATALOG.sizeTables,
   };
 };
 
@@ -7089,6 +7145,7 @@ function ProductManager({ products, showToast, storeSettings }) {
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
+  const [selectedSizeTableId, setSelectedSizeTableId] = useState("");
   const itemsPerPage = 20;
   const [formData, setFormData] = useState({
     name: "",
@@ -7175,6 +7232,21 @@ function ProductManager({ products, showToast, storeSettings }) {
   const selectedSubcategories = Array.isArray(formData.subcategories)
     ? formData.subcategories
     : getProductSubcategories(formData);
+  const availableSizeTables = productCatalog.sizeTables || [];
+
+  useEffect(() => {
+    if (availableSizeTables.length === 0) {
+      setSelectedSizeTableId("");
+      return;
+    }
+
+    setSelectedSizeTableId((prev) => {
+      if (prev && availableSizeTables.some((item) => item.id === prev)) {
+        return prev;
+      }
+      return availableSizeTables[0].id;
+    });
+  }, [availableSizeTables]);
 
   const syncEditorDescription = useCallback((html) => {
     if (descriptionEditorRef.current) {
@@ -7184,8 +7256,18 @@ function ProductManager({ products, showToast, storeSettings }) {
   }, []);
 
   const handleInsertSizeTableTemplate = () => {
-    const templateHtml =
-      "<table><thead><tr><th>Tamanho</th><th>Largura (Peito)</th><th>Comprimento (Altura)</th></tr></thead><tbody><tr><td>S (P)</td><td>50 cm</td><td>70 cm</td></tr><tr><td>M (M)</td><td>52 cm</td><td>72 cm</td></tr><tr><td>L (G)</td><td>54 cm</td><td>74 cm</td></tr><tr><td>XL (GG)</td><td>56 cm</td><td>76 cm</td></tr><tr><td>2XL (XG)</td><td>58 cm</td><td>78 cm</td></tr></tbody></table>";
+    const selectedTemplate = availableSizeTables.find(
+      (item) => item.id === selectedSizeTableId,
+    );
+    const templateHtml = String(selectedTemplate?.html || "").trim();
+
+    if (!templateHtml) {
+      showToast(
+        "Cadastre uma tabela de medidas em Configurações > Catálogo.",
+        "error",
+      );
+      return;
+    }
 
     const currentHtml = String(descriptionEditorRef.current?.innerHTML || "");
     const nextHtml = currentHtml
@@ -8527,6 +8609,21 @@ function ProductManager({ products, showToast, storeSettings }) {
                 Descrição rica (aceita HTML)
               </label>
               <div className="flex flex-wrap gap-2">
+                <select
+                  value={selectedSizeTableId}
+                  onChange={(e) => setSelectedSizeTableId(e.target.value)}
+                  className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-700 text-xs font-bold"
+                >
+                  {availableSizeTables.length === 0 ? (
+                    <option value="">Sem tabela cadastrada</option>
+                  ) : (
+                    availableSizeTables.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.name}
+                      </option>
+                    ))
+                  )}
+                </select>
                 <button
                   type="button"
                   onClick={handleInsertSizeTableTemplate}
@@ -11895,6 +11992,16 @@ function AdminSettings({ showToast, storeSettings }) {
     name: "",
     options: "",
   });
+  const [newSizeTable, setNewSizeTable] = useState({
+    name: "",
+    content: "",
+  });
+  const [editingSizeTableId, setEditingSizeTableId] = useState("");
+  const [editSizeTableDraft, setEditSizeTableDraft] = useState({
+    id: "",
+    name: "",
+    content: "",
+  });
   const [contactPhonesDraft, setContactPhonesDraft] = useState("");
   const [isAutoSaving, setIsAutoSaving] = useState(false);
   const lastPersistedConfigRef = useRef("");
@@ -12419,6 +12526,118 @@ function AdminSettings({ showToast, storeSettings }) {
 
     handleCancelEditVariationType();
     showToast("Tipo de variação atualizado!");
+  };
+
+  const handleAddSizeTable = () => {
+    const name = String(newSizeTable.name || "").trim();
+    const content = String(newSizeTable.content || "").trim();
+
+    if (!name) {
+      return showToast("Informe o nome da tabela de medidas", "error");
+    }
+
+    const html = buildSizeTableHtmlFromText(content);
+    if (!html) {
+      return showToast(
+        "Não foi possível montar a tabela. Verifique o formato dos dados.",
+        "error",
+      );
+    }
+
+    const alreadyExists = (config.catalog?.sizeTables || []).some(
+      (item) => item.name.toLowerCase() === name.toLowerCase(),
+    );
+
+    if (alreadyExists) {
+      return showToast("Já existe uma tabela com esse nome", "error");
+    }
+
+    setConfig((prev) => ({
+      ...prev,
+      catalog: {
+        ...normalizeCatalog(prev.catalog),
+        sizeTables: [
+          ...(prev.catalog?.sizeTables || []),
+          { id: createCatalogSizeTableId(), name, html },
+        ],
+      },
+    }));
+
+    setNewSizeTable({ name: "", content: "" });
+    showToast("Tabela de medidas adicionada!");
+  };
+
+  const handleRemoveSizeTable = (sizeTableId) => {
+    setConfig((prev) => ({
+      ...prev,
+      catalog: {
+        ...normalizeCatalog(prev.catalog),
+        sizeTables: (prev.catalog?.sizeTables || []).filter(
+          (item) => item.id !== sizeTableId,
+        ),
+      },
+    }));
+
+    if (editingSizeTableId === sizeTableId) {
+      setEditingSizeTableId("");
+      setEditSizeTableDraft({ id: "", name: "", content: "" });
+    }
+  };
+
+  const handleStartEditSizeTable = (sizeTable) => {
+    setEditingSizeTableId(sizeTable.id);
+    setEditSizeTableDraft({
+      id: sizeTable.id,
+      name: sizeTable.name,
+      content: buildSizeTableTextFromHtml(sizeTable.html),
+    });
+  };
+
+  const handleCancelEditSizeTable = () => {
+    setEditingSizeTableId("");
+    setEditSizeTableDraft({ id: "", name: "", content: "" });
+  };
+
+  const handleSaveSizeTableEdit = () => {
+    const nextName = String(editSizeTableDraft.name || "").trim();
+    const nextContent = String(editSizeTableDraft.content || "").trim();
+
+    if (!nextName) {
+      return showToast("Nome da tabela é obrigatório", "error");
+    }
+
+    const html = buildSizeTableHtmlFromText(nextContent);
+    if (!html) {
+      return showToast(
+        "Não foi possível montar a tabela. Verifique os dados informados.",
+        "error",
+      );
+    }
+
+    const hasDuplicatedName = (config.catalog?.sizeTables || []).some(
+      (item) =>
+        item.name.toLowerCase() === nextName.toLowerCase() &&
+        item.id !== editingSizeTableId,
+    );
+
+    if (hasDuplicatedName) {
+      return showToast("Já existe outra tabela com esse nome", "error");
+    }
+
+    setConfig((prev) => ({
+      ...prev,
+      catalog: {
+        ...normalizeCatalog(prev.catalog),
+        sizeTables: (prev.catalog?.sizeTables || []).map((item) =>
+          item.id === editingSizeTableId
+            ? { ...item, name: nextName, html }
+            : item,
+        ),
+      },
+    }));
+
+    handleCancelEditSizeTable();
+    showToast("Tabela de medidas atualizada!");
   };
 
   const saveSettings = async (e) => {
@@ -13017,6 +13236,156 @@ function AdminSettings({ showToast, storeSettings }) {
                 </tbody>
               </table>
             </div>
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <h4 className="text-sm font-black uppercase tracking-wider text-slate-600">
+            Tabelas de Medidas
+          </h4>
+          <p className="text-sm text-slate-500">
+            Cadastre modelos para inserir automaticamente na descrição do
+            produto. Formato esperado por linha: Tamanho, Peito e Comprimento.
+            Exemplo: M (54x75) 54 cm 75 cm
+          </p>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 bg-slate-50 p-3 rounded-xl border border-slate-200">
+            <input
+              placeholder="Nome do modelo (ex: Camisetas Adulto)"
+              className="p-2.5 border rounded-lg text-sm outline-none"
+              value={newSizeTable.name}
+              onChange={(e) =>
+                setNewSizeTable((prev) => ({
+                  ...prev,
+                  name: e.target.value,
+                }))
+              }
+            />
+            <button
+              onClick={handleAddSizeTable}
+              className="bg-slate-900 hover:bg-slate-700 text-white font-bold px-4 py-2 rounded-lg"
+            >
+              Adicionar Tabela
+            </button>
+            <textarea
+              rows={4}
+              placeholder={
+                "P (50x70) 50 cm 70 cm\nM (54x75) 54 cm 75 cm\nG (58x78) 58 cm 78 cm"
+              }
+              className="lg:col-span-2 p-2.5 border rounded-lg text-sm outline-none"
+              value={newSizeTable.content}
+              onChange={(e) =>
+                setNewSizeTable((prev) => ({
+                  ...prev,
+                  content: e.target.value,
+                }))
+              }
+            />
+          </div>
+
+          <div className="overflow-auto border border-slate-200 rounded-xl bg-white">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-100 text-slate-600">
+                <tr>
+                  <th className="text-left p-3">Nome</th>
+                  <th className="text-left p-3">Prévia</th>
+                  <th className="text-right p-3">Ação</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {(config.catalog?.sizeTables || []).length === 0 ? (
+                  <tr>
+                    <td colSpan="3" className="p-4 text-sm text-slate-500">
+                      Nenhuma tabela de medidas cadastrada ainda.
+                    </td>
+                  </tr>
+                ) : (
+                  (config.catalog?.sizeTables || []).map((sizeTable) => (
+                    <tr key={sizeTable.id}>
+                      <td className="p-3 align-top font-semibold text-slate-700">
+                        {editingSizeTableId === sizeTable.id ? (
+                          <input
+                            value={editSizeTableDraft.name}
+                            onChange={(e) =>
+                              setEditSizeTableDraft((prev) => ({
+                                ...prev,
+                                name: e.target.value,
+                              }))
+                            }
+                            className="w-full p-2 border border-slate-200 rounded-lg text-sm outline-none"
+                          />
+                        ) : (
+                          sizeTable.name
+                        )}
+                      </td>
+                      <td className="p-3 align-top text-slate-600">
+                        {editingSizeTableId === sizeTable.id ? (
+                          <textarea
+                            rows={4}
+                            value={editSizeTableDraft.content}
+                            onChange={(e) =>
+                              setEditSizeTableDraft((prev) => ({
+                                ...prev,
+                                content: e.target.value,
+                              }))
+                            }
+                            className="w-full p-2 border border-slate-200 rounded-lg text-sm outline-none"
+                          />
+                        ) : (
+                          <div className="max-w-xl overflow-x-auto border border-slate-200 rounded-lg p-2 bg-slate-50">
+                            <div
+                              className="prose prose-sm max-w-none"
+                              dangerouslySetInnerHTML={{
+                                __html: sanitizeDescriptionHtml(sizeTable.html),
+                              }}
+                            />
+                          </div>
+                        )}
+                      </td>
+                      <td className="p-3 align-top">
+                        <div className="flex items-center justify-end gap-2">
+                          {editingSizeTableId === sizeTable.id ? (
+                            <>
+                              <button
+                                onClick={handleSaveSizeTableEdit}
+                                className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold"
+                              >
+                                Salvar
+                              </button>
+                              <button
+                                onClick={handleCancelEditSizeTable}
+                                className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold"
+                              >
+                                Cancelar
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <button
+                                onClick={() =>
+                                  handleStartEditSizeTable(sizeTable)
+                                }
+                                className="px-3 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold"
+                              >
+                                Editar
+                              </button>
+                              <button
+                                onClick={() =>
+                                  handleRemoveSizeTable(sizeTable.id)
+                                }
+                                className="px-3 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold"
+                              >
+                                Remover
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
       </div>
