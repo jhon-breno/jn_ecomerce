@@ -46,6 +46,7 @@ import {
   ZoomIn,
   Maximize2,
   Share2,
+  Star,
 } from "lucide-react";
 
 // ATENÇÃO: Para o ambiente local, instale e importe o SDK do Mercado Pago aqui:
@@ -378,6 +379,55 @@ const normalizeSocialLinks = (value) => {
     youtube: String(links.youtube || "").trim(),
     tiktok: String(links.tiktok || "").trim(),
   };
+};
+
+const normalizeFaqItems = (value) => {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((item) => ({
+      question: String(item?.question || "").trim(),
+      answer: String(item?.answer || "").trim(),
+    }))
+    .filter((item) => item.question && item.answer);
+};
+
+const normalizeCustomerHighlights = (value) => {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((item) => {
+      const starsRaw = Number(item?.stars);
+      const stars = Number.isFinite(starsRaw)
+        ? Math.max(1, Math.min(5, Math.round(starsRaw)))
+        : 5;
+
+      return {
+        author: String(item?.author || "").trim(),
+        text: String(item?.text || "").trim(),
+        stars,
+      };
+    })
+    .filter((item) => item.author && item.text);
+};
+
+const resolveComplimentsAndQuestionsLink = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+
+  if (/^(https?:\/\/|mailto:|tel:)/i.test(raw)) return raw;
+
+  if (raw.includes("@")) {
+    const email = raw.replace(/^mailto:/i, "").trim();
+    return `mailto:${email}?subject=${encodeURIComponent("Dúvida/Elogio")}`;
+  }
+
+  const digits = normalizePhoneDigits(raw);
+  if (digits.length >= 10) {
+    return `https://wa.me/55${digits}?text=${encodeURIComponent("Olá! Quero enviar uma dúvida/elogio sobre a loja.")}`;
+  }
+
+  return "";
 };
 
 const resolveSocialUrl = (platform, value) => {
@@ -1215,6 +1265,7 @@ export default function App() {
   const [abandonedCarts, setAbandonedCarts] = useState([]);
   const [productInterestLeads, setProductInterestLeads] = useState([]);
   const [productNotFoundRequests, setProductNotFoundRequests] = useState([]);
+  const [customerFeedbacks, setCustomerFeedbacks] = useState([]);
   const [coupons, setCoupons] = useState([]);
   const [storeSettings, setStoreSettings] = useState({
     storeName: "NovaLoja",
@@ -1222,6 +1273,9 @@ export default function App() {
     logo: "",
     banners: [],
     footerDescription: "",
+    faqItems: [],
+    customerHighlights: [],
+    complimentsAndQuestionsContact: "",
     contactPhones: [],
     socialLinks: {
       whatsapp: "",
@@ -1486,6 +1540,32 @@ export default function App() {
       (err) => console.error(err),
     );
 
+    const customerFeedbacksRef = collection(
+      db,
+      "artifacts",
+      appId,
+      "public",
+      "data",
+      "customer_feedbacks",
+    );
+    const unsubCustomerFeedbacks = onSnapshot(
+      customerFeedbacksRef,
+      (snapshot) => {
+        const list = snapshot.docs.map((feedbackDoc) => ({
+          id: feedbackDoc.id,
+          ...feedbackDoc.data(),
+        }));
+        setCustomerFeedbacks(
+          list.sort(
+            (a, b) =>
+              (b.createdAt?.toMillis?.() || 0) -
+              (a.createdAt?.toMillis?.() || 0),
+          ),
+        );
+      },
+      (err) => console.error(err),
+    );
+
     const settingsRef = doc(
       db,
       "artifacts",
@@ -1511,6 +1591,7 @@ export default function App() {
       unsubLeads();
       unsubCoupons();
       unsubProductRequests();
+      unsubCustomerFeedbacks();
       unsubSettings();
     };
   }, [user]);
@@ -1562,6 +1643,7 @@ export default function App() {
           showToast={showToast}
           storeSettings={storeSettings}
           coupons={coupons}
+          customerFeedbacks={customerFeedbacks}
         />
       ) : !isAdminAuthenticated ? (
         <AdminAuthGate
@@ -1576,6 +1658,7 @@ export default function App() {
           abandonedCarts={abandonedCarts}
           productInterestLeads={productInterestLeads}
           productNotFoundRequests={productNotFoundRequests}
+          customerFeedbacks={customerFeedbacks}
           coupons={coupons}
           showToast={showToast}
           storeSettings={storeSettings}
@@ -1723,6 +1806,7 @@ function StoreFront({
   showToast,
   storeSettings,
   coupons = [],
+  customerFeedbacks = [],
 }) {
   const [cart, setCart] = useState([]);
   const [cartLoaded, setCartLoaded] = useState(false);
@@ -1738,6 +1822,12 @@ function StoreFront({
   const [isNotFoundRequestOpen, setIsNotFoundRequestOpen] = useState(false);
   const [isSubmittingNotFoundRequest, setIsSubmittingNotFoundRequest] =
     useState(false);
+  const [feedbackForm, setFeedbackForm] = useState({
+    customerName: "",
+    stars: 5,
+    message: "",
+  });
+  const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
   const [notFoundRequestForm, setNotFoundRequestForm] = useState({
     productName: "",
     category: "",
@@ -1773,6 +1863,34 @@ function StoreFront({
   const contactPhones = useMemo(
     () => normalizePhoneList(storeSettings?.contactPhones),
     [storeSettings?.contactPhones],
+  );
+  const faqItems = useMemo(
+    () => normalizeFaqItems(storeSettings?.faqItems),
+    [storeSettings?.faqItems],
+  );
+  const customerHighlights = useMemo(
+    () => normalizeCustomerHighlights(storeSettings?.customerHighlights),
+    [storeSettings?.customerHighlights],
+  );
+  const approvedCustomerFeedbacks = useMemo(() => {
+    const approved = Array.isArray(customerFeedbacks)
+      ? customerFeedbacks
+          .filter((item) => String(item?.status || "pending") === "approved")
+          .map((item) => ({
+            author: String(item?.customerName || "Cliente").trim() || "Cliente",
+            text: String(item?.message || "").trim(),
+            stars: Number(item?.stars) || 5,
+          }))
+      : [];
+
+    return normalizeCustomerHighlights(approved);
+  }, [customerFeedbacks]);
+  const complimentsAndQuestionsHref = useMemo(
+    () =>
+      resolveComplimentsAndQuestionsLink(
+        storeSettings?.complimentsAndQuestionsContact,
+      ),
+    [storeSettings?.complimentsAndQuestionsContact],
   );
 
   const whatsappDigits = normalizePhoneDigits(
@@ -1881,10 +1999,79 @@ function StoreFront({
   );
   const hasContactPhones = contactPhones.length > 0;
   const hasSocialLinks = socialItems.length > 0;
+  const hasFaqItems = faqItems.length > 0;
+  const mergedCustomerHighlights = [
+    ...approvedCustomerFeedbacks,
+    ...customerHighlights,
+  ];
+  const hasCustomerHighlights = mergedCustomerHighlights.length > 0;
   const formattedContactPhones = contactPhones.map((phone) => ({
     raw: phone,
     label: formatContactPhone(phone),
   }));
+
+  const submitCustomerFeedback = async () => {
+    const fromProfileName = userProfile
+      ? `${String(userProfile.firstName || "").trim()} ${String(userProfile.lastName || "").trim()}`.trim()
+      : "";
+
+    const customerName =
+      String(feedbackForm.customerName || "").trim() ||
+      fromProfileName ||
+      String(user?.email || "")
+        .split("@")[0]
+        .trim();
+
+    const message = String(feedbackForm.message || "").trim();
+    const stars = Math.max(
+      1,
+      Math.min(5, Math.round(Number(feedbackForm.stars) || 5)),
+    );
+
+    if (!customerName) {
+      showToast("Informe seu nome para enviar o feedback", "error");
+      return;
+    }
+
+    if (!message) {
+      showToast("Escreva seu feedback antes de enviar", "error");
+      return;
+    }
+
+    try {
+      setIsSubmittingFeedback(true);
+      await addDoc(
+        collection(
+          db,
+          "artifacts",
+          appId,
+          "public",
+          "data",
+          "customer_feedbacks",
+        ),
+        {
+          customerId: user?.uid || "",
+          customerName,
+          customerEmail: String(user?.email || "").trim(),
+          customerPhone: String(userProfile?.phone || "").trim(),
+          stars,
+          message,
+          status: "pending",
+          isAnonymous: Boolean(user?.isAnonymous),
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        },
+      );
+
+      setFeedbackForm({ customerName: "", stars: 5, message: "" });
+      showToast("Feedback enviado! O admin vai revisar antes de publicar.");
+    } catch (error) {
+      console.error("Erro ao enviar feedback:", error);
+      showToast("Não foi possível enviar o feedback", "error");
+    } finally {
+      setIsSubmittingFeedback(false);
+    }
+  };
 
   // Buscar perfil do utilizador
   useEffect(() => {
@@ -3153,6 +3340,158 @@ function StoreFront({
                 </div>
               </div>
             )}
+          </div>
+
+          {(hasFaqItems || hasCustomerHighlights) && (
+            <div className="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {hasFaqItems && (
+                <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5 md:p-6">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <h4 className="text-sm font-black uppercase tracking-wider text-slate-300">
+                      FAQ
+                    </h4>
+                    {complimentsAndQuestionsHref && (
+                      <a
+                        href={complimentsAndQuestionsHref}
+                        target={
+                          complimentsAndQuestionsHref.startsWith("http")
+                            ? "_blank"
+                            : undefined
+                        }
+                        rel={
+                          complimentsAndQuestionsHref.startsWith("http")
+                            ? "noreferrer"
+                            : undefined
+                        }
+                        className="inline-flex items-center gap-2 rounded-full border border-cyan-400/50 bg-cyan-500/10 px-3 py-1.5 text-xs font-black uppercase tracking-wide text-cyan-200 hover:bg-cyan-500/20"
+                      >
+                        <MessageCircle size={13} /> Enviar dúvida/elogios
+                      </a>
+                    )}
+                  </div>
+
+                  <div className="mt-4 space-y-3">
+                    {faqItems.map((faq, index) => (
+                      <details
+                        key={`${faq.question}-${index}`}
+                        className="group rounded-xl border border-slate-800 bg-slate-950/60 px-4 py-3"
+                      >
+                        <summary className="cursor-pointer list-none text-sm font-bold text-slate-100 flex items-start justify-between gap-3">
+                          <span>{faq.question}</span>
+                          <span className="text-slate-400 group-open:rotate-45 transition-transform">
+                            +
+                          </span>
+                        </summary>
+                        <p className="mt-2 text-sm leading-relaxed text-slate-400">
+                          {faq.answer}
+                        </p>
+                      </details>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {hasCustomerHighlights && (
+                <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5 md:p-6">
+                  <h4 className="text-sm font-black uppercase tracking-wider text-slate-300">
+                    Avaliações de Clientes
+                  </h4>
+                  <div className="mt-4 space-y-3">
+                    {mergedCustomerHighlights.map((item, index) => (
+                      <article
+                        key={`${item.author}-${index}`}
+                        className="rounded-xl border border-slate-800 bg-slate-950/60 p-4"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <strong className="text-sm text-white">
+                            {item.author}
+                          </strong>
+                          <div
+                            className="flex items-center gap-1"
+                            aria-label={`${item.stars} estrelas`}
+                          >
+                            {Array.from({ length: 5 }).map((_, starIndex) => (
+                              <Star
+                                key={`${item.author}-${index}-${starIndex}`}
+                                size={14}
+                                className={
+                                  starIndex < item.stars
+                                    ? "fill-amber-400 text-amber-400"
+                                    : "text-slate-600"
+                                }
+                              />
+                            ))}
+                          </div>
+                        </div>
+                        <p className="mt-2 text-sm leading-relaxed text-slate-300">
+                          {item.text}
+                        </p>
+                      </article>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-900/60 p-5 md:p-6">
+            <h4 className="text-sm font-black uppercase tracking-wider text-slate-300">
+              Conte Sua Experiência
+            </h4>
+            <p className="text-xs text-slate-400 mt-1">
+              Seu feedback é revisado pelo admin antes de aparecer publicamente.
+            </p>
+
+            <div className="mt-4 grid grid-cols-1 md:grid-cols-6 gap-3">
+              <input
+                type="text"
+                value={feedbackForm.customerName}
+                onChange={(e) =>
+                  setFeedbackForm((prev) => ({
+                    ...prev,
+                    customerName: e.target.value,
+                  }))
+                }
+                placeholder="Seu nome"
+                className="md:col-span-3 p-2.5 rounded-lg border border-slate-700 bg-slate-950 text-slate-100 outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+              <select
+                value={feedbackForm.stars}
+                onChange={(e) =>
+                  setFeedbackForm((prev) => ({
+                    ...prev,
+                    stars: e.target.value,
+                  }))
+                }
+                className="md:col-span-1 p-2.5 rounded-lg border border-slate-700 bg-slate-950 text-slate-100 outline-none focus:ring-2 focus:ring-indigo-500"
+              >
+                <option value={5}>5 estrelas</option>
+                <option value={4}>4 estrelas</option>
+                <option value={3}>3 estrelas</option>
+                <option value={2}>2 estrelas</option>
+                <option value={1}>1 estrela</option>
+              </select>
+              <button
+                type="button"
+                onClick={submitCustomerFeedback}
+                disabled={isSubmittingFeedback}
+                className="md:col-span-2 p-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-600 text-white font-bold"
+              >
+                {isSubmittingFeedback ? "Enviando..." : "Enviar feedback"}
+              </button>
+              <textarea
+                rows={3}
+                value={feedbackForm.message}
+                onChange={(e) =>
+                  setFeedbackForm((prev) => ({
+                    ...prev,
+                    message: e.target.value,
+                  }))
+                }
+                placeholder="Como foi sua experiência com a loja?"
+                className="md:col-span-6 p-2.5 rounded-lg border border-slate-700 bg-slate-950 text-slate-100 outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
           </div>
 
           <div className="mt-8 pt-5 border-t border-slate-800 text-xs text-slate-500 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -7188,6 +7527,7 @@ function AdminDashboard({
   abandonedCarts,
   productInterestLeads,
   productNotFoundRequests,
+  customerFeedbacks,
   coupons,
   showToast,
   storeSettings,
@@ -7209,6 +7549,7 @@ function AdminDashboard({
       name: "Não Encontrados",
       icon: <AlertTriangle size={20} />,
     },
+    { id: "feedbacks", name: "Feedbacks", icon: <MessageCircle size={20} /> },
     { id: "coupons", name: "Cupons", icon: <Tag size={20} /> },
     { id: "settings", name: "Configurações", icon: <Settings size={20} /> },
   ];
@@ -7276,6 +7617,19 @@ function AdminDashboard({
                 productNotFoundRequests.length > 0 && (
                   <span className="bg-amber-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
                     {productNotFoundRequests.length}
+                  </span>
+                )}
+              {tab.id === "feedbacks" &&
+                customerFeedbacks.filter(
+                  (item) => String(item?.status || "pending") === "pending",
+                ).length > 0 && (
+                  <span className="bg-fuchsia-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+                    {
+                      customerFeedbacks.filter(
+                        (item) =>
+                          String(item?.status || "pending") === "pending",
+                      ).length
+                    }
                   </span>
                 )}
             </button>
@@ -7351,6 +7705,14 @@ function AdminDashboard({
           {activeTab === "notFoundRequests" && (
             <ProductNotFoundRequestsList
               requests={productNotFoundRequests}
+              showToast={showToast}
+            />
+          )}
+        </div>
+        <div className={activeTab !== "feedbacks" ? "print:hidden" : ""}>
+          {activeTab === "feedbacks" && (
+            <CustomerFeedbackModerationList
+              feedbacks={customerFeedbacks}
               showToast={showToast}
             />
           )}
@@ -11865,6 +12227,268 @@ function ProductNotFoundRequestsList({ requests, showToast }) {
   );
 }
 
+function CustomerFeedbackModerationList({ feedbacks, showToast }) {
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [searchTerm, setSearchTerm] = useState("");
+  const [savingId, setSavingId] = useState(null);
+  const [deletingId, setDeletingId] = useState(null);
+
+  const feedbackStats = useMemo(() => {
+    const pending = feedbacks.filter(
+      (item) => String(item?.status || "pending") === "pending",
+    ).length;
+    const approved = feedbacks.filter(
+      (item) => String(item?.status || "pending") === "approved",
+    ).length;
+    const rejected = feedbacks.filter(
+      (item) => String(item?.status || "pending") === "rejected",
+    ).length;
+
+    return { pending, approved, rejected };
+  }, [feedbacks]);
+
+  const filteredFeedbacks = useMemo(() => {
+    const statusFiltered =
+      statusFilter === "all"
+        ? feedbacks
+        : feedbacks.filter(
+            (item) => String(item?.status || "pending") === statusFilter,
+          );
+
+    const query = String(searchTerm || "")
+      .trim()
+      .toLowerCase();
+
+    if (!query) return statusFiltered;
+
+    return statusFiltered.filter((item) =>
+      [item.customerName, item.customerEmail, item.customerPhone, item.message]
+        .map((value) => String(value || "").toLowerCase())
+        .some((value) => value.includes(query)),
+    );
+  }, [feedbacks, searchTerm, statusFilter]);
+
+  const updateStatus = async (feedbackId, status) => {
+    setSavingId(feedbackId);
+    try {
+      await updateDoc(
+        doc(
+          db,
+          "artifacts",
+          appId,
+          "public",
+          "data",
+          "customer_feedbacks",
+          feedbackId,
+        ),
+        {
+          status,
+          reviewedAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        },
+      );
+
+      if (status === "approved") {
+        showToast("Feedback aprovado e publicado no site.");
+      } else if (status === "rejected") {
+        showToast("Feedback reprovado e ocultado do site.");
+      } else {
+        showToast("Feedback movido para pendente.");
+      }
+    } catch (error) {
+      console.error("Erro ao atualizar feedback:", error);
+      showToast("Erro ao atualizar feedback", "error");
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const deleteFeedback = async (feedbackId) => {
+    setDeletingId(feedbackId);
+    try {
+      await deleteDoc(
+        doc(
+          db,
+          "artifacts",
+          appId,
+          "public",
+          "data",
+          "customer_feedbacks",
+          feedbackId,
+        ),
+      );
+      showToast("Feedback excluído com sucesso.");
+    } catch (error) {
+      console.error("Erro ao excluir feedback:", error);
+      showToast("Erro ao excluir feedback", "error");
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+        <div>
+          <h2 className="text-2xl font-black text-slate-800">
+            Feedbacks de Clientes
+          </h2>
+          <p className="text-sm text-slate-500 mt-1">
+            Aprove somente os feedbacks que deseja mostrar no site público.
+          </p>
+        </div>
+        <div className="flex items-center gap-2 text-xs font-bold">
+          <span className="px-2.5 py-1 rounded-full bg-amber-100 text-amber-700">
+            Pendentes: {feedbackStats.pending}
+          </span>
+          <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700">
+            Aprovados: {feedbackStats.approved}
+          </span>
+          <span className="px-2.5 py-1 rounded-full bg-rose-100 text-rose-700">
+            Reprovados: {feedbackStats.rejected}
+          </span>
+        </div>
+      </div>
+
+      <div className="bg-white border border-slate-100 rounded-2xl shadow-sm p-4 md:p-5 flex flex-col md:flex-row gap-3">
+        <input
+          type="text"
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          placeholder="Buscar por nome, e-mail, telefone ou mensagem"
+          className="flex-1 p-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-300"
+        />
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+          className="md:w-52 p-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-300 bg-white"
+        >
+          <option value="all">Todos os status</option>
+          <option value="pending">Pendentes</option>
+          <option value="approved">Aprovados</option>
+          <option value="rejected">Reprovados</option>
+        </select>
+      </div>
+
+      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-x-auto">
+        <table className="w-full min-w-[1020px] text-sm text-left">
+          <thead className="bg-slate-50 border-b border-slate-100">
+            <tr>
+              <th className="p-4">Cliente</th>
+              <th className="p-4">Feedback</th>
+              <th className="p-4">Nota</th>
+              <th className="p-4">Status</th>
+              <th className="p-4 text-center">Ações</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {filteredFeedbacks.map((item) => {
+              const status = String(item?.status || "pending");
+              return (
+                <tr key={item.id} className="hover:bg-slate-50">
+                  <td className="p-4 align-top min-w-[220px]">
+                    <p className="font-bold text-slate-800">
+                      {item.customerName || "Cliente"}
+                    </p>
+                    <p className="text-xs text-slate-500">
+                      {item.customerEmail || "E-mail não informado"}
+                    </p>
+                    <p className="text-xs text-slate-500">
+                      {item.customerPhone || "Telefone não informado"}
+                    </p>
+                    <p className="text-[11px] text-slate-400 mt-1">
+                      {item.createdAt?.toDate?.()
+                        ? item.createdAt.toDate().toLocaleString("pt-BR")
+                        : "Recente"}
+                    </p>
+                  </td>
+                  <td className="p-4 align-top max-w-[420px]">
+                    <p className="text-sm text-slate-700 leading-relaxed">
+                      {item.message || "Sem mensagem"}
+                    </p>
+                  </td>
+                  <td className="p-4 align-top">
+                    <div className="flex items-center gap-1">
+                      {Array.from({ length: 5 }).map((_, starIndex) => (
+                        <Star
+                          key={`${item.id}-${starIndex}`}
+                          size={14}
+                          className={
+                            starIndex < (Number(item.stars) || 0)
+                              ? "fill-amber-400 text-amber-400"
+                              : "text-slate-300"
+                          }
+                        />
+                      ))}
+                    </div>
+                  </td>
+                  <td className="p-4 align-top">
+                    <span
+                      className={`px-2.5 py-1 rounded-full text-xs font-bold ${
+                        status === "approved"
+                          ? "bg-emerald-100 text-emerald-700"
+                          : status === "rejected"
+                            ? "bg-rose-100 text-rose-700"
+                            : "bg-amber-100 text-amber-700"
+                      }`}
+                    >
+                      {status === "approved"
+                        ? "Aprovado"
+                        : status === "rejected"
+                          ? "Reprovado"
+                          : "Pendente"}
+                    </span>
+                  </td>
+                  <td className="p-4 align-top text-center">
+                    <div className="flex flex-wrap items-center justify-center gap-2">
+                      <button
+                        onClick={() => updateStatus(item.id, "approved")}
+                        disabled={savingId === item.id}
+                        className="px-3 py-1.5 rounded-lg bg-emerald-100 text-emerald-700 hover:bg-emerald-200 text-xs font-bold disabled:opacity-50"
+                      >
+                        Aprovar
+                      </button>
+                      <button
+                        onClick={() => updateStatus(item.id, "rejected")}
+                        disabled={savingId === item.id}
+                        className="px-3 py-1.5 rounded-lg bg-rose-100 text-rose-700 hover:bg-rose-200 text-xs font-bold disabled:opacity-50"
+                      >
+                        Reprovar
+                      </button>
+                      <button
+                        onClick={() => updateStatus(item.id, "pending")}
+                        disabled={savingId === item.id}
+                        className="px-3 py-1.5 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 text-xs font-bold disabled:opacity-50"
+                      >
+                        Ocultar
+                      </button>
+                      <button
+                        onClick={() => deleteFeedback(item.id)}
+                        disabled={deletingId === item.id}
+                        className="px-3 py-1.5 rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 text-xs font-bold disabled:opacity-50"
+                      >
+                        Excluir
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+
+            {filteredFeedbacks.length === 0 && (
+              <tr>
+                <td colSpan="5" className="p-8 text-center text-slate-400">
+                  Nenhum feedback encontrado.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function CouponManager({ coupons, showToast }) {
   const [form, setForm] = useState({
     code: "",
@@ -12322,6 +12946,9 @@ function AdminSettings({ showToast, storeSettings }) {
     logo: "",
     banners: [],
     footerDescription: "",
+    faqItems: [],
+    customerHighlights: [],
+    complimentsAndQuestionsContact: "",
     contactPhones: [],
     socialLinks: {
       whatsapp: "",
@@ -12358,6 +12985,12 @@ function AdminSettings({ showToast, storeSettings }) {
     },
   });
   const [isUploading, setIsUploading] = useState(false);
+  const [newFaq, setNewFaq] = useState({ question: "", answer: "" });
+  const [newCustomerHighlight, setNewCustomerHighlight] = useState({
+    author: "",
+    stars: 5,
+    text: "",
+  });
   const [newCity, setNewCity] = useState({ name: "", state: "", rate: "" });
   const [newCategory, setNewCategory] = useState({
     name: "",
@@ -12412,6 +13045,13 @@ function AdminSettings({ showToast, storeSettings }) {
       storeAddress: normalizeStoreAddress(sourceConfig.storeAddress),
       contactPhones: normalizePhoneList(sourceConfig.contactPhones),
       socialLinks: normalizeSocialLinks(sourceConfig.socialLinks),
+      faqItems: normalizeFaqItems(sourceConfig.faqItems),
+      customerHighlights: normalizeCustomerHighlights(
+        sourceConfig.customerHighlights,
+      ),
+      complimentsAndQuestionsContact: String(
+        sourceConfig.complimentsAndQuestionsContact || "",
+      ).trim(),
       catalog: normalizeCatalog(sourceConfig.catalog),
     }),
     [],
@@ -12447,6 +13087,13 @@ function AdminSettings({ showToast, storeSettings }) {
           catalog: normalizeCatalog(storeSettings.catalog),
           socialLinks: normalizeSocialLinks(storeSettings.socialLinks),
           contactPhones: normalizePhoneList(storeSettings.contactPhones),
+          faqItems: normalizeFaqItems(storeSettings.faqItems),
+          customerHighlights: normalizeCustomerHighlights(
+            storeSettings.customerHighlights,
+          ),
+          complimentsAndQuestionsContact: String(
+            storeSettings.complimentsAndQuestionsContact || "",
+          ).trim(),
           storeAddress: normalizeStoreAddress(storeSettings.storeAddress),
           shipping: storeSettings.shipping || {
             pickupEnabled: true,
@@ -12574,6 +13221,63 @@ function AdminSettings({ showToast, storeSettings }) {
       ...config,
       shipping: { ...config.shipping, localCities: updatedCities },
     });
+  };
+
+  const handleAddFaq = () => {
+    const question = String(newFaq.question || "").trim();
+    const answer = String(newFaq.answer || "").trim();
+
+    if (!question || !answer) {
+      showToast("Preencha pergunta e resposta do FAQ", "error");
+      return;
+    }
+
+    setConfig((prev) => ({
+      ...prev,
+      faqItems: [...normalizeFaqItems(prev.faqItems), { question, answer }],
+    }));
+    setNewFaq({ question: "", answer: "" });
+  };
+
+  const handleRemoveFaq = (index) => {
+    setConfig((prev) => ({
+      ...prev,
+      faqItems: normalizeFaqItems(prev.faqItems).filter(
+        (_, idx) => idx !== index,
+      ),
+    }));
+  };
+
+  const handleAddCustomerHighlight = () => {
+    const author = String(newCustomerHighlight.author || "").trim();
+    const text = String(newCustomerHighlight.text || "").trim();
+    const stars = Math.max(
+      1,
+      Math.min(5, Math.round(Number(newCustomerHighlight.stars) || 5)),
+    );
+
+    if (!author || !text) {
+      showToast("Preencha nome e comentário do cliente", "error");
+      return;
+    }
+
+    setConfig((prev) => ({
+      ...prev,
+      customerHighlights: [
+        ...normalizeCustomerHighlights(prev.customerHighlights),
+        { author, stars, text },
+      ],
+    }));
+    setNewCustomerHighlight({ author: "", stars: 5, text: "" });
+  };
+
+  const handleRemoveCustomerHighlight = (index) => {
+    setConfig((prev) => ({
+      ...prev,
+      customerHighlights: normalizeCustomerHighlights(
+        prev.customerHighlights,
+      ).filter((_, idx) => idx !== index),
+    }));
   };
 
   const handleStoreAddressCepChange = async (value) => {
@@ -13847,6 +14551,27 @@ function AdminSettings({ showToast, storeSettings }) {
                 Esses telefones aparecerão no rodapé da loja.
               </p>
             </div>
+
+            <div>
+              <label className="block text-sm font-bold mb-2 text-slate-700">
+                Canal de dúvidas e elogios (WhatsApp, e-mail ou link)
+              </label>
+              <input
+                type="text"
+                value={config.complimentsAndQuestionsContact || ""}
+                onChange={(e) =>
+                  setConfig({
+                    ...config,
+                    complimentsAndQuestionsContact: e.target.value,
+                  })
+                }
+                placeholder="11999999999 ou contato@loja.com"
+                className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+              />
+              <p className="text-xs text-slate-500 mt-1">
+                Exibe o botão "Enviar dúvida/elogios" no FAQ do rodapé.
+              </p>
+            </div>
           </div>
 
           <div className="space-y-4">
@@ -13956,6 +14681,166 @@ function AdminSettings({ showToast, storeSettings }) {
                 placeholder="@minhaloja"
                 className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
               />
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          <div className="space-y-4 border rounded-xl p-4 bg-slate-50">
+            <h4 className="font-bold text-slate-700">FAQ do Rodapé</h4>
+            <div className="space-y-3">
+              <input
+                type="text"
+                value={newFaq.question}
+                onChange={(e) =>
+                  setNewFaq((prev) => ({ ...prev, question: e.target.value }))
+                }
+                placeholder="Pergunta"
+                className="w-full p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+              <textarea
+                rows={3}
+                value={newFaq.answer}
+                onChange={(e) =>
+                  setNewFaq((prev) => ({ ...prev, answer: e.target.value }))
+                }
+                placeholder="Resposta"
+                className="w-full p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+              <button
+                type="button"
+                onClick={handleAddFaq}
+                className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold"
+              >
+                Adicionar FAQ
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              {normalizeFaqItems(config.faqItems).length === 0 ? (
+                <p className="text-xs text-slate-500">
+                  Nenhuma pergunta configurada. O FAQ não será exibido no
+                  rodapé.
+                </p>
+              ) : (
+                normalizeFaqItems(config.faqItems).map((item, index) => (
+                  <div
+                    key={`${item.question}-${index}`}
+                    className="rounded-lg border bg-white p-3"
+                  >
+                    <p className="text-sm font-semibold text-slate-700">
+                      {item.question}
+                    </p>
+                    <p className="text-xs text-slate-600 mt-1">{item.answer}</p>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveFaq(index)}
+                      className="mt-2 text-xs font-bold text-rose-600 hover:text-rose-700"
+                    >
+                      Remover
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          <div className="space-y-4 border rounded-xl p-4 bg-slate-50">
+            <h4 className="font-bold text-slate-700">Avaliações de Clientes</h4>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <input
+                type="text"
+                value={newCustomerHighlight.author}
+                onChange={(e) =>
+                  setNewCustomerHighlight((prev) => ({
+                    ...prev,
+                    author: e.target.value,
+                  }))
+                }
+                placeholder="Nome do cliente"
+                className="w-full p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-indigo-500 sm:col-span-2"
+              />
+              <input
+                type="number"
+                min="1"
+                max="5"
+                value={newCustomerHighlight.stars}
+                onChange={(e) =>
+                  setNewCustomerHighlight((prev) => ({
+                    ...prev,
+                    stars: e.target.value,
+                  }))
+                }
+                className="w-full p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+              <span className="text-xs text-slate-500 self-center">
+                Nota de 1 a 5
+              </span>
+              <textarea
+                rows={3}
+                value={newCustomerHighlight.text}
+                onChange={(e) =>
+                  setNewCustomerHighlight((prev) => ({
+                    ...prev,
+                    text: e.target.value,
+                  }))
+                }
+                placeholder="Comentário do cliente"
+                className="w-full p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-indigo-500 sm:col-span-2"
+              />
+              <button
+                type="button"
+                onClick={handleAddCustomerHighlight}
+                className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold sm:col-span-2"
+              >
+                Adicionar Avaliação
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              {normalizeCustomerHighlights(config.customerHighlights).length ===
+              0 ? (
+                <p className="text-xs text-slate-500">
+                  Nenhuma avaliação cadastrada. A seção não será exibida no
+                  rodapé.
+                </p>
+              ) : (
+                normalizeCustomerHighlights(config.customerHighlights).map(
+                  (item, index) => (
+                    <div
+                      key={`${item.author}-${index}`}
+                      className="rounded-lg border bg-white p-3"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-sm font-semibold text-slate-700">
+                          {item.author}
+                        </p>
+                        <div className="flex items-center gap-1">
+                          {Array.from({ length: 5 }).map((_, starIndex) => (
+                            <Star
+                              key={`${item.author}-${index}-${starIndex}`}
+                              size={13}
+                              className={
+                                starIndex < item.stars
+                                  ? "fill-amber-400 text-amber-400"
+                                  : "text-slate-300"
+                              }
+                            />
+                          ))}
+                        </div>
+                      </div>
+                      <p className="text-xs text-slate-600 mt-1">{item.text}</p>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveCustomerHighlight(index)}
+                        className="mt-2 text-xs font-bold text-rose-600 hover:text-rose-700"
+                      >
+                        Remover
+                      </button>
+                    </div>
+                  ),
+                )
+              )}
             </div>
           </div>
         </div>
