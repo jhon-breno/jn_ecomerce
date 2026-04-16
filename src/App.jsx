@@ -1869,6 +1869,8 @@ function StoreFront({
     typeof window !== "undefined" ? window.innerWidth : 1280,
   );
   const hasAppliedSharedLinkRef = useRef(false);
+  const resultsAnchorRef = useRef(null);
+  const shouldScrollToResultsRef = useRef(false);
   const searchTerm = String(search || "").trim();
   const isSearchMode = searchTerm.length > 0;
 
@@ -2518,6 +2520,59 @@ function StoreFront({
     }
   };
 
+  const queueResultsScroll = useCallback(() => {
+    shouldScrollToResultsRef.current = true;
+  }, []);
+
+  const applyCategoryFilter = useCallback(
+    (category, subcategory = "Todas") => {
+      queueResultsScroll();
+      setSelectedCategory(category);
+      setSelectedSubcategory(subcategory);
+    },
+    [queueResultsScroll],
+  );
+
+  const applySubcategoryFilter = useCallback(
+    (subcategory) => {
+      queueResultsScroll();
+      setSelectedSubcategory(subcategory);
+    },
+    [queueResultsScroll],
+  );
+
+  const applySortFilter = useCallback(
+    (value) => {
+      queueResultsScroll();
+      setSortBy(value);
+    },
+    [queueResultsScroll],
+  );
+
+  const applyPriceRangeFilter = useCallback(
+    (value) => {
+      queueResultsScroll();
+      setPriceRange(value);
+    },
+    [queueResultsScroll],
+  );
+
+  const applyOnlyInStockFilter = useCallback(
+    (value) => {
+      queueResultsScroll();
+      setOnlyInStock(value);
+    },
+    [queueResultsScroll],
+  );
+
+  const applyOnlyWithVariationsFilter = useCallback(
+    (value) => {
+      queueResultsScroll();
+      setOnlyWithVariations(value);
+    },
+    [queueResultsScroll],
+  );
+
   // Adiciona ao carrinho validando o estoque
   const addToCart = (product, qty = 1) => {
     const cartItemId = product.selectedVariation
@@ -2679,6 +2734,31 @@ function StoreFront({
       setProductsPage(totalProductPages);
     }
   }, [productsPage, totalProductPages]);
+
+  useEffect(() => {
+    if (!shouldScrollToResultsRef.current || typeof window === "undefined") {
+      return;
+    }
+
+    const target = resultsAnchorRef.current;
+    shouldScrollToResultsRef.current = false;
+    if (!target) return;
+
+    window.requestAnimationFrame(() => {
+      const headerOffset = window.innerWidth >= 768 ? 190 : 150;
+      const top =
+        target.getBoundingClientRect().top + window.scrollY - headerOffset;
+      window.scrollTo({ top: Math.max(top, 0), behavior: "smooth" });
+    });
+  }, [
+    selectedCategory,
+    effectiveSubcategory,
+    sortBy,
+    priceRange,
+    onlyInStock,
+    onlyWithVariations,
+    visibleProducts.length,
+  ]);
 
   const showcaseSections = (productCatalog.sections || [])
     .map((section) => ({
@@ -2887,10 +2967,7 @@ function StoreFront({
                       {categoryMenuItems.map((item) => (
                         <div key={item.category} className="relative group">
                           <button
-                            onClick={() => {
-                              setSelectedCategory(item.category);
-                              setSelectedSubcategory("Todas");
-                            }}
+                            onClick={() => applyCategoryFilter(item.category)}
                             className={`px-2.5 py-1 rounded-full text-xs font-bold transition cursor-pointer ${
                               selectedCategory === item.category
                                 ? "bg-slate-900 text-white"
@@ -2906,10 +2983,9 @@ function StoreFront({
                                 {item.subcategories.map((sub) => (
                                   <button
                                     key={`${item.category}-${sub}`}
-                                    onClick={() => {
-                                      setSelectedCategory(item.category);
-                                      setSelectedSubcategory(sub);
-                                    }}
+                                    onClick={() =>
+                                      applyCategoryFilter(item.category, sub)
+                                    }
                                     className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition cursor-pointer ${
                                       selectedCategory === item.category &&
                                       effectiveSubcategory === sub
@@ -3134,10 +3210,7 @@ function StoreFront({
                     {categories.map((cat) => (
                       <button
                         key={cat}
-                        onClick={() => {
-                          setSelectedCategory(cat);
-                          setSelectedSubcategory("Todas");
-                        }}
+                        onClick={() => applyCategoryFilter(cat)}
                         className={`px-4 py-2 rounded-full text-sm font-bold transition-all ${
                           selectedCategory === cat
                             ? "bg-slate-900 text-white shadow-md"
@@ -3160,7 +3233,7 @@ function StoreFront({
                     {subcategories.map((sub) => (
                       <button
                         key={sub}
-                        onClick={() => setSelectedSubcategory(sub)}
+                        onClick={() => applySubcategoryFilter(sub)}
                         className={`px-3.5 py-1.5 rounded-full text-xs md:text-sm font-bold transition-all cursor-pointer ${
                           effectiveSubcategory === sub
                             ? "bg-amber-500 text-white shadow"
@@ -3181,7 +3254,7 @@ function StoreFront({
                   </label>
                   <select
                     value={sortBy}
-                    onChange={(e) => setSortBy(e.target.value)}
+                    onChange={(e) => applySortFilter(e.target.value)}
                     className="w-full p-2.5 border border-slate-200 rounded-xl bg-white font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-indigo-400"
                   >
                     <option value="relevancia">Mais relevantes</option>
@@ -3197,7 +3270,7 @@ function StoreFront({
                   </label>
                   <select
                     value={priceRange}
-                    onChange={(e) => setPriceRange(e.target.value)}
+                    onChange={(e) => applyPriceRangeFilter(e.target.value)}
                     className="w-full p-2.5 border border-slate-200 rounded-xl bg-white font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-indigo-400"
                   >
                     <option value="todos">Todos os valores</option>
@@ -3213,7 +3286,7 @@ function StoreFront({
                     <input
                       type="checkbox"
                       checked={onlyInStock}
-                      onChange={(e) => setOnlyInStock(e.target.checked)}
+                      onChange={(e) => applyOnlyInStockFilter(e.target.checked)}
                       className="w-4 h-4 rounded border-slate-300 text-indigo-600"
                     />
                     Somente em estoque
@@ -3222,7 +3295,9 @@ function StoreFront({
                     <input
                       type="checkbox"
                       checked={onlyWithVariations}
-                      onChange={(e) => setOnlyWithVariations(e.target.checked)}
+                      onChange={(e) =>
+                        applyOnlyWithVariationsFilter(e.target.checked)
+                      }
                       className="w-4 h-4 rounded border-slate-300 text-indigo-600"
                     />
                     Com variações
@@ -3232,6 +3307,8 @@ function StoreFront({
             </div>
           </div>
         )}
+
+        <div ref={resultsAnchorRef} />
 
         {visibleProducts.length === 0 ? (
           <div className="text-center py-24 bg-white/50 backdrop-blur rounded-3xl border border-slate-200/50 shadow-sm mt-8 max-w-2xl mx-auto">
