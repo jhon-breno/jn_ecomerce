@@ -612,15 +612,71 @@ const stripInlineBase64Images = (html) =>
   String(html || "").replace(/<img[^>]+src=["']data:[^"']+["'][^>]*>/gi, "");
 
 const buildSizeTableHtmlFromText = (value) => {
-  const text = String(value || "")
-    .replace(/\u00A0/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  const raw = String(value || "").replace(/\u00A0/g, " ");
+  const lines = raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  // Accepts textual tables like: "Coluna A | Coluna B | Coluna C"
+  if (lines.length > 1 && lines.some((line) => line.includes("|"))) {
+    const parsedRows = lines
+      .filter((line) => !/^\|?\s*[-:]+(?:\s*\|\s*[-:]+)+\s*\|?$/.test(line))
+      .map((line) =>
+        line
+          .split("|")
+          .map((cell) => cell.trim())
+          .filter((cell, index, all) => {
+            if (all.length <= 1) return Boolean(cell);
+            const isEdge = index === 0 || index === all.length - 1;
+            return isEdge ? true : true;
+          }),
+      )
+      .map((cells) => {
+        if (
+          cells.length >= 2 &&
+          cells[0] === "" &&
+          cells[cells.length - 1] === ""
+        ) {
+          return cells.slice(1, -1);
+        }
+        return cells;
+      })
+      .map((cells) => cells.map((cell) => cell.trim()))
+      .filter((cells) => cells.some(Boolean));
+
+    if (parsedRows.length >= 2) {
+      const maxCols = Math.max(...parsedRows.map((row) => row.length));
+      const headerRow = parsedRows[0];
+      const dataRows = parsedRows.slice(1);
+      const headers = Array.from({ length: maxCols }, (_, index) => {
+        const label = String(headerRow[index] || "").trim();
+        return label || `Coluna ${index + 1}`;
+      });
+
+      const thead = `<thead><tr>${headers
+        .map((header) => `<th>${escapeHtml(header)}</th>`)
+        .join("")}</tr></thead>`;
+
+      const tbody = `<tbody>${dataRows
+        .map((row) => {
+          const cells = Array.from({ length: maxCols }, (_, index) =>
+            escapeHtml(String(row[index] || "").trim()),
+          );
+          return `<tr>${cells.map((cell) => `<td>${cell}</td>`).join("")}</tr>`;
+        })
+        .join("")}</tbody>`;
+
+      return `<table>${thead}${tbody}</table>`;
+    }
+  }
+
+  const text = raw.replace(/\s+/g, " ").trim();
 
   if (!text) return "";
 
   const rowRegex =
-    /((?:\d?\s*XL|[SPMLG])\s*\([^)]+\))\s*(\d{2,3}\s*cm)\s*(\d{2,3}\s*cm)/gi;
+    /((?:\d?\s*XL|[SPMLG])\s*\([^)]+\))\s*(\d{2,3}(?:\s*-\s*\d{2,3})?\s*cm)\s*(\d{2,3}(?:\s*-\s*\d{2,3})?\s*cm)/gi;
   const rows = [];
   let match = rowRegex.exec(text);
   while (match) {
@@ -659,21 +715,28 @@ const buildSizeTableTextFromHtml = (value) => {
   try {
     const wrapper = document.createElement("div");
     wrapper.innerHTML = html;
+    const headers = Array.from(wrapper.querySelectorAll("thead th"))
+      .map((cell) => cell.textContent?.replace(/\s+/g, " ").trim() || "")
+      .filter(Boolean);
     const rows = Array.from(wrapper.querySelectorAll("tbody tr"));
 
     if (rows.length === 0) {
       return wrapper.textContent?.replace(/\s+/g, " ").trim() || "";
     }
 
-    return rows
+    const contentLines = rows
       .map((row) =>
         Array.from(row.querySelectorAll("td"))
           .map((cell) => cell.textContent?.replace(/\s+/g, " ").trim() || "")
-          .filter(Boolean)
-          .join(" "),
+          .join(" | "),
       )
-      .filter(Boolean)
-      .join("\n");
+      .filter((line) => line.replace(/\|/g, "").trim().length > 0);
+
+    if (headers.length > 0) {
+      return [headers.join(" | "), ...contentLines].join("\n");
+    }
+
+    return contentLines.join("\n");
   } catch (error) {
     return html
       .replace(/<[^>]+>/g, " ")
