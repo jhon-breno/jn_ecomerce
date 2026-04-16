@@ -1346,6 +1346,9 @@ export default function App() {
   const [storeSettings, setStoreSettings] = useState({
     storeName: "NovaLoja",
     storeTagline: "",
+    heroTitle: "Seu Estilo, Sua Vitrine",
+    heroDescription:
+      "Filtros rapidos, categorias inteligentes e colecoes em destaque para facilitar a compra no celular e no desktop.",
     logo: "",
     banners: [],
     announcementMessages: [],
@@ -2025,6 +2028,12 @@ function StoreFront({
       short: "TT",
     },
   ].filter((item) => item.href);
+
+  const heroTitle =
+    String(storeSettings?.heroTitle || "").trim() || "Seu Estilo, Sua Vitrine";
+  const heroDescription =
+    String(storeSettings?.heroDescription || "").trim() ||
+    "Filtros rapidos, categorias inteligentes e colecoes em destaque para facilitar a compra no celular e no desktop.";
 
   const trackProductInterest = useCallback(
     async (product) => {
@@ -3169,11 +3178,10 @@ function StoreFront({
             <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-10"></div>
             <div className="relative z-10">
               <h2 className="text-3xl md:text-5xl font-black mb-3 tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white to-amber-100 drop-shadow-2xl">
-                Seu Estilo, Sua Vitrine
+                {heroTitle}
               </h2>
               <p className="text-sm md:text-base text-slate-200 max-w-2xl mx-auto">
-                Filtros rapidos, categorias inteligentes e colecoes em destaque
-                para facilitar a compra no celular e no desktop.
+                {heroDescription}
               </p>
             </div>
           </div>
@@ -14553,6 +14561,9 @@ function AdminSettings({ showToast, storeSettings }) {
   const [config, setConfig] = useState({
     storeName: "",
     storeTagline: "",
+    heroTitle: "Seu Estilo, Sua Vitrine",
+    heroDescription:
+      "Filtros rapidos, categorias inteligentes e colecoes em destaque para facilitar a compra no celular e no desktop.",
     logo: "",
     banners: [],
     announcementMessages: [],
@@ -15432,6 +15443,40 @@ function AdminSettings({ showToast, storeSettings }) {
               />
               <p className="text-xs text-slate-500 mt-1">
                 Deixe vazio para não exibir nenhuma frase abaixo do nome.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-bold mb-2 text-slate-700">
+                Título da Hero Section
+              </label>
+              <input
+                type="text"
+                value={config.heroTitle || ""}
+                onChange={(e) =>
+                  setConfig({ ...config, heroTitle: e.target.value })
+                }
+                placeholder="Ex: Seu Estilo, Sua Vitrine"
+                className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-bold mb-2 text-slate-700">
+                Descrição da Hero Section
+              </label>
+              <textarea
+                rows={3}
+                value={config.heroDescription || ""}
+                onChange={(e) =>
+                  setConfig({ ...config, heroDescription: e.target.value })
+                }
+                placeholder="Ex: Filtros rápidos, categorias inteligentes e coleções em destaque..."
+                className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+              />
+              <p className="text-xs text-slate-500 mt-1">
+                Esses textos aparecem no destaque principal logo abaixo dos
+                banners da loja.
               </p>
             </div>
 
