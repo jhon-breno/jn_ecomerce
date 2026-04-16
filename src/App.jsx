@@ -3926,6 +3926,9 @@ function CustomerAccountModal({
   showToast,
 }) {
   const [isSaving, setIsSaving] = useState(false);
+  const [addresses, setAddresses] = useState([]);
+  const [isSavingAddress, setIsSavingAddress] = useState(false);
+  const [isDeletingAddressId, setIsDeletingAddressId] = useState("");
   const [processingOrderId, setProcessingOrderId] = useState(null);
   const [paymentModalOrder, setPaymentModalOrder] = useState(null);
   const [retryPaymentMethod, setRetryPaymentMethod] = useState("");
@@ -3943,6 +3946,31 @@ function CustomerAccountModal({
     phone: "",
     email: "",
   });
+  const [newAddress, setNewAddress] = useState({
+    cep: "",
+    rua: "",
+    numero: "",
+    complemento: "",
+    bairro: "",
+    cidade: "",
+    estado: "",
+    recebedorNome: "",
+    recebedorTelefone: "",
+  });
+  const [editingAddressId, setEditingAddressId] = useState("");
+  const [editAddressDraft, setEditAddressDraft] = useState({
+    cep: "",
+    rua: "",
+    numero: "",
+    complemento: "",
+    bairro: "",
+    cidade: "",
+    estado: "",
+    recebedorNome: "",
+    recebedorTelefone: "",
+  });
+  const [isUpdatingAddress, setIsUpdatingAddress] = useState(false);
+  const [isSettingPrimaryId, setIsSettingPrimaryId] = useState("");
 
   useEffect(() => {
     setFormData({
@@ -3952,6 +3980,252 @@ function CustomerAccountModal({
       email: user?.email || userProfile?.email || "",
     });
   }, [userProfile, user]);
+
+  useEffect(() => {
+    if (!user?.uid) return;
+
+    const unsub = onSnapshot(
+      collection(db, "artifacts", appId, "users", user.uid, "addresses"),
+      (snap) => {
+        setAddresses(
+          snap.docs.map((addressDoc) => ({
+            id: addressDoc.id,
+            ...addressDoc.data(),
+          })),
+        );
+      },
+      (error) => console.error("Erro ao carregar endereços da conta:", error),
+    );
+
+    return () => unsub();
+  }, [user?.uid]);
+
+  const handleAccountCepChange = async (e) => {
+    const rawCep = e.target.value;
+    const maskedCep = maskCEP(rawCep);
+    setNewAddress((prev) => ({ ...prev, cep: maskedCep }));
+
+    const cleanCep = maskedCep.replace(/\D/g, "");
+    if (cleanCep.length !== 8) return;
+
+    try {
+      const res = await fetch(`https://viacep.com.br/ws/${cleanCep}/json/`);
+      const data = await res.json();
+      if (!data.erro) {
+        setNewAddress((prev) => ({
+          ...prev,
+          rua: data.logradouro || prev.rua,
+          bairro: data.bairro || prev.bairro,
+          cidade: data.localidade || prev.cidade,
+          estado: data.uf || prev.estado,
+        }));
+        showToast("Endereço preenchido via CEP", "success");
+      } else {
+        showToast("CEP não localizado", "error");
+      }
+    } catch (error) {
+      console.error("Erro ao buscar CEP da conta:", error);
+    }
+  };
+
+  const saveAccountAddress = async (e) => {
+    e.preventDefault();
+
+    if (newAddress.cep.replace(/\D/g, "").length !== 8) {
+      return showToast("Digite um CEP válido com 8 dígitos", "error");
+    }
+
+    if (newAddress.recebedorTelefone.replace(/\D/g, "").length < 10) {
+      return showToast("Digite um telefone válido", "error");
+    }
+
+    setIsSavingAddress(true);
+    try {
+      const hasSavedAddress = (addresses || []).length > 0;
+      await addDoc(
+        collection(db, "artifacts", appId, "users", user.uid, "addresses"),
+        {
+          ...newAddress,
+          isPrimary: !hasSavedAddress,
+        },
+      );
+
+      setNewAddress({
+        cep: "",
+        rua: "",
+        numero: "",
+        complemento: "",
+        bairro: "",
+        cidade: "",
+        estado: "",
+        recebedorNome: "",
+        recebedorTelefone: "",
+      });
+      showToast("Endereço salvo com sucesso!");
+    } catch (error) {
+      console.error("Erro ao salvar endereço da conta:", error);
+      showToast("Erro ao salvar endereço", "error");
+    } finally {
+      setIsSavingAddress(false);
+    }
+  };
+
+  const deleteAccountAddress = async (addressId) => {
+    if (!user?.uid || !addressId) return;
+
+    if ((addresses || []).length <= 1) {
+      showToast(
+        "Cadastre outro endereço antes de excluir o único salvo.",
+        "error",
+      );
+      return;
+    }
+
+    setIsDeletingAddressId(addressId);
+    try {
+      const addressToDelete = (addresses || []).find(
+        (item) => item.id === addressId,
+      );
+      const remainingAddresses = (addresses || []).filter(
+        (item) => item.id !== addressId,
+      );
+
+      await deleteDoc(
+        doc(db, "artifacts", appId, "users", user.uid, "addresses", addressId),
+      );
+
+      if (
+        addressToDelete?.isPrimary === true &&
+        remainingAddresses.length > 0
+      ) {
+        await updateDoc(
+          doc(
+            db,
+            "artifacts",
+            appId,
+            "users",
+            user.uid,
+            "addresses",
+            remainingAddresses[0].id,
+          ),
+          { isPrimary: true },
+        );
+      }
+
+      showToast("Endereço excluído com sucesso!");
+    } catch (error) {
+      console.error("Erro ao excluir endereço da conta:", error);
+      showToast("Erro ao excluir endereço", "error");
+    } finally {
+      setIsDeletingAddressId("");
+    }
+  };
+
+  const setAddressAsPrimary = async (addressId) => {
+    if (!user?.uid || !addressId) return;
+
+    const currentAddresses = Array.isArray(addresses) ? addresses : [];
+    const alreadyPrimary = currentAddresses.some(
+      (item) => item.id === addressId && item.isPrimary === true,
+    );
+
+    if (alreadyPrimary) return;
+
+    setIsSettingPrimaryId(addressId);
+    try {
+      await Promise.all(
+        currentAddresses.map((item) =>
+          updateDoc(
+            doc(
+              db,
+              "artifacts",
+              appId,
+              "users",
+              user.uid,
+              "addresses",
+              item.id,
+            ),
+            { isPrimary: item.id === addressId },
+          ),
+        ),
+      );
+      showToast("Endereço principal atualizado!");
+    } catch (error) {
+      console.error("Erro ao definir endereço principal:", error);
+      showToast("Erro ao definir endereço principal", "error");
+    } finally {
+      setIsSettingPrimaryId("");
+    }
+  };
+
+  const startEditAddress = (address) => {
+    if (!address?.id) return;
+
+    setEditingAddressId(address.id);
+    setEditAddressDraft({
+      cep: String(address.cep || ""),
+      rua: String(address.rua || ""),
+      numero: String(address.numero || ""),
+      complemento: String(address.complemento || ""),
+      bairro: String(address.bairro || ""),
+      cidade: String(address.cidade || ""),
+      estado: String(address.estado || ""),
+      recebedorNome: String(address.recebedorNome || ""),
+      recebedorTelefone: String(address.recebedorTelefone || ""),
+    });
+  };
+
+  const cancelEditAddress = () => {
+    setEditingAddressId("");
+    setEditAddressDraft({
+      cep: "",
+      rua: "",
+      numero: "",
+      complemento: "",
+      bairro: "",
+      cidade: "",
+      estado: "",
+      recebedorNome: "",
+      recebedorTelefone: "",
+    });
+  };
+
+  const saveEditedAddress = async (addressId) => {
+    if (!user?.uid || !addressId) return;
+
+    if (String(editAddressDraft.cep || "").replace(/\D/g, "").length !== 8) {
+      return showToast("Digite um CEP válido com 8 dígitos", "error");
+    }
+
+    if (
+      String(editAddressDraft.recebedorTelefone || "").replace(/\D/g, "")
+        .length < 10
+    ) {
+      return showToast("Digite um telefone válido", "error");
+    }
+
+    setIsUpdatingAddress(true);
+    try {
+      await updateDoc(
+        doc(db, "artifacts", appId, "users", user.uid, "addresses", addressId),
+        {
+          ...editAddressDraft,
+          estado: String(editAddressDraft.estado || "")
+            .trim()
+            .toUpperCase(),
+          recebedorTelefone: maskPhone(editAddressDraft.recebedorTelefone),
+        },
+      );
+
+      cancelEditAddress();
+      showToast("Endereço atualizado com sucesso!");
+    } catch (error) {
+      console.error("Erro ao atualizar endereço da conta:", error);
+      showToast("Erro ao atualizar endereço", "error");
+    } finally {
+      setIsUpdatingAddress(false);
+    }
+  };
 
   const pickupMapUrl = resolvePickupMapUrl(storeSettings?.pickupMapUrl);
   const pickupStoreAddress = normalizeStoreAddress(storeSettings?.storeAddress);
@@ -4500,8 +4774,8 @@ function CustomerAccountModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 sm:p-6 bg-slate-900/60 backdrop-blur-sm overflow-y-auto print:hidden">
-      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-5xl overflow-hidden animate-slide-up border border-slate-100">
+    <div className="fixed inset-0 z-[80] flex items-start sm:items-center justify-center p-2 sm:p-6 bg-slate-900/60 backdrop-blur-sm overflow-hidden print:hidden">
+      <div className="bg-white rounded-2xl sm:rounded-3xl shadow-2xl w-full max-w-5xl max-h-[calc(100vh-1rem)] sm:max-h-[90vh] overflow-hidden animate-slide-up border border-slate-100 flex flex-col">
         <div className="p-5 md:p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50">
           <h2 className="text-xl md:text-2xl font-black text-slate-800">
             Minha Conta
@@ -4514,79 +4788,453 @@ function CustomerAccountModal({
           </button>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-0">
-          <div className="p-5 md:p-6 border-b lg:border-b-0 lg:border-r border-slate-100">
-            <h3 className="font-bold text-slate-800 mb-4">Meus Dados</h3>
-            <form onSubmit={saveProfile} className="space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-0 flex-1 overflow-y-auto">
+          <div className="p-5 md:p-6 border-b lg:border-b-0 lg:border-r border-slate-100 space-y-8">
+            <div>
+              <h3 className="font-bold text-slate-800 mb-4">Meus Dados</h3>
+              <form onSubmit={saveProfile} className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider">
+                      Nome
+                    </label>
+                    <input
+                      value={formData.firstName}
+                      onChange={(e) =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          firstName: e.target.value,
+                        }))
+                      }
+                      className="w-full p-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider">
+                      Sobrenome
+                    </label>
+                    <input
+                      value={formData.lastName}
+                      onChange={(e) =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          lastName: e.target.value,
+                        }))
+                      }
+                      className="w-full p-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
+                </div>
+
                 <div>
                   <label className="block text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider">
-                    Nome
+                    Telefone
                   </label>
                   <input
-                    value={formData.firstName}
+                    value={formData.phone}
                     onChange={(e) =>
                       setFormData((prev) => ({
                         ...prev,
-                        firstName: e.target.value,
+                        phone: maskPhone(e.target.value),
                       }))
                     }
+                    maxLength={15}
                     className="w-full p-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
                   />
                 </div>
+
                 <div>
                   <label className="block text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider">
-                    Sobrenome
+                    E-mail
                   </label>
                   <input
-                    value={formData.lastName}
-                    onChange={(e) =>
-                      setFormData((prev) => ({
-                        ...prev,
-                        lastName: e.target.value,
-                      }))
-                    }
-                    className="w-full p-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
+                    value={formData.email}
+                    disabled
+                    className="w-full p-3 border border-slate-200 rounded-xl bg-slate-100 text-slate-500"
                   />
                 </div>
+
+                <button
+                  type="submit"
+                  disabled={isSaving}
+                  className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white py-3 rounded-xl font-bold transition"
+                >
+                  {isSaving ? "Salvando..." : "Salvar Dados"}
+                </button>
+              </form>
+            </div>
+
+            <div className="space-y-4">
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="font-bold text-slate-800">Meus Endereços</h3>
+                <span className="text-xs font-bold text-slate-500 bg-slate-100 px-2.5 py-1 rounded-full">
+                  {addresses.length} salvo(s)
+                </span>
               </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider">
-                  Telefone
-                </label>
-                <input
-                  value={formData.phone}
-                  onChange={(e) =>
-                    setFormData((prev) => ({
-                      ...prev,
-                      phone: maskPhone(e.target.value),
-                    }))
-                  }
-                  maxLength={15}
-                  className="w-full p-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
-                />
+              <div className="space-y-3 max-h-[240px] overflow-y-auto pr-1">
+                {addresses.length === 0 ? (
+                  <div className="border border-slate-200 rounded-xl p-4 text-sm text-slate-500 bg-slate-50">
+                    Você ainda não possui endereços salvos.
+                  </div>
+                ) : (
+                  addresses.map((addr) => (
+                    <div
+                      key={addr.id}
+                      className="border border-slate-200 rounded-xl p-4 bg-slate-50"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="font-semibold text-slate-800">
+                            {addr.recebedorNome || "Sem nome cadastrado"}
+                          </p>
+                          {addr.isPrimary === true && (
+                            <span className="inline-flex mt-1 px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10px] font-bold">
+                              Endereço principal
+                            </span>
+                          )}
+                          <p className="text-xs text-slate-500 mt-1">
+                            {addr.rua}, {addr.numero}
+                            {addr.complemento ? ` - ${addr.complemento}` : ""}
+                          </p>
+                          <p className="text-xs text-slate-500 mt-0.5">
+                            {addr.bairro}, {addr.cidade}/{addr.estado} • CEP:{" "}
+                            {addr.cep}
+                          </p>
+                          {addr.recebedorTelefone && (
+                            <p className="text-xs text-slate-500 mt-0.5">
+                              Contato: {addr.recebedorTelefone}
+                            </p>
+                          )}
+                        </div>
+                        <div className="flex flex-col items-end gap-1.5">
+                          {addr.isPrimary !== true && (
+                            <button
+                              type="button"
+                              onClick={() => setAddressAsPrimary(addr.id)}
+                              disabled={isSettingPrimaryId === addr.id}
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-xs font-bold transition disabled:opacity-50"
+                            >
+                              {isSettingPrimaryId === addr.id
+                                ? "Salvando..."
+                                : "Definir principal"}
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => startEditAddress(addr)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold transition"
+                          >
+                            <Edit size={13} />
+                            Editar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => deleteAccountAddress(addr.id)}
+                            disabled={isDeletingAddressId === addr.id}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold transition disabled:opacity-50"
+                          >
+                            <Trash2 size={14} />
+                            {isDeletingAddressId === addr.id
+                              ? "Excluindo..."
+                              : "Excluir"}
+                          </button>
+                        </div>
+                      </div>
+
+                      {editingAddressId === addr.id && (
+                        <div className="mt-3 pt-3 border-t border-slate-200 space-y-3">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <input
+                              placeholder="CEP"
+                              maxLength={9}
+                              value={editAddressDraft.cep}
+                              onChange={(e) =>
+                                setEditAddressDraft((prev) => ({
+                                  ...prev,
+                                  cep: maskCEP(e.target.value),
+                                }))
+                              }
+                              className="w-full p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-indigo-400"
+                            />
+                            <input
+                              placeholder="Cidade"
+                              value={editAddressDraft.cidade}
+                              onChange={(e) =>
+                                setEditAddressDraft((prev) => ({
+                                  ...prev,
+                                  cidade: e.target.value,
+                                }))
+                              }
+                              className="w-full p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-indigo-400"
+                            />
+                            <input
+                              placeholder="Estado"
+                              maxLength={2}
+                              value={editAddressDraft.estado}
+                              onChange={(e) =>
+                                setEditAddressDraft((prev) => ({
+                                  ...prev,
+                                  estado: e.target.value.toUpperCase(),
+                                }))
+                              }
+                              className="w-full p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-indigo-400"
+                            />
+                            <input
+                              placeholder="Bairro"
+                              value={editAddressDraft.bairro}
+                              onChange={(e) =>
+                                setEditAddressDraft((prev) => ({
+                                  ...prev,
+                                  bairro: e.target.value,
+                                }))
+                              }
+                              className="w-full p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-indigo-400"
+                            />
+                            <input
+                              placeholder="Rua"
+                              value={editAddressDraft.rua}
+                              onChange={(e) =>
+                                setEditAddressDraft((prev) => ({
+                                  ...prev,
+                                  rua: e.target.value,
+                                }))
+                              }
+                              className="sm:col-span-2 w-full p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-indigo-400"
+                            />
+                            <input
+                              placeholder="Número"
+                              value={editAddressDraft.numero}
+                              onChange={(e) =>
+                                setEditAddressDraft((prev) => ({
+                                  ...prev,
+                                  numero: e.target.value,
+                                }))
+                              }
+                              className="w-full p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-indigo-400"
+                            />
+                            <input
+                              placeholder="Complemento"
+                              value={editAddressDraft.complemento}
+                              onChange={(e) =>
+                                setEditAddressDraft((prev) => ({
+                                  ...prev,
+                                  complemento: e.target.value,
+                                }))
+                              }
+                              className="w-full p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-indigo-400"
+                            />
+                            <input
+                              placeholder="Recebedor"
+                              value={editAddressDraft.recebedorNome}
+                              onChange={(e) =>
+                                setEditAddressDraft((prev) => ({
+                                  ...prev,
+                                  recebedorNome: e.target.value,
+                                }))
+                              }
+                              className="w-full p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-indigo-400"
+                            />
+                            <input
+                              placeholder="Telefone"
+                              maxLength={15}
+                              value={editAddressDraft.recebedorTelefone}
+                              onChange={(e) =>
+                                setEditAddressDraft((prev) => ({
+                                  ...prev,
+                                  recebedorTelefone: maskPhone(e.target.value),
+                                }))
+                              }
+                              className="w-full p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-indigo-400"
+                            />
+                          </div>
+
+                          <div className="flex justify-end gap-2">
+                            <button
+                              type="button"
+                              onClick={cancelEditAddress}
+                              className="px-3 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold"
+                            >
+                              Cancelar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => saveEditedAddress(addr.id)}
+                              disabled={isUpdatingAddress}
+                              className="px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold disabled:bg-slate-300"
+                            >
+                              {isUpdatingAddress ? "Salvando..." : "Salvar"}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))
+                )}
               </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider">
-                  E-mail
-                </label>
-                <input
-                  value={formData.email}
-                  disabled
-                  className="w-full p-3 border border-slate-200 rounded-xl bg-slate-100 text-slate-500"
-                />
-              </div>
-
-              <button
-                type="submit"
-                disabled={isSaving}
-                className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white py-3 rounded-xl font-bold transition"
+              <form
+                onSubmit={saveAccountAddress}
+                className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-4"
               >
-                {isSaving ? "Salvando..." : "Salvar Dados"}
-              </button>
-            </form>
+                <h4 className="font-semibold text-sm border-b border-slate-200 pb-2">
+                  Adicionar Novo Endereço
+                </h4>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1">
+                      CEP
+                    </label>
+                    <input
+                      required
+                      placeholder="00000-000"
+                      value={newAddress.cep}
+                      onChange={handleAccountCepChange}
+                      maxLength={9}
+                      className="w-full p-3 border rounded-lg outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 transition-all"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1">
+                      Cidade
+                    </label>
+                    <input
+                      required
+                      value={newAddress.cidade}
+                      onChange={(e) =>
+                        setNewAddress((prev) => ({
+                          ...prev,
+                          cidade: e.target.value,
+                        }))
+                      }
+                      className="w-full p-3 border rounded-lg outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 transition-all bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1">
+                      Estado (UF)
+                    </label>
+                    <input
+                      required
+                      maxLength={2}
+                      value={newAddress.estado}
+                      onChange={(e) =>
+                        setNewAddress((prev) => ({
+                          ...prev,
+                          estado: e.target.value.toUpperCase(),
+                        }))
+                      }
+                      className="w-full p-3 border rounded-lg outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 transition-all"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1">
+                      Bairro
+                    </label>
+                    <input
+                      required
+                      value={newAddress.bairro}
+                      onChange={(e) =>
+                        setNewAddress((prev) => ({
+                          ...prev,
+                          bairro: e.target.value,
+                        }))
+                      }
+                      className="w-full p-3 border rounded-lg outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 transition-all"
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="block text-xs font-semibold text-slate-500 mb-1">
+                      Logradouro
+                    </label>
+                    <input
+                      required
+                      value={newAddress.rua}
+                      onChange={(e) =>
+                        setNewAddress((prev) => ({
+                          ...prev,
+                          rua: e.target.value,
+                        }))
+                      }
+                      className="w-full p-3 border rounded-lg outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 transition-all"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1">
+                      Número
+                    </label>
+                    <input
+                      required
+                      value={newAddress.numero}
+                      onChange={(e) =>
+                        setNewAddress((prev) => ({
+                          ...prev,
+                          numero: e.target.value,
+                        }))
+                      }
+                      className="w-full p-3 border rounded-lg outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 transition-all"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1">
+                      Complemento
+                    </label>
+                    <input
+                      value={newAddress.complemento}
+                      onChange={(e) =>
+                        setNewAddress((prev) => ({
+                          ...prev,
+                          complemento: e.target.value,
+                        }))
+                      }
+                      className="w-full p-3 border rounded-lg outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 transition-all"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1">
+                      Nome do recebedor
+                    </label>
+                    <input
+                      required
+                      value={newAddress.recebedorNome}
+                      onChange={(e) =>
+                        setNewAddress((prev) => ({
+                          ...prev,
+                          recebedorNome: e.target.value,
+                        }))
+                      }
+                      className="w-full p-3 border rounded-lg outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 transition-all"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1">
+                      Telefone
+                    </label>
+                    <input
+                      required
+                      maxLength={15}
+                      value={newAddress.recebedorTelefone}
+                      onChange={(e) =>
+                        setNewAddress((prev) => ({
+                          ...prev,
+                          recebedorTelefone: maskPhone(e.target.value),
+                        }))
+                      }
+                      className="w-full p-3 border rounded-lg outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 transition-all"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isSavingAddress}
+                  className="w-full bg-slate-900 hover:bg-slate-800 disabled:bg-slate-300 text-white py-3 rounded-xl font-bold transition"
+                >
+                  {isSavingAddress ? "Salvando..." : "Salvar Novo Endereço"}
+                </button>
+              </form>
+            </div>
           </div>
 
           <div className="p-5 md:p-6">
@@ -5450,8 +6098,37 @@ function ProductModal({ product, close, addToCart }) {
     name: "",
     number: "",
   });
+  const [
+    personalizationValidationVisible,
+    setPersonalizationValidationVisible,
+  ] = useState(false);
+  const [isPersonalizationModalOpen, setIsPersonalizationModalOpen] =
+    useState(false);
+  const [isMobilePersonalizationFlow, setIsMobilePersonalizationFlow] =
+    useState(() => {
+      if (typeof window === "undefined") return false;
+      return window.matchMedia("(max-width: 767px)").matches;
+    });
   const [qty, setQty] = useState(1);
   const [currentImgIndex, setCurrentImgIndex] = useState(0);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+
+    const media = window.matchMedia("(max-width: 767px)");
+    const syncViewport = () =>
+      setIsMobilePersonalizationFlow(Boolean(media.matches));
+
+    syncViewport();
+
+    if (typeof media.addEventListener === "function") {
+      media.addEventListener("change", syncViewport);
+      return () => media.removeEventListener("change", syncViewport);
+    }
+
+    media.addListener(syncViewport);
+    return () => media.removeListener(syncViewport);
+  }, []);
 
   const selectedVariationLabel = variationGroups
     .map((group) => {
@@ -5472,6 +6149,26 @@ function ProductModal({ product, close, addToCart }) {
     0,
     Number(product.price || 0) + personalizationPrice,
   );
+  const missingPersonalizationFields = [];
+
+  if (
+    selectedPersonalization.usePersonalization &&
+    personalization.allowName &&
+    !String(selectedPersonalization.name || "").trim()
+  ) {
+    missingPersonalizationFields.push("nome");
+  }
+
+  if (
+    selectedPersonalization.usePersonalization &&
+    personalization.allowNumber &&
+    !String(selectedPersonalization.number || "").trim()
+  ) {
+    missingPersonalizationFields.push("número");
+  }
+
+  const hasMissingPersonalizationFields =
+    missingPersonalizationFields.length > 0;
 
   const handleAdd = () => {
     const hasMissingSelection = variationGroups.some(
@@ -5480,19 +6177,14 @@ function ProductModal({ product, close, addToCart }) {
 
     if (hasMissingSelection) return;
 
-    if (
-      selectedPersonalization.usePersonalization &&
-      personalization.allowName &&
-      !String(selectedPersonalization.name || "").trim()
-    ) {
-      return;
-    }
-
-    if (
-      selectedPersonalization.usePersonalization &&
-      personalization.allowNumber &&
-      !String(selectedPersonalization.number || "").trim()
-    ) {
+    if (hasMissingPersonalizationFields) {
+      setPersonalizationValidationVisible(true);
+      if (
+        isMobilePersonalizationFlow &&
+        selectedPersonalization.usePersonalization
+      ) {
+        setIsPersonalizationModalOpen(true);
+      }
       return;
     }
 
@@ -5624,71 +6316,123 @@ function ProductModal({ product, close, addToCart }) {
                     <input
                       type="checkbox"
                       checked={selectedPersonalization.usePersonalization}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setPersonalizationValidationVisible(false);
                         setSelectedPersonalization((prev) => ({
                           ...prev,
-                          usePersonalization: e.target.checked,
-                        }))
-                      }
+                          usePersonalization: checked,
+                        }));
+
+                        if (checked && isMobilePersonalizationFlow) {
+                          setIsPersonalizationModalOpen(true);
+                        }
+
+                        if (!checked) {
+                          setIsPersonalizationModalOpen(false);
+                        }
+                      }}
                       className="w-4 h-4 rounded border-fuchsia-300 text-fuchsia-600"
                     />
                     Adicionar
                   </label>
                 </div>
 
-                {selectedPersonalization.usePersonalization && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {personalization.allowName && (
-                      <div className="sm:col-span-2">
-                        <label className="block text-xs font-black text-fuchsia-700 uppercase tracking-wider mb-1.5">
-                          Nome para estampar
-                        </label>
-                        <input
-                          type="text"
-                          maxLength={20}
-                          value={selectedPersonalization.name}
-                          onChange={(e) =>
-                            setSelectedPersonalization((prev) => ({
-                              ...prev,
-                              name: e.target.value,
-                            }))
-                          }
-                          placeholder="Ex: Breno"
-                          className="w-full p-3 border border-fuchsia-200 rounded-xl bg-white outline-none focus:ring-2 focus:ring-fuchsia-300"
-                        />
-                      </div>
-                    )}
+                {selectedPersonalization.usePersonalization &&
+                  isMobilePersonalizationFlow && (
+                    <button
+                      type="button"
+                      onClick={() => setIsPersonalizationModalOpen(true)}
+                      className="w-full rounded-xl border border-fuchsia-200 bg-white px-3 py-3 text-left"
+                    >
+                      <p className="text-xs font-black text-fuchsia-700 uppercase tracking-wider">
+                        Configurar personalização
+                      </p>
+                      <p className="text-xs text-slate-600 mt-1">
+                        Clique aqui para editar a personalização.
+                      </p>
+                      <p className="text-xs font-bold text-fuchsia-700 mt-2">
+                        Valor extra: {formatCurrencyBRL(personalization.price)}
+                      </p>
+                    </button>
+                  )}
 
-                    {personalization.allowNumber && (
-                      <div>
-                        <label className="block text-xs font-black text-fuchsia-700 uppercase tracking-wider mb-1.5">
-                          Número
-                        </label>
-                        <input
-                          type="text"
-                          maxLength={3}
-                          value={selectedPersonalization.number}
-                          onChange={(e) =>
-                            setSelectedPersonalization((prev) => ({
-                              ...prev,
-                              number: e.target.value
-                                .replace(/\D/g, "")
-                                .slice(0, 3),
-                            }))
-                          }
-                          placeholder="10"
-                          className="w-full p-3 border border-fuchsia-200 rounded-xl bg-white outline-none focus:ring-2 focus:ring-fuchsia-300"
-                        />
-                      </div>
-                    )}
+                {selectedPersonalization.usePersonalization &&
+                  !isMobilePersonalizationFlow && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {personalizationValidationVisible &&
+                        hasMissingPersonalizationFields && (
+                          <div className="sm:col-span-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-700 font-medium">
+                            Preencha {missingPersonalizationFields.join(" e ")}{" "}
+                            para continuar com a personalização.
+                          </div>
+                        )}
 
-                    {personalization.details && (
-                      <div className="sm:col-span-2 rounded-xl border border-fuchsia-100 bg-white px-3 py-2.5 text-xs text-fuchsia-700 leading-relaxed">
-                        {personalization.details}
-                      </div>
-                    )}
-                  </div>
-                )}
+                      {personalization.allowName && (
+                        <div className="sm:col-span-2">
+                          <label className="block text-xs font-black text-fuchsia-700 uppercase tracking-wider mb-1.5">
+                            Nome para estampar
+                          </label>
+                          <input
+                            type="text"
+                            maxLength={20}
+                            value={selectedPersonalization.name}
+                            onChange={(e) => {
+                              setSelectedPersonalization((prev) => ({
+                                ...prev,
+                                name: e.target.value,
+                              }));
+                              setPersonalizationValidationVisible(false);
+                            }}
+                            placeholder="Ex: Breno"
+                            className={`w-full p-3 border rounded-xl bg-white outline-none focus:ring-2 ${
+                              personalizationValidationVisible &&
+                              !String(selectedPersonalization.name || "").trim()
+                                ? "border-rose-300 focus:ring-rose-200"
+                                : "border-fuchsia-200 focus:ring-fuchsia-300"
+                            }`}
+                          />
+                        </div>
+                      )}
+
+                      {personalization.allowNumber && (
+                        <div>
+                          <label className="block text-xs font-black text-fuchsia-700 uppercase tracking-wider mb-1.5">
+                            Número
+                          </label>
+                          <input
+                            type="text"
+                            maxLength={3}
+                            value={selectedPersonalization.number}
+                            onChange={(e) => {
+                              setSelectedPersonalization((prev) => ({
+                                ...prev,
+                                number: e.target.value
+                                  .replace(/\D/g, "")
+                                  .slice(0, 3),
+                              }));
+                              setPersonalizationValidationVisible(false);
+                            }}
+                            placeholder="10"
+                            className={`w-full p-3 border rounded-xl bg-white outline-none focus:ring-2 ${
+                              personalizationValidationVisible &&
+                              !String(
+                                selectedPersonalization.number || "",
+                              ).trim()
+                                ? "border-rose-300 focus:ring-rose-200"
+                                : "border-fuchsia-200 focus:ring-fuchsia-300"
+                            }`}
+                          />
+                        </div>
+                      )}
+
+                      {personalization.details && (
+                        <div className="sm:col-span-2 rounded-xl border border-fuchsia-100 bg-white px-3 py-2.5 text-xs text-fuchsia-700 leading-relaxed">
+                          {personalization.details}
+                        </div>
+                      )}
+                    </div>
+                  )}
               </div>
             )}
 
@@ -5789,6 +6533,13 @@ function ProductModal({ product, close, addToCart }) {
               <ShoppingBag size={22} />
               {hasStock ? "Adicionar ao Carrinho" : "Produto Esgotado"}
             </button>
+            {personalizationValidationVisible &&
+              hasMissingPersonalizationFields && (
+                <p className="text-xs text-center text-rose-600 font-medium mt-2">
+                  A personalização foi marcada, mas ainda faltam campos
+                  obrigatórios.
+                </p>
+              )}
             {selectedPersonalization.usePersonalization &&
               personalizationPrice > 0 && (
                 <p className="text-xs text-center text-slate-500 mt-2">
@@ -5799,6 +6550,118 @@ function ProductModal({ product, close, addToCart }) {
           </div>
         </div>
       </div>
+
+      {isMobilePersonalizationFlow &&
+        personalization.enabled &&
+        selectedPersonalization.usePersonalization &&
+        isPersonalizationModalOpen && (
+          <div className="fixed inset-0 z-[85] flex items-center justify-center p-3 sm:p-4 bg-slate-900/70 backdrop-blur-sm">
+            <div className="w-full sm:max-w-lg bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl border border-slate-100 max-h-[88dvh] overflow-hidden flex flex-col animate-slide-up">
+              <div className="p-4 border-b border-slate-100 flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-black text-fuchsia-700 uppercase tracking-wider">
+                    Personalização
+                  </p>
+                  <h3 className="text-lg font-black text-slate-800 mt-0.5">
+                    Configure seu item
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Extra de {formatCurrencyBRL(personalization.price)} por
+                    unidade
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsPersonalizationModalOpen(false)}
+                  className="p-2 rounded-full hover:bg-slate-100"
+                  aria-label="Fechar personalização"
+                >
+                  <X size={18} className="text-slate-600" />
+                </button>
+              </div>
+
+              <div className="p-4 overflow-y-auto space-y-3">
+                {personalizationValidationVisible &&
+                  hasMissingPersonalizationFields && (
+                    <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-700 font-medium">
+                      Preencha {missingPersonalizationFields.join(" e ")} para
+                      continuar com a personalização.
+                    </div>
+                  )}
+
+                {personalization.allowName && (
+                  <div>
+                    <label className="block text-xs font-black text-fuchsia-700 uppercase tracking-wider mb-1.5">
+                      Nome para estampar
+                    </label>
+                    <input
+                      type="text"
+                      maxLength={20}
+                      value={selectedPersonalization.name}
+                      onChange={(e) => {
+                        setSelectedPersonalization((prev) => ({
+                          ...prev,
+                          name: e.target.value,
+                        }));
+                        setPersonalizationValidationVisible(false);
+                      }}
+                      placeholder="Ex: Breno"
+                      className={`w-full p-3 border rounded-xl bg-white outline-none focus:ring-2 ${
+                        personalizationValidationVisible &&
+                        !String(selectedPersonalization.name || "").trim()
+                          ? "border-rose-300 focus:ring-rose-200"
+                          : "border-fuchsia-200 focus:ring-fuchsia-300"
+                      }`}
+                    />
+                  </div>
+                )}
+
+                {personalization.allowNumber && (
+                  <div>
+                    <label className="block text-xs font-black text-fuchsia-700 uppercase tracking-wider mb-1.5">
+                      Número
+                    </label>
+                    <input
+                      type="text"
+                      maxLength={3}
+                      value={selectedPersonalization.number}
+                      onChange={(e) => {
+                        setSelectedPersonalization((prev) => ({
+                          ...prev,
+                          number: e.target.value.replace(/\D/g, "").slice(0, 3),
+                        }));
+                        setPersonalizationValidationVisible(false);
+                      }}
+                      placeholder="10"
+                      className={`w-full p-3 border rounded-xl bg-white outline-none focus:ring-2 ${
+                        personalizationValidationVisible &&
+                        !String(selectedPersonalization.number || "").trim()
+                          ? "border-rose-300 focus:ring-rose-200"
+                          : "border-fuchsia-200 focus:ring-fuchsia-300"
+                      }`}
+                    />
+                  </div>
+                )}
+
+                {personalization.details && (
+                  <div className="rounded-xl border border-fuchsia-100 bg-fuchsia-50 px-3 py-2.5 text-xs text-fuchsia-700 leading-relaxed">
+                    {personalization.details}
+                  </div>
+                )}
+              </div>
+
+              <div className="p-4 border-t border-slate-100 bg-white">
+                <button
+                  type="button"
+                  onClick={() => setIsPersonalizationModalOpen(false)}
+                  className="w-full py-3 rounded-xl bg-fuchsia-600 hover:bg-fuchsia-700 text-white font-bold"
+                >
+                  Salvar personalização
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
     </div>
   );
 }
@@ -6389,6 +7252,7 @@ function CheckoutFlow({
 }) {
   const [step, setStep] = useState(1);
   const [addresses, setAddresses] = useState([]);
+  const [isDeletingAddressId, setIsDeletingAddressId] = useState("");
   const [selectedAddress, setSelectedAddress] = useState(null);
   const [newAddress, setNewAddress] = useState({
     cep: "",
@@ -6430,7 +7294,15 @@ function CheckoutFlow({
       (snap) => {
         const data = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
         setAddresses(data);
-        if (data.length > 0 && !selectedAddress) setSelectedAddress(data[0]);
+        setSelectedAddress((prev) => {
+          const primaryAddress = data.find((item) => item?.isPrimary === true);
+
+          if (data.length === 0) return null;
+          if (!prev) return primaryAddress || data[0];
+
+          const updatedCurrent = data.find((item) => item.id === prev.id);
+          return updatedCurrent || primaryAddress || data[0];
+        });
       },
       (err) => console.error("Erro ao buscar endereços:", err),
     );
@@ -6816,11 +7688,19 @@ function CheckoutFlow({
     }
 
     try {
+      const hasSavedAddress = (addresses || []).length > 0;
       const docRef = await addDoc(
         collection(db, "artifacts", appId, "users", user.uid, "addresses"),
-        newAddress,
+        {
+          ...newAddress,
+          isPrimary: !hasSavedAddress,
+        },
       );
-      setSelectedAddress({ id: docRef.id, ...newAddress });
+      setSelectedAddress({
+        id: docRef.id,
+        ...newAddress,
+        isPrimary: !hasSavedAddress,
+      });
       setNewAddress({
         cep: "",
         rua: "",
@@ -6835,6 +7715,59 @@ function CheckoutFlow({
       showToast("Endereço salvo com sucesso!");
     } catch (error) {
       showToast("Erro ao salvar endereço", "error");
+    }
+  };
+
+  const deleteAddress = async (addressId) => {
+    if (!user?.uid || !addressId) return;
+
+    const currentAddresses = Array.isArray(addresses) ? addresses : [];
+    if (currentAddresses.length <= 1) {
+      showToast(
+        "Cadastre outro endereço antes de excluir o único salvo.",
+        "error",
+      );
+      return;
+    }
+
+    setIsDeletingAddressId(addressId);
+    try {
+      const addressToDelete = currentAddresses.find(
+        (item) => item.id === addressId,
+      );
+      const remainingAddresses = currentAddresses.filter(
+        (item) => item.id !== addressId,
+      );
+
+      await deleteDoc(
+        doc(db, "artifacts", appId, "users", user.uid, "addresses", addressId),
+      );
+
+      if (
+        addressToDelete?.isPrimary === true &&
+        remainingAddresses.length > 0
+      ) {
+        const nextPrimary = remainingAddresses[0];
+        await updateDoc(
+          doc(
+            db,
+            "artifacts",
+            appId,
+            "users",
+            user.uid,
+            "addresses",
+            nextPrimary.id,
+          ),
+          { isPrimary: true },
+        );
+      }
+
+      showToast("Endereço excluído com sucesso!");
+    } catch (error) {
+      console.error("Erro ao excluir endereço:", error);
+      showToast("Erro ao excluir endereço", "error");
+    } finally {
+      setIsDeletingAddressId("");
     }
   };
 
@@ -7188,12 +8121,34 @@ function CheckoutFlow({
                       />
                       <div className="w-full">
                         <div className="flex justify-between items-start">
-                          <p className="font-semibold text-slate-800">
-                            {addr.recebedorNome || "Sem nome cadastrado"}
-                          </p>
-                          <span className="text-xs text-slate-400 bg-slate-200 px-2 py-1 rounded">
-                            {addr.cidade}/{addr.estado}
-                          </span>
+                          <div className="pr-3">
+                            <p className="font-semibold text-slate-800">
+                              {addr.recebedorNome || "Sem nome cadastrado"}
+                            </p>
+                            {addr.isPrimary === true && (
+                              <span className="inline-flex mt-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                                Principal
+                              </span>
+                            )}
+                            <span className="inline-flex mt-1 text-xs text-slate-400 bg-slate-200 px-2 py-1 rounded">
+                              {addr.cidade}/{addr.estado}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              deleteAddress(addr.id);
+                            }}
+                            disabled={isDeletingAddressId === addr.id}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold transition disabled:opacity-50"
+                          >
+                            <Trash2 size={14} />
+                            {isDeletingAddressId === addr.id
+                              ? "Excluindo..."
+                              : "Excluir"}
+                          </button>
                         </div>
                         <p className="text-sm text-slate-600 mt-1">
                           {addr.rua}, {addr.numero}{" "}
