@@ -381,6 +381,17 @@ const normalizeSocialLinks = (value) => {
   };
 };
 
+const normalizeAnnouncementMessages = (value) => {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item || "").trim()).filter(Boolean);
+  }
+
+  return String(value || "")
+    .split(/\n|\|/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+};
+
 const normalizeFaqItems = (value) => {
   if (!Array.isArray(value)) return [];
 
@@ -1272,6 +1283,7 @@ export default function App() {
     storeTagline: "",
     logo: "",
     banners: [],
+    announcementMessages: [],
     footerDescription: "",
     faqItems: [],
     customerHighlights: [],
@@ -1702,6 +1714,15 @@ export default function App() {
           50% { transform: translateY(-3px) scale(1.035); filter: drop-shadow(0 16px 28px rgba(16, 185, 129, 0.35)); }
           100% { transform: translateY(0) scale(1); filter: drop-shadow(0 10px 16px rgba(16, 185, 129, 0.22)); }
         }
+
+        @keyframes announcement-marquee-right-to-left {
+          from { transform: translateX(0); }
+          to { transform: translateX(-50%); }
+        }
+        .announcement-marquee {
+          animation: announcement-marquee-right-to-left 16s linear infinite;
+          will-change: transform;
+        }
         
         @media print {
           @page { margin: 0; size: auto; }
@@ -1863,6 +1884,10 @@ function StoreFront({
   const contactPhones = useMemo(
     () => normalizePhoneList(storeSettings?.contactPhones),
     [storeSettings?.contactPhones],
+  );
+  const announcementMessages = useMemo(
+    () => normalizeAnnouncementMessages(storeSettings?.announcementMessages),
+    [storeSettings?.announcementMessages],
   );
   const faqItems = useMemo(
     () => normalizeFaqItems(storeSettings?.faqItems),
@@ -2801,6 +2826,31 @@ function StoreFront({
     <div className="relative min-h-[calc(100vh-36px)] bg-slate-50/50 print:hidden flex flex-col">
       {/* Header */}
       <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/90 backdrop-blur-xl shadow-sm">
+        {announcementMessages.length > 0 && (
+          <div className="relative overflow-hidden border-b border-amber-300 bg-gradient-to-r from-amber-500 via-rose-500 to-orange-500 text-white shadow-[inset_0_-1px_0_rgba(255,255,255,0.18)]">
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.22),transparent_45%)] pointer-events-none"></div>
+            <div className="flex items-center gap-3 px-3 md:px-4 py-2.5">
+              <span className="shrink-0 rounded-full bg-white/20 border border-white/30 px-2.5 py-1 text-[10px] md:text-[11px] font-black uppercase tracking-[0.24em]">
+                Avisos
+              </span>
+              <div className="relative flex-1 overflow-hidden">
+                <div className="announcement-marquee flex min-w-max items-center gap-8 whitespace-nowrap font-black text-[12px] md:text-sm tracking-wide">
+                  {[...announcementMessages, ...announcementMessages].map(
+                    (message, index) => (
+                      <span
+                        key={`${message}-${index}`}
+                        className="inline-flex items-center gap-3"
+                      >
+                        <span className="h-2 w-2 rounded-full bg-white shadow-[0_0_12px_rgba(255,255,255,0.7)]"></span>
+                        <span>{message}</span>
+                      </span>
+                    ),
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
         <div className="max-w-7xl mx-auto px-4 py-3 md:py-4 flex flex-col gap-4">
           <div className="flex justify-between items-center gap-2">
             <div className="flex items-center gap-3 min-w-0">
@@ -6103,7 +6153,7 @@ function CheckoutFlow({
   }, [selectedAddress]);
 
   // Valida e aplica cupom
-  const handleApplyCoupon = () => {
+  const handleApplyCoupon = async () => {
     setCouponError("");
     const code = String(couponCode || "")
       .trim()
@@ -6134,6 +6184,53 @@ function CheckoutFlow({
       const expiry = new Date(coupon.expiryDate);
       if (now > expiry) {
         setCouponError("Cupom expirado");
+        return;
+      }
+    }
+
+    if (coupon.firstPurchaseOnly === true) {
+      const normalizedEmail = String(user?.email || "")
+        .trim()
+        .toLowerCase();
+
+      if (!normalizedEmail) {
+        setCouponError(
+          "Este cupom exige um cliente identificado com e-mail válido",
+        );
+        return;
+      }
+
+      try {
+        const ordersSnapshot = await getDocs(
+          collection(db, "artifacts", appId, "public", "data", "orders"),
+        );
+
+        const hasPreviousOrder = ordersSnapshot.docs.some((orderDoc) => {
+          const orderData = orderDoc.data() || {};
+          const orderEmail = String(
+            orderData.customerEmailNormalized || orderData.customerEmail || "",
+          )
+            .trim()
+            .toLowerCase();
+          const orderStatus = String(orderData.status || "")
+            .trim()
+            .toLowerCase();
+
+          if (!orderEmail || orderEmail !== normalizedEmail) return false;
+          if (["cancelado", "cancelled"].includes(orderStatus)) return false;
+
+          return true;
+        });
+
+        if (hasPreviousOrder) {
+          setCouponError(
+            "Este cupom vale apenas para a primeira compra deste e-mail",
+          );
+          return;
+        }
+      } catch (error) {
+        console.error("Erro ao validar cupom de primeira compra:", error);
+        setCouponError("Não foi possível validar a primeira compra agora");
         return;
       }
     }
@@ -6565,11 +6662,15 @@ function CheckoutFlow({
         user.email?.split("@")[0] ||
         "Cliente Online";
       const customerPhone = cleanAddress.recebedorTelefone?.trim() || "N/A";
+      const normalizedCustomerEmail = String(user.email || "")
+        .trim()
+        .toLowerCase();
 
       const order = {
         type: "online",
         customerId: user.uid,
         customerEmail: user.email || "N/A",
+        customerEmailNormalized: normalizedCustomerEmail,
         customerName,
         customerPhone,
         items: cleanCart,
@@ -6581,6 +6682,7 @@ function CheckoutFlow({
           code: c.code,
           value: c.value,
           type: c.type,
+          firstPurchaseOnly: c.firstPurchaseOnly === true,
         })),
         total: finalTotal,
         address: cleanAddress,
@@ -12497,6 +12599,7 @@ function CouponManager({ coupons, showToast }) {
     minOrderValue: "",
     usageLimit: "",
     usagePerUser: "",
+    firstPurchaseOnly: false,
     expiresAt: "",
     active: true,
   });
@@ -12512,6 +12615,7 @@ function CouponManager({ coupons, showToast }) {
       minOrderValue: coupon.minOrderValue || "",
       usageLimit: coupon.usageLimit || "",
       usagePerUser: coupon.usagePerUser || "",
+      firstPurchaseOnly: coupon.firstPurchaseOnly === true,
       expiresAt: coupon.expiresAt
         ? (() => {
             const d =
@@ -12533,6 +12637,7 @@ function CouponManager({ coupons, showToast }) {
       minOrderValue: "",
       usageLimit: "",
       usagePerUser: "",
+      firstPurchaseOnly: false,
       expiresAt: "",
       active: true,
     });
@@ -12558,6 +12663,7 @@ function CouponManager({ coupons, showToast }) {
         minOrderValue: Number(form.minOrderValue) || 0,
         usageLimit: Number(form.usageLimit) || 0,
         usagePerUser: Number(form.usagePerUser) || 0,
+        firstPurchaseOnly: form.firstPurchaseOnly === true,
         expiresAt: form.expiresAt
           ? new Date(form.expiresAt + "T23:59:59").toISOString()
           : null,
@@ -12586,6 +12692,7 @@ function CouponManager({ coupons, showToast }) {
           minOrderValue: "",
           usageLimit: "",
           usagePerUser: "",
+          firstPurchaseOnly: false,
           expiresAt: "",
           active: true,
         });
@@ -12775,6 +12882,30 @@ function CouponManager({ coupons, showToast }) {
                 className="w-full p-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-300"
               />
             </div>
+            <div className="sm:col-span-2 lg:col-span-2">
+              <label className="flex items-start gap-3 p-3 border border-slate-200 rounded-xl bg-slate-50 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={form.firstPurchaseOnly === true}
+                  onChange={(e) =>
+                    setForm((p) => ({
+                      ...p,
+                      firstPurchaseOnly: e.target.checked,
+                    }))
+                  }
+                  className="mt-1 w-4 h-4 accent-indigo-600"
+                />
+                <span>
+                  <span className="block text-sm font-semibold text-slate-700">
+                    Cupom de primeira compra
+                  </span>
+                  <span className="block text-xs text-slate-500 mt-0.5">
+                    Válido apenas se o e-mail do cliente ainda não tiver pedido
+                    anterior.
+                  </span>
+                </span>
+              </label>
+            </div>
           </div>
           <div className="flex justify-end gap-2">
             {editingId && (
@@ -12849,6 +12980,13 @@ function CouponManager({ coupons, showToast }) {
                       <span className="font-mono font-black text-indigo-700 bg-indigo-50 px-2 py-1 rounded-lg text-sm">
                         {coupon.code || coupon.id}
                       </span>
+                      {coupon.firstPurchaseOnly === true && (
+                        <div className="mt-2">
+                          <span className="inline-flex items-center px-2 py-1 rounded-full bg-fuchsia-100 text-fuchsia-700 text-[11px] font-bold uppercase tracking-wide">
+                            1a compra
+                          </span>
+                        </div>
+                      )}
                     </td>
                     <td className="p-4 font-semibold text-slate-800">
                       {coupon.type === "free_shipping" ? (
@@ -12945,6 +13083,7 @@ function AdminSettings({ showToast, storeSettings }) {
     storeTagline: "",
     logo: "",
     banners: [],
+    announcementMessages: [],
     footerDescription: "",
     faqItems: [],
     customerHighlights: [],
@@ -13030,6 +13169,8 @@ function AdminSettings({ showToast, storeSettings }) {
     name: "",
     content: "",
   });
+  const [announcementMessagesDraft, setAnnouncementMessagesDraft] =
+    useState("");
   const [contactPhonesDraft, setContactPhonesDraft] = useState("");
   const [isAutoSaving, setIsAutoSaving] = useState(false);
   const lastPersistedConfigRef = useRef("");
@@ -13043,6 +13184,9 @@ function AdminSettings({ showToast, storeSettings }) {
       pixKey: String(sourceConfig.pixKey || "").trim(),
       pickupMapUrl: String(sourceConfig.pickupMapUrl || "").trim(),
       storeAddress: normalizeStoreAddress(sourceConfig.storeAddress),
+      announcementMessages: normalizeAnnouncementMessages(
+        sourceConfig.announcementMessages,
+      ),
       contactPhones: normalizePhoneList(sourceConfig.contactPhones),
       socialLinks: normalizeSocialLinks(sourceConfig.socialLinks),
       faqItems: normalizeFaqItems(sourceConfig.faqItems),
@@ -13084,6 +13228,9 @@ function AdminSettings({ showToast, storeSettings }) {
           mpPublicKey: String(
             storeSettings.mpPublicKey || DEFAULT_MP_PUBLIC_KEY,
           ).trim(),
+          announcementMessages: normalizeAnnouncementMessages(
+            storeSettings.announcementMessages,
+          ),
           catalog: normalizeCatalog(storeSettings.catalog),
           socialLinks: normalizeSocialLinks(storeSettings.socialLinks),
           contactPhones: normalizePhoneList(storeSettings.contactPhones),
@@ -13118,6 +13265,11 @@ function AdminSettings({ showToast, storeSettings }) {
       });
       setContactPhonesDraft(
         normalizePhoneList(storeSettings.contactPhones).join("\n"),
+      );
+      setAnnouncementMessagesDraft(
+        normalizeAnnouncementMessages(storeSettings.announcementMessages).join(
+          "\n",
+        ),
       );
     }
   }, [buildSettingsPayload, storeSettings]);
@@ -13808,6 +13960,32 @@ function AdminSettings({ showToast, storeSettings }) {
               />
               <p className="text-xs text-slate-500 mt-1">
                 Deixe vazio para não exibir nenhuma frase abaixo do nome.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-bold mb-2 text-slate-700">
+                Barra de anúncios do topo
+              </label>
+              <textarea
+                rows={5}
+                value={announcementMessagesDraft}
+                onChange={(e) => {
+                  const draft = e.target.value;
+                  setAnnouncementMessagesDraft(draft);
+                  setConfig((prev) => ({
+                    ...prev,
+                    announcementMessages: normalizeAnnouncementMessages(draft),
+                  }));
+                }}
+                placeholder={
+                  "Digite uma mensagem por linha\nFrete grátis acima de R$ 299\nCupom JNPRIMEIRA para novos clientes"
+                }
+                className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+              />
+              <p className="text-xs text-slate-500 mt-1">
+                A tarja só aparece no site quando houver pelo menos uma mensagem
+                cadastrada.
               </p>
             </div>
 
