@@ -1767,6 +1767,12 @@ export default function App() {
       <style>{`
         .hide-scrollbar::-webkit-scrollbar { display: none; }
         .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+        .feedback-scrollbar { scrollbar-width: thin; scrollbar-color: rgba(100, 116, 139, 0.55) transparent; }
+        .feedback-scrollbar::-webkit-scrollbar { width: 6px; }
+        .feedback-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .feedback-scrollbar::-webkit-scrollbar-thumb { background: rgba(100, 116, 139, 0.55); border-radius: 999px; }
+        .feedback-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(148, 163, 184, 0.75); }
         
         @keyframes slide-down {
           from { transform: translateY(-150%); opacity: 0; }
@@ -1908,6 +1914,7 @@ function StoreFront({
   const [isNotFoundRequestOpen, setIsNotFoundRequestOpen] = useState(false);
   const [isSubmittingNotFoundRequest, setIsSubmittingNotFoundRequest] =
     useState(false);
+  const [isFaqSectionExpanded, setIsFaqSectionExpanded] = useState(false);
   const [feedbackForm, setFeedbackForm] = useState({
     customerName: "",
     stars: 5,
@@ -3538,47 +3545,69 @@ function StoreFront({
               {hasFaqItems && (
                 <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5 md:p-6">
                   <div className="flex flex-wrap items-center justify-between gap-3">
-                    <h4 className="text-sm font-black uppercase tracking-wider text-slate-300">
-                      FAQ
-                    </h4>
-                    {complimentsAndQuestionsHref && (
-                      <a
-                        href={complimentsAndQuestionsHref}
-                        target={
-                          complimentsAndQuestionsHref.startsWith("http")
-                            ? "_blank"
-                            : undefined
-                        }
-                        rel={
-                          complimentsAndQuestionsHref.startsWith("http")
-                            ? "noreferrer"
-                            : undefined
-                        }
-                        className="inline-flex items-center gap-2 rounded-full border border-cyan-400/50 bg-cyan-500/10 px-3 py-1.5 text-xs font-black uppercase tracking-wide text-cyan-200 hover:bg-cyan-500/20"
+                    <div className="flex items-center gap-2">
+                      <h4 className="text-sm font-black uppercase tracking-wider text-slate-300">
+                        FAQ
+                      </h4>
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                        {faqItems.length} pergunta(s)
+                      </span>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      {complimentsAndQuestionsHref && (
+                        <a
+                          href={complimentsAndQuestionsHref}
+                          target={
+                            complimentsAndQuestionsHref.startsWith("http")
+                              ? "_blank"
+                              : undefined
+                          }
+                          rel={
+                            complimentsAndQuestionsHref.startsWith("http")
+                              ? "noreferrer"
+                              : undefined
+                          }
+                          className="inline-flex items-center gap-2 rounded-full border border-cyan-400/50 bg-cyan-500/10 px-3 py-1.5 text-xs font-black uppercase tracking-wide text-cyan-200 hover:bg-cyan-500/20"
+                        >
+                          <MessageCircle size={13} /> Enviar dúvida/elogios
+                        </a>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setIsFaqSectionExpanded((prev) => !prev)}
+                        className="inline-flex items-center gap-2 rounded-full border border-slate-700 bg-slate-950/70 px-3 py-1.5 text-xs font-black uppercase tracking-wide text-slate-200 hover:bg-slate-800"
                       >
-                        <MessageCircle size={13} /> Enviar dúvida/elogios
-                      </a>
-                    )}
+                        {isFaqSectionExpanded ? "Recolher FAQ" : "Ver FAQ"}
+                        <span
+                          className={`transition-transform ${isFaqSectionExpanded ? "rotate-45" : ""}`}
+                        >
+                          +
+                        </span>
+                      </button>
+                    </div>
                   </div>
 
-                  <div className="mt-4 space-y-3">
-                    {faqItems.map((faq, index) => (
-                      <details
-                        key={`${faq.question}-${index}`}
-                        className="group rounded-xl border border-slate-800 bg-slate-950/60 px-4 py-3"
-                      >
-                        <summary className="cursor-pointer list-none text-sm font-bold text-slate-100 flex items-start justify-between gap-3">
-                          <span>{faq.question}</span>
-                          <span className="text-slate-400 group-open:rotate-45 transition-transform">
-                            +
-                          </span>
-                        </summary>
-                        <p className="mt-2 text-sm leading-relaxed text-slate-400">
-                          {faq.answer}
-                        </p>
-                      </details>
-                    ))}
-                  </div>
+                  {isFaqSectionExpanded ? (
+                    <div className="feedback-scrollbar mt-4 space-y-3 max-h-[250px] overflow-y-auto pr-1">
+                      {faqItems.map((faq, index) => (
+                        <details
+                          key={`${faq.question}-${index}`}
+                          className="group rounded-xl border border-slate-800 bg-slate-950/60 px-4 py-3"
+                        >
+                          <summary className="cursor-pointer list-none text-sm font-bold text-slate-100 flex items-start justify-between gap-3">
+                            <span>{faq.question}</span>
+                            <span className="text-slate-400 group-open:rotate-45 transition-transform">
+                              +
+                            </span>
+                          </summary>
+                          <p className="mt-2 text-sm leading-relaxed text-slate-400">
+                            {faq.answer}
+                          </p>
+                        </details>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
               )}
 
@@ -3587,24 +3616,25 @@ function StoreFront({
                   <h4 className="text-sm font-black uppercase tracking-wider text-slate-300">
                     Avaliações de Clientes
                   </h4>
-                  <div className="mt-4 space-y-3">
+                  <div className="feedback-scrollbar mt-4 space-y-3 max-h-[250px] overflow-y-auto pr-1">
                     {mergedCustomerHighlights.map((item, index) => (
                       <article
                         key={`${item.author}-${index}`}
-                        className="rounded-xl border border-slate-800 bg-slate-950/60 p-4"
+                        className="rounded-xl border border-slate-700 bg-[#06080f] p-4 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.03)]"
                       >
-                        <div className="flex items-center justify-between gap-3">
-                          <strong className="text-sm text-white">
-                            {item.author}
-                          </strong>
+                        <p className="text-sm leading-relaxed text-slate-100 italic">
+                          "{item.text}"
+                        </p>
+                        <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-slate-300">
+                          <span className="font-semibold">- {item.author}</span>
                           <div
-                            className="flex items-center gap-1"
+                            className="flex items-center gap-0.5"
                             aria-label={`${item.stars} estrelas`}
                           >
                             {Array.from({ length: 5 }).map((_, starIndex) => (
                               <Star
                                 key={`${item.author}-${index}-${starIndex}`}
-                                size={14}
+                                size={13}
                                 className={
                                   starIndex < item.stars
                                     ? "fill-amber-400 text-amber-400"
@@ -3614,9 +3644,6 @@ function StoreFront({
                             ))}
                           </div>
                         </div>
-                        <p className="mt-2 text-sm leading-relaxed text-slate-300">
-                          {item.text}
-                        </p>
                       </article>
                     ))}
                   </div>
