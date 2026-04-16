@@ -1076,6 +1076,65 @@ const getDiscountMeta = (product) => {
   return { priceTag, discountPct };
 };
 
+const normalizeProductPersonalization = (product) => {
+  const base =
+    product?.personalization && typeof product.personalization === "object"
+      ? product.personalization
+      : {};
+  const price = Number(base.price);
+
+  return {
+    enabled: Boolean(base.enabled),
+    allowName: Boolean(base.allowName),
+    allowNumber: Boolean(base.allowNumber),
+    details: String(base.details || "").trim(),
+    price: Number.isFinite(price) && price > 0 ? price : 0,
+  };
+};
+
+const normalizeSelectedPersonalization = (value) => {
+  const base = value && typeof value === "object" ? value : {};
+  return {
+    usePersonalization: Boolean(base.usePersonalization),
+    name: String(base.name || "").trim(),
+    number: String(base.number || "").trim(),
+  };
+};
+
+const getSelectedPersonalizationLabel = (value) => {
+  const personalization = normalizeSelectedPersonalization(value);
+  if (!personalization.usePersonalization) return "";
+
+  const parts = [];
+  if (personalization.name) {
+    parts.push(`Nome: ${personalization.name}`);
+  }
+  if (personalization.number) {
+    parts.push(`Número: ${personalization.number}`);
+  }
+
+  return parts.join(" | ");
+};
+
+const getCartItemUnitPrice = (item) => Math.max(0, Number(item?.price || 0));
+
+const getCartItemTotalPrice = (item) =>
+  getCartItemUnitPrice(item) * Math.max(1, Number(item?.qty || 1));
+
+const getCartItemPersonalizationPrice = (item) =>
+  Math.max(0, Number(item?.personalizationPrice || 0));
+
+const buildCartItemId = (item) => {
+  const variation = String(item?.selectedVariation || "").trim();
+  const personalizationLabel = getSelectedPersonalizationLabel(
+    item?.selectedPersonalization,
+  );
+
+  return [String(item?.id || "").trim(), variation, personalizationLabel]
+    .filter(Boolean)
+    .join("-");
+};
+
 const formatCurrencyBRL = (value) =>
   Number(value || 0).toLocaleString("pt-BR", {
     style: "currency",
@@ -1094,6 +1153,7 @@ function StoreProductCard({
   const { priceTag, discountPct } = getDiscountMeta(product);
   const pickupAvailable = isProductPickupEligible(product);
   const hasVariations = getProductVariationGroups(product).length > 0;
+  const personalization = normalizeProductPersonalization(product);
   const descriptionPreview = getDescriptionPreviewText(
     product.description,
     110,
@@ -1146,6 +1206,11 @@ function StoreProductCard({
         {pickupAvailable && (
           <span className="inline-flex items-center w-fit mb-2 px-2.5 py-1 rounded-full bg-cyan-50 text-cyan-700 text-[10px] sm:text-[11px] font-bold border border-cyan-200">
             Retirada na loja
+          </span>
+        )}
+        {personalization.enabled && (
+          <span className="inline-flex items-center w-fit mb-2 px-2.5 py-1 rounded-full bg-fuchsia-50 text-fuchsia-700 text-[10px] sm:text-[11px] font-bold border border-fuchsia-200">
+            Personalizável
           </span>
         )}
         {descriptionPreview && (
@@ -2425,7 +2490,7 @@ function StoreFront({
   }, [user]);
 
   const cartTotal = cart.reduce(
-    (sum, item) => sum + Number(item.price) * item.qty,
+    (sum, item) => sum + getCartItemTotalPrice(item),
     0,
   );
 
@@ -2575,9 +2640,8 @@ function StoreFront({
 
   // Adiciona ao carrinho validando o estoque
   const addToCart = (product, qty = 1) => {
-    const cartItemId = product.selectedVariation
-      ? `${product.id}-${product.selectedVariation}`
-      : product.id;
+    const cartItemId =
+      String(product.cartItemId || "").trim() || buildCartItemId(product);
 
     const existingItem = cart.find(
       (item) => (item.cartItemId || item.id) === cartItemId,
@@ -3959,7 +4023,11 @@ function CustomerAccountModal({
     const orderItems = Array.isArray(order?.items) ? order.items : [];
     const checkoutItems = orderItems
       .map((item) => ({
-        title: String(item?.name || "Item")
+        title: String(
+          item?.selectedPersonalizationLabel
+            ? `${item?.name || "Item"} (${item.selectedPersonalizationLabel})`
+            : item?.name || "Item",
+        )
           .trim()
           .slice(0, 80),
         quantity: Math.max(1, Number(item?.qty || 1)),
@@ -5357,6 +5425,7 @@ function ImageZoomViewer({ images, currentIndex, alt }) {
 function ProductModal({ product, close, addToCart }) {
   const variationGroups = getProductVariationGroups(product);
   const { priceTag, discountPct } = getDiscountMeta(product);
+  const personalization = normalizeProductPersonalization(product);
   const pickupAvailable = isProductPickupEligible(product);
   const descriptionHtml = useMemo(
     () => toSafeDescriptionHtml(product.description),
@@ -5376,6 +5445,11 @@ function ProductModal({ product, close, addToCart }) {
       return acc;
     }, {}),
   );
+  const [selectedPersonalization, setSelectedPersonalization] = useState({
+    usePersonalization: false,
+    name: "",
+    number: "",
+  });
   const [qty, setQty] = useState(1);
   const [currentImgIndex, setCurrentImgIndex] = useState(0);
 
@@ -5387,6 +5461,18 @@ function ProductModal({ product, close, addToCart }) {
     .filter(Boolean)
     .join(" | ");
 
+  const selectedPersonalizationLabel = getSelectedPersonalizationLabel(
+    selectedPersonalization,
+  );
+  const personalizationPrice =
+    selectedPersonalization.usePersonalization && personalization.enabled
+      ? personalization.price
+      : 0;
+  const finalUnitPrice = Math.max(
+    0,
+    Number(product.price || 0) + personalizationPrice,
+  );
+
   const handleAdd = () => {
     const hasMissingSelection = variationGroups.some(
       (group) => !selectedVariations[group.type],
@@ -5394,15 +5480,39 @@ function ProductModal({ product, close, addToCart }) {
 
     if (hasMissingSelection) return;
 
-    addToCart(
-      {
-        ...product,
-        selectedVariation: selectedVariationLabel,
-        selectedVariationMap: selectedVariations,
-        image: images[0] || "",
-      },
-      qty,
-    );
+    if (
+      selectedPersonalization.usePersonalization &&
+      personalization.allowName &&
+      !String(selectedPersonalization.name || "").trim()
+    ) {
+      return;
+    }
+
+    if (
+      selectedPersonalization.usePersonalization &&
+      personalization.allowNumber &&
+      !String(selectedPersonalization.number || "").trim()
+    ) {
+      return;
+    }
+
+    const cartItemPayload = {
+      ...product,
+      selectedVariation: selectedVariationLabel,
+      selectedVariationMap: selectedVariations,
+      selectedPersonalization: normalizeSelectedPersonalization(
+        selectedPersonalization,
+      ),
+      selectedPersonalizationLabel,
+      personalizationPrice,
+      basePrice: Number(product.price || 0),
+      price: finalUnitPrice,
+      image: images[0] || "",
+    };
+
+    cartItemPayload.cartItemId = buildCartItemId(cartItemPayload);
+
+    addToCart(cartItemPayload, qty);
     close();
   };
 
@@ -5487,9 +5597,100 @@ function ProductModal({ product, close, addToCart }) {
                 De {formatCurrencyBRL(priceTag)}
               </div>
             )}
-            <div className="text-2xl sm:text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-purple-600 mb-4 md:mb-6">
-              {formatCurrencyBRL(product.price)}
+            <div className="text-2xl sm:text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-purple-600 mb-2 md:mb-3">
+              {formatCurrencyBRL(finalUnitPrice)}
             </div>
+            {personalization.enabled && (
+              <p className="text-xs text-slate-500 font-medium mb-4 md:mb-6">
+                {selectedPersonalization.usePersonalization
+                  ? `Preço atualizado com personalização de ${formatCurrencyBRL(personalizationPrice)}.`
+                  : "Marque a personalização para atualizar o valor do produto."}
+              </p>
+            )}
+
+            {personalization.enabled && (
+              <div className="mb-6 rounded-2xl border border-fuchsia-100 bg-fuchsia-50/70 p-4 space-y-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-black text-fuchsia-800 uppercase tracking-wider">
+                      Personalização opcional
+                    </p>
+                    <p className="text-xs text-fuchsia-700 mt-1">
+                      Acrescente {formatCurrencyBRL(personalization.price)} ao
+                      valor do produto para incluir personalização.
+                    </p>
+                  </div>
+                  <label className="inline-flex items-center gap-2 text-sm font-bold text-fuchsia-800">
+                    <input
+                      type="checkbox"
+                      checked={selectedPersonalization.usePersonalization}
+                      onChange={(e) =>
+                        setSelectedPersonalization((prev) => ({
+                          ...prev,
+                          usePersonalization: e.target.checked,
+                        }))
+                      }
+                      className="w-4 h-4 rounded border-fuchsia-300 text-fuchsia-600"
+                    />
+                    Adicionar
+                  </label>
+                </div>
+
+                {selectedPersonalization.usePersonalization && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {personalization.allowName && (
+                      <div className="sm:col-span-2">
+                        <label className="block text-xs font-black text-fuchsia-700 uppercase tracking-wider mb-1.5">
+                          Nome para estampar
+                        </label>
+                        <input
+                          type="text"
+                          maxLength={20}
+                          value={selectedPersonalization.name}
+                          onChange={(e) =>
+                            setSelectedPersonalization((prev) => ({
+                              ...prev,
+                              name: e.target.value,
+                            }))
+                          }
+                          placeholder="Ex: Breno"
+                          className="w-full p-3 border border-fuchsia-200 rounded-xl bg-white outline-none focus:ring-2 focus:ring-fuchsia-300"
+                        />
+                      </div>
+                    )}
+
+                    {personalization.allowNumber && (
+                      <div>
+                        <label className="block text-xs font-black text-fuchsia-700 uppercase tracking-wider mb-1.5">
+                          Número
+                        </label>
+                        <input
+                          type="text"
+                          maxLength={3}
+                          value={selectedPersonalization.number}
+                          onChange={(e) =>
+                            setSelectedPersonalization((prev) => ({
+                              ...prev,
+                              number: e.target.value
+                                .replace(/\D/g, "")
+                                .slice(0, 3),
+                            }))
+                          }
+                          placeholder="10"
+                          className="w-full p-3 border border-fuchsia-200 rounded-xl bg-white outline-none focus:ring-2 focus:ring-fuchsia-300"
+                        />
+                      </div>
+                    )}
+
+                    {personalization.details && (
+                      <div className="sm:col-span-2 rounded-xl border border-fuchsia-100 bg-white px-3 py-2.5 text-xs text-fuchsia-700 leading-relaxed">
+                        {personalization.details}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Variedades (Tamanhos/Cores) */}
             {variationGroups.length > 0 && (
@@ -5569,7 +5770,7 @@ function ProductModal({ product, close, addToCart }) {
                   Total do item
                 </p>
                 <p className="text-xl font-black text-slate-900">
-                  {formatCurrencyBRL(Number(product.price || 0) * qty)}
+                  {formatCurrencyBRL(finalUnitPrice * qty)}
                 </p>
               </div>
               <div className="text-right">
@@ -5588,6 +5789,13 @@ function ProductModal({ product, close, addToCart }) {
               <ShoppingBag size={22} />
               {hasStock ? "Adicionar ao Carrinho" : "Produto Esgotado"}
             </button>
+            {selectedPersonalization.usePersonalization &&
+              personalizationPrice > 0 && (
+                <p className="text-xs text-center text-slate-500 mt-2">
+                  Valor com personalização: {formatCurrencyBRL(finalUnitPrice)}{" "}
+                  por unidade.
+                </p>
+              )}
           </div>
         </div>
       </div>
@@ -6111,8 +6319,13 @@ function CartModal({
                       Opção: {item.selectedVariation}
                     </p>
                   )}
+                  {item.selectedPersonalizationLabel && (
+                    <p className="text-xs text-fuchsia-700 font-medium mb-1">
+                      Personalização: {item.selectedPersonalizationLabel}
+                    </p>
+                  )}
                   <p className="text-indigo-600 font-bold text-sm">
-                    R$ {Number(item.price).toFixed(2)}
+                    {formatCurrencyBRL(getCartItemUnitPrice(item))}
                   </p>
                   <div className="flex items-center gap-2 mt-2">
                     <button
@@ -6713,9 +6926,17 @@ function CheckoutFlow({
         id: item.id || null,
         cartItemId: item.cartItemId || null,
         name: item.name || "",
-        price: item.price || 0,
+        price: getCartItemUnitPrice(item),
+        basePrice: Number(item.basePrice || item.price || 0),
+        personalizationPrice: getCartItemPersonalizationPrice(item),
         qty: item.qty || 1,
         selectedVariation: item.selectedVariation || null,
+        selectedPersonalization: normalizeSelectedPersonalization(
+          item.selectedPersonalization,
+        ),
+        selectedPersonalizationLabel:
+          item.selectedPersonalizationLabel ||
+          getSelectedPersonalizationLabel(item.selectedPersonalization),
         image: item.images?.[0] || item.image || null,
         stock: item.stock || 0,
         allowPickup: isProductPickupEligible(item),
@@ -6801,7 +7022,9 @@ function CheckoutFlow({
       } else {
         const checkoutItems = [
           ...cleanCart.map((item) => ({
-            title: item.name,
+            title: item.selectedPersonalizationLabel
+              ? `${item.name} (${item.selectedPersonalizationLabel})`
+              : item.name,
             quantity: Number(item.qty),
             unit_price: Number(item.price),
           })),
@@ -7400,10 +7623,18 @@ function CheckoutFlow({
                             Opção: {item.selectedVariation}
                           </span>
                         )}
+                        {item.selectedPersonalizationLabel && (
+                          <span className="text-xs text-fuchsia-700">
+                            Personalização: {item.selectedPersonalizationLabel}
+                            {getCartItemPersonalizationPrice(item) > 0
+                              ? ` (+${formatCurrencyBRL(getCartItemPersonalizationPrice(item))})`
+                              : ""}
+                          </span>
+                        )}
                       </div>
                     </span>
                     <span className="font-medium">
-                      R$ {(item.price * item.qty).toFixed(2)}
+                      {formatCurrencyBRL(getCartItemTotalPrice(item))}
                     </span>
                   </div>
                 ))}
@@ -8054,6 +8285,13 @@ function ProductManager({ products, showToast, storeSettings }) {
     images: [],
     variations: "",
     variationsByType: {},
+    personalization: {
+      enabled: false,
+      price: "",
+      allowName: false,
+      allowNumber: false,
+      details: "",
+    },
   });
 
   const productCatalog = useMemo(
@@ -8402,6 +8640,21 @@ function ProductManager({ products, showToast, storeSettings }) {
       precotarja: "priceTag",
       precoantigo: "priceTag",
       de: "priceTag",
+      personalizationenabled: "personalizationEnabled",
+      permitepersonalizacao: "personalizationEnabled",
+      personalizacaoativa: "personalizationEnabled",
+      personalizationprice: "personalizationPrice",
+      precopersonalizacao: "personalizationPrice",
+      valorpersonalizacao: "personalizationPrice",
+      personalizationallowname: "personalizationAllowName",
+      personalizarnome: "personalizationAllowName",
+      permitenome: "personalizationAllowName",
+      personalizationallownumber: "personalizationAllowNumber",
+      personalizarnumero: "personalizationAllowNumber",
+      permitenumero: "personalizationAllowNumber",
+      personalizationdetails: "personalizationDetails",
+      detalhespersonalizacao: "personalizationDetails",
+      observacaopersonalizacao: "personalizationDetails",
       category: "category",
       categoria: "category",
       subcategory: "subcategory",
@@ -8731,6 +8984,13 @@ function ProductManager({ products, showToast, storeSettings }) {
         showcaseSections,
         variationsByType,
         variations: flattenedVariations,
+        personalization: {
+          enabled: parseBooleanFlag(row.personalizationEnabled),
+          price: Math.max(0, parseLocaleNumber(row.personalizationPrice) || 0),
+          allowName: parseBooleanFlag(row.personalizationAllowName),
+          allowNumber: parseBooleanFlag(row.personalizationAllowNumber),
+          details: String(row.personalizationDetails || "").trim(),
+        },
       });
     });
 
@@ -8893,6 +9153,13 @@ function ProductManager({ products, showToast, storeSettings }) {
           : [],
         variationsByType: normalizedVariationMap,
         variations: flattenedVariations,
+        personalization: {
+          enabled: Boolean(formData.personalization?.enabled),
+          price: Math.max(0, Number(formData.personalization?.price || 0)),
+          allowName: Boolean(formData.personalization?.allowName),
+          allowNumber: Boolean(formData.personalization?.allowNumber),
+          details: String(formData.personalization?.details || "").trim(),
+        },
         image: formData.images?.[0] || "", // Mantém compatibilidade com dados antigos
       };
 
@@ -8978,6 +9245,7 @@ function ProductManager({ products, showToast, storeSettings }) {
   };
 
   const handleEdit = (product) => {
+    const personalization = normalizeProductPersonalization(product);
     setFormData({
       name: product.name || "",
       price: product.price || "",
@@ -8995,6 +9263,13 @@ function ProductManager({ products, showToast, storeSettings }) {
       images: product.images || (product.image ? [product.image] : []),
       variations: product.variations || "",
       variationsByType: getInitialVariationMap(product),
+      personalization: {
+        enabled: personalization.enabled,
+        price: personalization.price || "",
+        allowName: personalization.allowName,
+        allowNumber: personalization.allowNumber,
+        details: personalization.details,
+      },
     });
     setEditingId(product.id);
     setIsAdding(true);
@@ -9086,6 +9361,11 @@ function ProductManager({ products, showToast, storeSettings }) {
       "stock",
       "allowPickup",
       "variations",
+      "personalizationEnabled",
+      "personalizationPrice",
+      "personalizationAllowName",
+      "personalizationAllowNumber",
+      "personalizationDetails",
     ];
 
     const escapeCsvValue = (value) => {
@@ -9103,6 +9383,7 @@ function ProductManager({ products, showToast, storeSettings }) {
     };
 
     const csvRows = productsToExport.map((product) => {
+      const personalization = normalizeProductPersonalization(product);
       const row = {
         name: product.name || "",
         price: Number(product.price || 0),
@@ -9113,6 +9394,11 @@ function ProductManager({ products, showToast, storeSettings }) {
         stock: Number(product.stock || 0),
         allowPickup: Boolean(product.allowPickup),
         variations: product.variations || "",
+        personalizationEnabled: Boolean(personalization.enabled),
+        personalizationPrice: personalization.price || "",
+        personalizationAllowName: Boolean(personalization.allowName),
+        personalizationAllowNumber: Boolean(personalization.allowNumber),
+        personalizationDetails: personalization.details || "",
       };
 
       return headers
@@ -9153,6 +9439,13 @@ function ProductManager({ products, showToast, storeSettings }) {
       images: [],
       variations: "",
       variationsByType: {},
+      personalization: {
+        enabled: false,
+        price: "",
+        allowName: false,
+        allowNumber: false,
+        details: "",
+      },
     });
   };
 
@@ -9405,6 +9698,114 @@ function ProductManager({ products, showToast, storeSettings }) {
               />
               Permitir retirada na loja para este produto
             </label>
+
+            <div className="md:col-span-2 space-y-3 p-4 rounded-xl border border-fuchsia-200 bg-fuchsia-50/50">
+              <label className="inline-flex items-center gap-3 text-sm font-semibold text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={Boolean(formData.personalization?.enabled)}
+                  onChange={(e) =>
+                    setFormData((prev) => ({
+                      ...prev,
+                      personalization: {
+                        ...(prev.personalization || {}),
+                        enabled: e.target.checked,
+                      },
+                    }))
+                  }
+                  className="w-4 h-4 rounded border-fuchsia-300 text-fuchsia-600"
+                />
+                Permitir personalização neste produto
+              </label>
+
+              {formData.personalization?.enabled && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-black text-slate-500 uppercase tracking-wider mb-1.5">
+                      Preço da personalização (R$)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      placeholder="Ex: 20"
+                      value={formData.personalization?.price || ""}
+                      onChange={(e) =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          personalization: {
+                            ...(prev.personalization || {}),
+                            price: e.target.value,
+                          },
+                        }))
+                      }
+                      className="w-full p-3 border rounded-lg outline-none focus:border-fuchsia-400 bg-white"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-2 rounded-lg border border-fuchsia-100 bg-white p-3">
+                    <span className="text-xs font-black text-slate-500 uppercase tracking-wider">
+                      O que pode personalizar
+                    </span>
+                    <label className="inline-flex items-center gap-2 text-sm font-semibold text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(formData.personalization?.allowName)}
+                        onChange={(e) =>
+                          setFormData((prev) => ({
+                            ...prev,
+                            personalization: {
+                              ...(prev.personalization || {}),
+                              allowName: e.target.checked,
+                            },
+                          }))
+                        }
+                        className="w-4 h-4 rounded border-fuchsia-300 text-fuchsia-600"
+                      />
+                      Nome
+                    </label>
+                    <label className="inline-flex items-center gap-2 text-sm font-semibold text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(formData.personalization?.allowNumber)}
+                        onChange={(e) =>
+                          setFormData((prev) => ({
+                            ...prev,
+                            personalization: {
+                              ...(prev.personalization || {}),
+                              allowNumber: e.target.checked,
+                            },
+                          }))
+                        }
+                        className="w-4 h-4 rounded border-fuchsia-300 text-fuchsia-600"
+                      />
+                      Número
+                    </label>
+                  </div>
+
+                  <div className="md:col-span-2">
+                    <label className="block text-xs font-black text-slate-500 uppercase tracking-wider mb-1.5">
+                      Observações da personalização
+                    </label>
+                    <textarea
+                      rows={3}
+                      placeholder="Ex: Nome até 20 caracteres. Número até 3 dígitos."
+                      value={formData.personalization?.details || ""}
+                      onChange={(e) =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          personalization: {
+                            ...(prev.personalization || {}),
+                            details: e.target.value,
+                          },
+                        }))
+                      }
+                      className="w-full p-3 border rounded-lg outline-none focus:border-fuchsia-400 bg-white"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
 
             <div className="md:col-span-2 space-y-3 p-4 rounded-xl border border-slate-200 bg-slate-50">
               <div className="flex items-center justify-between gap-3">
@@ -9686,7 +10087,14 @@ function ProductManager({ products, showToast, storeSettings }) {
                       />
                     )}
                   </div>
-                  <span className="line-clamp-1">{p.name}</span>
+                  <div className="min-w-0">
+                    <span className="line-clamp-1 block">{p.name}</span>
+                    {normalizeProductPersonalization(p).enabled && (
+                      <span className="inline-flex mt-1 px-2 py-0.5 rounded-full bg-fuchsia-50 text-fuchsia-700 text-[10px] font-bold border border-fuchsia-200">
+                        Personalizável
+                      </span>
+                    )}
+                  </div>
                 </td>
                 <td className="p-4">
                   <span className="bg-slate-100 text-slate-600 px-2 py-1 rounded text-xs font-semibold">
@@ -11822,8 +12230,13 @@ function AbandonedCartsList({ carts, showToast }) {
                             </span>
                           </p>
                         )}
+                        {item.selectedPersonalizationLabel && (
+                          <p className="text-xs text-fuchsia-700 mt-0.5">
+                            Personalização: {item.selectedPersonalizationLabel}
+                          </p>
+                        )}
                         <p className="text-sm text-indigo-600 font-bold mt-1">
-                          R$ {Number(item.price).toFixed(2)}
+                          {formatCurrencyBRL(getCartItemUnitPrice(item))}
                         </p>
                       </div>
                       <div className="font-black text-slate-700 bg-slate-200 px-3 py-1.5 rounded-lg text-sm">
