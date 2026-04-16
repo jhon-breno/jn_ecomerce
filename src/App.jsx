@@ -1245,8 +1245,16 @@ export default function App() {
     catalog: DEFAULT_PRODUCT_CATALOG,
     shipping: {
       pickupEnabled: true,
-      correiosBaseRate: 25.0,
       localCities: [],
+      separationDays: 2,
+      pacEnabled: true,
+      pacRate: 25.0,
+      pacDeliveryDays: "5 a 10",
+      sedexEnabled: true,
+      sedexRate: 37.5,
+      sedexDeliveryDays: "2 a 4",
+      localDeliveryTime: "mesmo dia",
+      pickupTime: "1 dia útil",
     },
   });
   const [loading, setLoading] = useState(true);
@@ -1553,6 +1561,7 @@ export default function App() {
           user={user}
           showToast={showToast}
           storeSettings={storeSettings}
+          coupons={coupons}
         />
       ) : !isAdminAuthenticated ? (
         <AdminAuthGate
@@ -1708,7 +1717,13 @@ function AdminAuthGate({ onLogin, storeName, logo }) {
 // ==========================================
 // 1. ÁREA DO CLIENTE (STOREFRONT)
 // ==========================================
-function StoreFront({ products, user, showToast, storeSettings }) {
+function StoreFront({
+  products,
+  user,
+  showToast,
+  storeSettings,
+  coupons = [],
+}) {
   const [cart, setCart] = useState([]);
   const [cartLoaded, setCartLoaded] = useState(false);
   const [userProfile, setUserProfile] = useState(null);
@@ -3361,6 +3376,7 @@ function StoreFront({ products, user, showToast, storeSettings }) {
           products={products}
           user={user}
           storeSettings={storeSettings}
+          coupons={coupons}
           close={() => setIsCheckoutOpen(false)}
           showToast={showToast}
           clearCart={() => setCart([])}
@@ -5687,6 +5703,7 @@ function CheckoutFlow({
   products = [],
   user,
   storeSettings,
+  coupons = [],
   close,
   showToast,
   clearCart,
@@ -5712,6 +5729,9 @@ function CheckoutFlow({
   const [createdOrderId, setCreatedOrderId] = useState("");
   const [paymentCheckLabel, setPaymentCheckLabel] = useState("");
   const [isCheckingPayment, setIsCheckingPayment] = useState(false);
+  const [couponCode, setCouponCode] = useState("");
+  const [appliedCoupons, setAppliedCoupons] = useState([]);
+  const [couponError, setCouponError] = useState("");
   const checkoutApprovedHandledRef = useRef(false);
   const pickupStoreAddress = normalizeStoreAddress(storeSettings?.storeAddress);
   const hasPickupStoreAddress = Boolean(
@@ -5742,6 +5762,53 @@ function CheckoutFlow({
   useEffect(() => {
     setShippingOption(null);
   }, [selectedAddress]);
+
+  // Valida e aplica cupom
+  const handleApplyCoupon = () => {
+    setCouponError("");
+    const code = String(couponCode || "")
+      .trim()
+      .toUpperCase();
+
+    if (!code) {
+      setCouponError("Digite um código de cupom");
+      return;
+    }
+
+    // Verifica se cupom já foi aplicado
+    if (appliedCoupons.some((c) => c.code === code)) {
+      setCouponError("Este cupom já foi aplicado");
+      return;
+    }
+
+    const coupon = coupons.find(
+      (c) => String(c.code || "").toUpperCase() === code && c.active !== false,
+    );
+
+    if (!coupon) {
+      setCouponError("Cupom inválido ou desativado");
+      return;
+    }
+
+    const now = new Date();
+    if (coupon.expiryDate) {
+      const expiry = new Date(coupon.expiryDate);
+      if (now > expiry) {
+        setCouponError("Cupom expirado");
+        return;
+      }
+    }
+
+    // Permite aplicar o cupom mesmo sem atingir o valor mínimo
+    setAppliedCoupons((prev) => [...prev, coupon]);
+    setCouponCode("");
+    showToast("Cupom aplicado com sucesso!");
+  };
+
+  const handleRemoveCoupon = (couponCode) => {
+    setAppliedCoupons((prev) => prev.filter((c) => c.code !== couponCode));
+    setCouponError("");
+  };
 
   const productPickupById = useMemo(
     () =>
@@ -5779,48 +5846,69 @@ function CheckoutFlow({
     if (!selectedAddress) return [];
     const options = [];
     const config = storeSettings?.shipping || {};
+    const separationDays = Number(config.separationDays) || 2;
+
+    const fmtTime = (deliveryTime, unit = "dias úteis") => {
+      const sep =
+        separationDays === 1 ? "1 dia útil" : `${separationDays} dias úteis`;
+      return `${sep} p/ separação + ${deliveryTime} ${unit} p/ entrega`;
+    };
 
     if (
       config.pickupEnabled !== false &&
       hasPickupEligibleItem &&
       isSelectedAddressLocalCoverage
     ) {
-      // Default is true if undefined
+      const pickupTime = config.pickupTime || "1 dia útil";
       options.push({
         id: "pickup",
         name: "Retirada na Loja",
         price: 0,
-        time: "Disponível em 1 dia útil",
+        time: `Disponível em ${pickupTime}`,
+        separationInfo: `Prazo para retirada: ${pickupTime} após confirmação do pagamento`,
         icon: <Store size={20} />,
       });
     }
 
     if (selectedAddress.cidade && selectedAddress.estado) {
       if (localCityCoverage && hasPickupEligibleItem) {
+        const localTime = config.localDeliveryTime || "mesmo dia";
         options.push({
           id: "local",
           name: "Entrega Expressa (Motoboy/App)",
           price: Number(localCityCoverage.rate),
-          time: "Entregue no mesmo dia",
+          time: fmtTime(localTime, "").replace(
+            " p/ entrega",
+            " p/ entrega local",
+          ),
+          separationInfo: `${separationDays} dia(s) útil(is) para separação/postagem, entrega ${localTime}`,
           icon: <Truck size={20} />,
         });
       } else {
-        // Correios simulado
-        const base = Number(config.correiosBaseRate) || 25;
-        options.push({
-          id: "correios_pac",
-          name: "Correios (PAC)",
-          price: base,
-          time: "5 a 10 dias úteis",
-          icon: <Package size={20} />,
-        });
-        options.push({
-          id: "correios_sedex",
-          name: "Correios (Sedex)",
-          price: base * 1.5,
-          time: "2 a 4 dias úteis",
-          icon: <Package size={20} />,
-        });
+        if (config.pacEnabled !== false) {
+          const pacRate = Number(config.pacRate) || 25;
+          const pacDays = config.pacDeliveryDays || "5 a 10";
+          options.push({
+            id: "correios_pac",
+            name: "Correios (PAC)",
+            price: pacRate,
+            time: fmtTime(pacDays),
+            separationInfo: `${separationDays} dia(s) útil(is) para separação/postagem + ${pacDays} dias úteis para entrega pelos Correios`,
+            icon: <Package size={20} />,
+          });
+        }
+        if (config.sedexEnabled !== false) {
+          const sedexRate = Number(config.sedexRate) || 37.5;
+          const sedexDays = config.sedexDeliveryDays || "2 a 4";
+          options.push({
+            id: "correios_sedex",
+            name: "Correios (Sedex)",
+            price: sedexRate,
+            time: fmtTime(sedexDays),
+            separationInfo: `${separationDays} dia(s) útil(is) para separação/postagem + ${sedexDays} dias úteis para entrega pelos Correios`,
+            icon: <Package size={20} />,
+          });
+        }
       }
     }
     return options;
@@ -6024,7 +6112,71 @@ function CheckoutFlow({
     }
   };
 
-  const finalTotal = cartTotal + (shippingOption?.price || 0);
+  const shippingCost = shippingOption?.price || 0;
+
+  // Constrói array com detalhes de cada cupom aplicado
+  const couponDetails = appliedCoupons.map((coupon) => {
+    const couponMinPurchase = coupon.minOrderValue
+      ? Number(coupon.minOrderValue)
+      : null;
+    const isCouponEligible =
+      !couponMinPurchase || cartTotal >= couponMinPurchase;
+    const couponMinimumGap = couponMinPurchase
+      ? Math.max(0, couponMinPurchase - cartTotal)
+      : 0;
+
+    let discountAmount = 0;
+    let shippingDiscountAmount = 0;
+
+    if (isCouponEligible) {
+      // Desconto em produtos
+      if (coupon.type === "percent" || coupon.type === "percentage") {
+        discountAmount = (cartTotal * coupon.value) / 100;
+      } else if (coupon.type === "fixed") {
+        discountAmount = coupon.value;
+      }
+
+      // Desconto em frete
+      if (coupon.type === "shipping_percent") {
+        shippingDiscountAmount = (shippingCost * coupon.value) / 100;
+      } else if (coupon.type === "shipping_fixed") {
+        shippingDiscountAmount = Math.min(coupon.value, shippingCost);
+      } else if (coupon.type === "free_shipping") {
+        shippingDiscountAmount = shippingCost;
+      }
+    }
+
+    return {
+      code: coupon.code,
+      value: coupon.value,
+      type: coupon.type,
+      couponMinPurchase,
+      isCouponEligible,
+      couponMinimumGap,
+      discountAmount,
+      shippingDiscountAmount,
+    };
+  });
+
+  // Calcula descontos totais somando cupons elegíveis
+  const totalDiscountAmount = couponDetails.reduce(
+    (sum, detail) =>
+      sum + (detail.isCouponEligible ? detail.discountAmount : 0),
+    0,
+  );
+
+  const totalShippingDiscount = couponDetails.reduce(
+    (sum, detail) =>
+      sum + (detail.isCouponEligible ? detail.shippingDiscountAmount : 0),
+    0,
+  );
+
+  // Desconto aplicado ao subtotal e ao frete separadamente
+  const finalShippingCost = Math.max(0, shippingCost - totalShippingDiscount);
+  const finalTotal = Math.max(
+    0,
+    cartTotal - totalDiscountAmount + finalShippingCost,
+  );
 
   const finalizeOrder = async () => {
     if (!selectedAddress || !paymentMethod || !shippingOption)
@@ -6084,6 +6236,13 @@ function CheckoutFlow({
         items: cleanCart,
         subtotal: cartTotal,
         shipping: cleanShipping,
+        discountAmount: totalDiscountAmount,
+        shippingDiscount: totalShippingDiscount,
+        appliedCoupons: appliedCoupons.map((c) => ({
+          code: c.code,
+          value: c.value,
+          type: c.type,
+        })),
         total: finalTotal,
         address: cleanAddress,
         paymentMethod: paymentMethod,
@@ -6529,6 +6688,24 @@ function CheckoutFlow({
                       </div>
                     </label>
                   ))}
+
+                  {/* Informativo de prazo ao selecionar opção */}
+                  {shippingOption && shippingOption.separationInfo && (
+                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex gap-2 items-start text-amber-800">
+                      <span className="text-lg leading-none">⏱</span>
+                      <div className="text-xs leading-relaxed">
+                        <strong className="block mb-0.5">
+                          Prazo estimado para recebimento:
+                        </strong>
+                        {shippingOption.separationInfo}
+                        <span className="block mt-1 text-amber-600 font-semibold">
+                          Os prazos são contados a partir da confirmação do
+                          pagamento, em dias úteis.
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
                   {availableShipping.length === 0 && (
                     <p className="text-sm text-rose-500">
                       Nenhuma opção de frete disponível para este endereço.
@@ -6589,6 +6766,105 @@ function CheckoutFlow({
               <h3 className="text-lg font-bold flex items-center gap-2 mt-6">
                 <Package size={20} /> Resumo do Pedido
               </h3>
+              <div className="bg-white rounded-xl p-5 border border-slate-200 space-y-3">
+                <div className="flex flex-col gap-2">
+                  <label className="text-sm font-semibold text-slate-700">
+                    Cupom de Desconto
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      placeholder="Digite o código do cupom"
+                      value={couponCode}
+                      onChange={(e) => {
+                        setCouponCode(e.target.value.toUpperCase());
+                        setCouponError("");
+                      }}
+                      className="flex-1 px-3 py-2.5 rounded-lg border border-slate-300 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                    <button
+                      onClick={handleApplyCoupon}
+                      className="px-4 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm transition disabled:bg-slate-300"
+                      disabled={!couponCode.trim()}
+                    >
+                      Aplicar
+                    </button>
+                  </div>
+
+                  {/* Lista de cupons aplicados */}
+                  {appliedCoupons.length > 0 && (
+                    <div className="space-y-2">
+                      {couponDetails.map((detail, idx) => (
+                        <div
+                          key={appliedCoupons[idx]?.code}
+                          className={`px-3 py-2 rounded-lg border text-sm font-medium flex justify-between items-start gap-2 ${
+                            detail.isCouponEligible
+                              ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+                              : "bg-amber-50 border-amber-200 text-amber-800"
+                          }`}
+                        >
+                          <div className="flex-1">
+                            <div>
+                              {detail.isCouponEligible
+                                ? `✓ Cupom ${detail.code} aplicado!`
+                                : `ⓘ Cupom ${detail.code} aplicado`}
+                            </div>
+                            {!detail.isCouponEligible &&
+                              detail.couponMinPurchase && (
+                                <div className="space-y-1 mt-1">
+                                  <div className="text-xs">
+                                    Subtotal: R$ {cartTotal.toFixed(2)}
+                                  </div>
+                                  <div className="text-xs">
+                                    Mínimo: R${" "}
+                                    {detail.couponMinPurchase.toFixed(2)}
+                                  </div>
+                                  <div className="text-xs font-bold">
+                                    Faltam R${" "}
+                                    {detail.couponMinimumGap.toFixed(2)} para
+                                    ativar o desconto de{" "}
+                                    {detail.type === "percent" ||
+                                    detail.type === "percentage"
+                                      ? `${detail.value}%`
+                                      : `R$ ${detail.value}`}
+                                  </div>
+                                </div>
+                              )}
+                            {detail.isCouponEligible && (
+                              <div className="text-xs mt-1 space-y-1">
+                                {detail.discountAmount > 0 && (
+                                  <div>
+                                    Desconto nos Produtos: R${" "}
+                                    {detail.discountAmount.toFixed(2)}
+                                  </div>
+                                )}
+                                {detail.shippingDiscountAmount > 0 && (
+                                  <div>
+                                    Desconto (Frete): R${" "}
+                                    {detail.shippingDiscountAmount.toFixed(2)}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                          <button
+                            onClick={() => handleRemoveCoupon(detail.code)}
+                            className="px-2 py-1 rounded text-xs font-bold hover:opacity-70 transition"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {couponError && (
+                    <div className="px-3 py-2 rounded-lg bg-rose-50 border border-rose-200 text-sm text-rose-800 font-medium">
+                      {couponError}
+                    </div>
+                  )}
+                </div>
+              </div>
               <div className="bg-slate-50 rounded-xl p-5 border space-y-3">
                 {cart.map((item) => (
                   <div
@@ -6619,6 +6895,12 @@ function CheckoutFlow({
                     <span>Subtotal dos Produtos</span>
                     <span>R$ {cartTotal.toFixed(2)}</span>
                   </div>
+                  {totalDiscountAmount > 0 && (
+                    <div className="flex justify-between text-emerald-600 font-semibold">
+                      <span>Desconto nos Produtos</span>
+                      <span>-R$ {totalDiscountAmount.toFixed(2)}</span>
+                    </div>
+                  )}
                   <div className="flex justify-between text-slate-600">
                     <span>
                       Frete (
@@ -6632,6 +6914,12 @@ function CheckoutFlow({
                         : "--"}
                     </span>
                   </div>
+                  {totalShippingDiscount > 0 && (
+                    <div className="flex justify-between text-emerald-600 font-semibold">
+                      <span>Desconto (Frete)</span>
+                      <span>-R$ {totalShippingDiscount.toFixed(2)}</span>
+                    </div>
+                  )}
                   <div className="flex justify-between font-black text-xl pt-2">
                     <span>Total a Pagar</span>
                     <span className="text-indigo-600">
@@ -11601,9 +11889,11 @@ function CouponManager({ coupons, showToast }) {
       usageLimit: coupon.usageLimit || "",
       usagePerUser: coupon.usagePerUser || "",
       expiresAt: coupon.expiresAt
-        ? new Date(coupon.expiresAt?.toDate?.() || coupon.expiresAt)
-            .toISOString()
-            .split("T")[0]
+        ? (() => {
+            const d =
+              coupon.expiresAt?.toDate?.() || new Date(coupon.expiresAt);
+            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+          })()
         : "",
       active: coupon.active ?? true,
     });
@@ -11626,8 +11916,12 @@ function CouponManager({ coupons, showToast }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!form.code || !form.value) {
-      showToast("Código e valor são obrigatórios", "error");
+    if (!form.code) {
+      showToast("Código é obrigatório", "error");
+      return;
+    }
+    if (form.type !== "free_shipping" && !form.value) {
+      showToast("Valor é obrigatório para este tipo de cupom", "error");
       return;
     }
 
@@ -11636,12 +11930,12 @@ function CouponManager({ coupons, showToast }) {
       const payload = {
         code: String(form.code).toUpperCase().trim(),
         type: form.type,
-        value: Number(form.value),
+        value: form.type === "free_shipping" ? 0 : Number(form.value),
         minOrderValue: Number(form.minOrderValue) || 0,
         usageLimit: Number(form.usageLimit) || 0,
         usagePerUser: Number(form.usagePerUser) || 0,
         expiresAt: form.expiresAt
-          ? new Date(form.expiresAt).toISOString()
+          ? new Date(form.expiresAt + "T23:59:59").toISOString()
           : null,
         active: form.active,
       };
@@ -11761,13 +12055,20 @@ function CouponManager({ coupons, showToast }) {
                 }
                 className="w-full p-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-300"
               >
-                <option value="percent">Percentual (%)</option>
-                <option value="fixed">Fixo (R$)</option>
+                <optgroup label="Desconto nos Produtos">
+                  <option value="percent">Percentual (%)</option>
+                  <option value="fixed">Fixo (R$)</option>
+                </optgroup>
+                <optgroup label="Desconto no Frete">
+                  <option value="shipping_percent">% no Frete</option>
+                  <option value="shipping_fixed">R$ no Frete</option>
+                  <option value="free_shipping">Frete Grátis</option>
+                </optgroup>
               </select>
             </div>
             <div>
               <label className="block text-sm font-semibold text-slate-700 mb-1">
-                Valor do Desconto*
+                Valor do Desconto{form.type !== "free_shipping" ? "*" : ""}
               </label>
               <input
                 type="number"
@@ -11777,8 +12078,16 @@ function CouponManager({ coupons, showToast }) {
                 onChange={(e) =>
                   setForm((p) => ({ ...p, value: e.target.value }))
                 }
-                placeholder={form.type === "percent" ? "10" : "50.00"}
-                className="w-full p-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-300"
+                placeholder={
+                  form.type === "free_shipping"
+                    ? "Não aplicável"
+                    : form.type === "percent" ||
+                        form.type === "shipping_percent"
+                      ? "10"
+                      : "50.00"
+                }
+                disabled={form.type === "free_shipping"}
+                className="w-full p-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-300 disabled:bg-slate-100 disabled:cursor-not-allowed"
               />
             </div>
             <div>
@@ -11918,9 +12227,22 @@ function CouponManager({ coupons, showToast }) {
                       </span>
                     </td>
                     <td className="p-4 font-semibold text-slate-800">
-                      {coupon.type === "percent"
-                        ? `${coupon.value}%`
-                        : `R$ ${Number(coupon.value).toFixed(2)}`}
+                      {coupon.type === "free_shipping" ? (
+                        <span className="bg-emerald-100 text-emerald-700 px-2 py-1 rounded-lg text-sm font-bold">
+                          Frete Grátis
+                        </span>
+                      ) : coupon.type === "percent" ||
+                        coupon.type === "shipping_percent" ? (
+                        <span>
+                          {coupon.value}%{" "}
+                          {coupon.type === "shipping_percent" ? "(Frete)" : ""}
+                        </span>
+                      ) : (
+                        <span>
+                          R$ {Number(coupon.value).toFixed(2)}
+                          {coupon.type === "shipping_fixed" ? " (Frete)" : ""}
+                        </span>
+                      )}
                     </td>
                     <td className="p-4 text-slate-600">
                       {Number(coupon.minOrderValue) > 0
@@ -11936,10 +12258,12 @@ function CouponManager({ coupons, showToast }) {
                     </td>
                     <td className="p-4 text-slate-600">
                       {coupon.expiresAt
-                        ? (
-                            coupon.expiresAt?.toDate?.() ||
-                            new Date(coupon.expiresAt)
-                          ).toLocaleDateString("pt-BR")
+                        ? (() => {
+                            const d =
+                              coupon.expiresAt?.toDate?.() ||
+                              new Date(coupon.expiresAt);
+                            return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
+                          })()
                         : "Sem validade"}
                     </td>
                     <td className="p-4 text-center">
@@ -12021,8 +12345,16 @@ function AdminSettings({ showToast, storeSettings }) {
     catalog: DEFAULT_PRODUCT_CATALOG,
     shipping: {
       pickupEnabled: true,
-      correiosBaseRate: 25.0,
       localCities: [],
+      separationDays: 2,
+      pacEnabled: true,
+      pacRate: 25.0,
+      pacDeliveryDays: "5 a 10",
+      sedexEnabled: true,
+      sedexRate: 37.5,
+      sedexDeliveryDays: "2 a 4",
+      localDeliveryTime: "mesmo dia",
+      pickupTime: "1 dia útil",
     },
   });
   const [isUploading, setIsUploading] = useState(false);
@@ -12118,8 +12450,16 @@ function AdminSettings({ showToast, storeSettings }) {
           storeAddress: normalizeStoreAddress(storeSettings.storeAddress),
           shipping: storeSettings.shipping || {
             pickupEnabled: true,
-            correiosBaseRate: 25.0,
             localCities: [],
+            separationDays: 2,
+            pacEnabled: true,
+            pacRate: 25.0,
+            pacDeliveryDays: "5 a 10",
+            sedexEnabled: true,
+            sedexRate: 37.5,
+            sedexDeliveryDays: "2 a 4",
+            localDeliveryTime: "mesmo dia",
+            pickupTime: "1 dia útil",
           },
         };
 
@@ -13812,29 +14152,263 @@ function AdminSettings({ showToast, storeSettings }) {
               </div>
             </div>
 
-            <div>
-              <label className="block text-sm font-bold mb-2 text-slate-700">
-                Taxa Base - Envio Correios (R$)
-              </label>
-              <p className="text-xs text-slate-500 mb-2">
-                Valor aplicado simulando frete (PAC/Sedex) para todas as cidades
-                não configuradas na lista de Motoboy.
-              </p>
-              <input
-                type="number"
-                step="0.01"
-                value={config.shipping.correiosBaseRate || ""}
-                onChange={(e) =>
-                  setConfig({
-                    ...config,
-                    shipping: {
-                      ...config.shipping,
-                      correiosBaseRate: e.target.value,
-                    },
-                  })
-                }
-                className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
-              />
+            {/* Prazo de Separação / Postagem */}
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-5 space-y-4">
+              <div>
+                <h4 className="text-sm font-bold text-amber-800 mb-1">
+                  ⏱ Prazo de Separação / Postagem
+                </h4>
+                <p className="text-xs text-amber-700">
+                  Quantos dias úteis você precisa para separar o pedido e postar
+                  antes que a transportadora inicie a entrega. Esse prazo será
+                  somado ao prazo de entrega e exibido ao cliente.
+                </p>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Dias úteis para separação/postagem
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  value={config.shipping.separationDays ?? 2}
+                  onChange={(e) =>
+                    setConfig({
+                      ...config,
+                      shipping: {
+                        ...config.shipping,
+                        separationDays: e.target.value,
+                      },
+                    })
+                  }
+                  className="w-32 p-2.5 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                />
+              </div>
+            </div>
+
+            {/* Correios PAC */}
+            <div className="bg-white border rounded-xl p-5 space-y-4">
+              <div className="flex justify-between items-center">
+                <div>
+                  <h4 className="text-sm font-bold text-slate-800">
+                    📦 Correios (PAC)
+                  </h4>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Envio via Correios PAC para cidades sem entrega local
+                  </p>
+                </div>
+                <label className="flex items-center gap-2 text-sm font-semibold text-slate-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={config.shipping.pacEnabled !== false}
+                    onChange={(e) =>
+                      setConfig({
+                        ...config,
+                        shipping: {
+                          ...config.shipping,
+                          pacEnabled: e.target.checked,
+                        },
+                      })
+                    }
+                    className="w-4 h-4"
+                  />
+                  Ativo
+                </label>
+              </div>
+              {config.shipping.pacEnabled !== false && (
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">
+                      Taxa (R$)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={config.shipping.pacRate ?? 25}
+                      onChange={(e) =>
+                        setConfig({
+                          ...config,
+                          shipping: {
+                            ...config.shipping,
+                            pacRate: e.target.value,
+                          },
+                        })
+                      }
+                      className="w-full p-2.5 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">
+                      Prazo de entrega (ex: "5 a 10")
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        placeholder="5 a 10"
+                        value={config.shipping.pacDeliveryDays ?? "5 a 10"}
+                        onChange={(e) =>
+                          setConfig({
+                            ...config,
+                            shipping: {
+                              ...config.shipping,
+                              pacDeliveryDays: e.target.value,
+                            },
+                          })
+                        }
+                        className="w-full p-2.5 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                      />
+                      <span className="text-xs text-slate-500 shrink-0">
+                        dias úteis
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Correios Sedex */}
+            <div className="bg-white border rounded-xl p-5 space-y-4">
+              <div className="flex justify-between items-center">
+                <div>
+                  <h4 className="text-sm font-bold text-slate-800">
+                    🚀 Correios (Sedex)
+                  </h4>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Envio expresso via Correios Sedex para cidades sem entrega
+                    local
+                  </p>
+                </div>
+                <label className="flex items-center gap-2 text-sm font-semibold text-slate-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={config.shipping.sedexEnabled !== false}
+                    onChange={(e) =>
+                      setConfig({
+                        ...config,
+                        shipping: {
+                          ...config.shipping,
+                          sedexEnabled: e.target.checked,
+                        },
+                      })
+                    }
+                    className="w-4 h-4"
+                  />
+                  Ativo
+                </label>
+              </div>
+              {config.shipping.sedexEnabled !== false && (
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">
+                      Taxa (R$)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={config.shipping.sedexRate ?? 37.5}
+                      onChange={(e) =>
+                        setConfig({
+                          ...config,
+                          shipping: {
+                            ...config.shipping,
+                            sedexRate: e.target.value,
+                          },
+                        })
+                      }
+                      className="w-full p-2.5 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">
+                      Prazo de entrega (ex: "2 a 4")
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        placeholder="2 a 4"
+                        value={config.shipping.sedexDeliveryDays ?? "2 a 4"}
+                        onChange={(e) =>
+                          setConfig({
+                            ...config,
+                            shipping: {
+                              ...config.shipping,
+                              sedexDeliveryDays: e.target.value,
+                            },
+                          })
+                        }
+                        className="w-full p-2.5 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                      />
+                      <span className="text-xs text-slate-500 shrink-0">
+                        dias úteis
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Retirada na loja */}
+            <div className="bg-white border rounded-xl p-5 space-y-4">
+              <div>
+                <h4 className="text-sm font-bold text-slate-800">
+                  🏪 Retirada na Loja (Pickup)
+                </h4>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Prazo estimado até o pedido estar disponível para retirada
+                </p>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">
+                  Prazo para disponibilizar para retirada
+                </label>
+                <input
+                  type="text"
+                  placeholder="1 dia útil"
+                  value={config.shipping.pickupTime ?? "1 dia útil"}
+                  onChange={(e) =>
+                    setConfig({
+                      ...config,
+                      shipping: {
+                        ...config.shipping,
+                        pickupTime: e.target.value,
+                      },
+                    })
+                  }
+                  className="w-full p-2.5 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                />
+              </div>
+            </div>
+
+            {/* Entrega local */}
+            <div className="bg-white border rounded-xl p-5 space-y-4">
+              <div>
+                <h4 className="text-sm font-bold text-slate-800">
+                  🛵 Entrega Local (Motoboy)
+                </h4>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Prazo de entrega após separação/postagem
+                </p>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">
+                  Prazo de entrega local
+                </label>
+                <input
+                  type="text"
+                  placeholder="mesmo dia"
+                  value={config.shipping.localDeliveryTime ?? "mesmo dia"}
+                  onChange={(e) =>
+                    setConfig({
+                      ...config,
+                      shipping: {
+                        ...config.shipping,
+                        localDeliveryTime: e.target.value,
+                      },
+                    })
+                  }
+                  className="w-full p-2.5 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                />
+              </div>
             </div>
           </div>
 
