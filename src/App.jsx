@@ -45,6 +45,7 @@ import {
   Download,
   ZoomIn,
   Maximize2,
+  Share2,
 } from "lucide-react";
 
 // ATENÇÃO: Para o ambiente local, instale e importe o SDK do Mercado Pago aqui:
@@ -907,6 +908,7 @@ function StoreProductCard({
   product,
   onOpenProduct,
   onAddToCart,
+  onShareProduct,
   isShelf = false,
 }) {
   const { priceTag, discountPct } = getDiscountMeta(product);
@@ -973,6 +975,22 @@ function StoreProductCard({
         )}
 
         <div className="mt-auto pt-3 border-t border-slate-100 space-y-2">
+          <div className="hidden md:flex justify-end">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onShareProduct(product);
+              }}
+              className="group/share relative inline-flex items-center justify-center w-10 h-10 rounded-full bg-slate-100 hover:bg-indigo-50 text-slate-600 hover:text-indigo-700 transition cursor-pointer"
+              title="Compartilhar produto"
+            >
+              <Share2 size={16} />
+              <span className="absolute -top-9 left-1/2 -translate-x-1/2 whitespace-nowrap text-[11px] font-bold bg-slate-900 text-white px-2.5 py-1 rounded-lg opacity-0 pointer-events-none group-hover/share:opacity-100 transition">
+                Compartilhar
+              </span>
+            </button>
+          </div>
+
           <div className="flex items-end justify-between gap-3">
             <div className="flex flex-col min-w-0">
               {priceTag > 0 ? (
@@ -998,6 +1016,19 @@ function StoreProductCard({
               className="hidden md:flex bg-slate-900 group-hover:bg-gradient-to-r group-hover:from-indigo-500 group-hover:to-purple-500 disabled:bg-slate-100 disabled:text-slate-300 text-white w-11 h-11 rounded-full items-center justify-center shadow-md hover:shadow-lg hover:shadow-indigo-500/30 transition-all duration-300 hover:scale-110 disabled:hover:scale-100 active:scale-95 shrink-0"
             >
               <Plus strokeWidth={3} className="w-5 h-5" />
+            </button>
+          </div>
+
+          <div className="md:hidden flex justify-end">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onShareProduct(product);
+              }}
+              className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-slate-100 hover:bg-indigo-50 text-slate-600 hover:text-indigo-700 transition cursor-pointer"
+              title="Compartilhar produto"
+            >
+              <Share2 size={16} />
             </button>
           </div>
 
@@ -1064,6 +1095,8 @@ export default function App() {
   const [orders, setOrders] = useState([]);
   const [abandonedCarts, setAbandonedCarts] = useState([]);
   const [productInterestLeads, setProductInterestLeads] = useState([]);
+  const [productNotFoundRequests, setProductNotFoundRequests] = useState([]);
+  const [coupons, setCoupons] = useState([]);
   const [storeSettings, setStoreSettings] = useState({
     storeName: "NovaLoja",
     storeTagline: "",
@@ -1274,6 +1307,58 @@ export default function App() {
       (err) => console.error(err),
     );
 
+    const couponsRef = collection(
+      db,
+      "artifacts",
+      appId,
+      "public",
+      "data",
+      "coupons",
+    );
+    const unsubCoupons = onSnapshot(
+      couponsRef,
+      (snapshot) => {
+        const list = snapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        }));
+        setCoupons(
+          list.sort(
+            (a, b) =>
+              (b.createdAt?.toMillis?.() || 0) -
+              (a.createdAt?.toMillis?.() || 0),
+          ),
+        );
+      },
+      (err) => console.error(err),
+    );
+
+    const productRequestsRef = collection(
+      db,
+      "artifacts",
+      appId,
+      "public",
+      "data",
+      "product_not_found_requests",
+    );
+    const unsubProductRequests = onSnapshot(
+      productRequestsRef,
+      (snapshot) => {
+        const list = snapshot.docs.map((requestDoc) => ({
+          id: requestDoc.id,
+          ...requestDoc.data(),
+        }));
+        setProductNotFoundRequests(
+          list.sort(
+            (a, b) =>
+              (b.createdAt?.toMillis?.() || 0) -
+              (a.createdAt?.toMillis?.() || 0),
+          ),
+        );
+      },
+      (err) => console.error(err),
+    );
+
     const settingsRef = doc(
       db,
       "artifacts",
@@ -1297,6 +1382,8 @@ export default function App() {
       unsubOrders();
       unsubCarts();
       unsubLeads();
+      unsubCoupons();
+      unsubProductRequests();
       unsubSettings();
     };
   }, [user]);
@@ -1360,6 +1447,8 @@ export default function App() {
           orders={orders}
           abandonedCarts={abandonedCarts}
           productInterestLeads={productInterestLeads}
+          productNotFoundRequests={productNotFoundRequests}
+          coupons={coupons}
           showToast={showToast}
           storeSettings={storeSettings}
           onAdminLogout={handleAdminLogout}
@@ -1505,12 +1594,22 @@ function StoreFront({ products, user, showToast, storeSettings }) {
   const [cartLoaded, setCartLoaded] = useState(false);
   const [userProfile, setUserProfile] = useState(null);
   const [myOrders, setMyOrders] = useState([]);
+  const [myProductRequests, setMyProductRequests] = useState([]);
   const previousAuthUserRef = useRef(null);
 
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
   const [isAccountOpen, setIsAccountOpen] = useState(false);
+  const [isNotFoundRequestOpen, setIsNotFoundRequestOpen] = useState(false);
+  const [isSubmittingNotFoundRequest, setIsSubmittingNotFoundRequest] =
+    useState(false);
+  const [notFoundRequestForm, setNotFoundRequestForm] = useState({
+    productName: "",
+    category: "",
+    brand: "",
+    description: "",
+  });
   const [search, setSearch] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("Todas");
   const [selectedSubcategory, setSelectedSubcategory] = useState("Todas");
@@ -1524,6 +1623,7 @@ function StoreFront({ products, user, showToast, storeSettings }) {
   const [viewportWidth, setViewportWidth] = useState(() =>
     typeof window !== "undefined" ? window.innerWidth : 1280,
   );
+  const hasAppliedSharedLinkRef = useRef(false);
   const searchTerm = String(search || "").trim();
   const isSearchMode = searchTerm.length > 0;
 
@@ -1696,6 +1796,132 @@ function StoreFront({ products, user, showToast, storeSettings }) {
 
     return () => unsub();
   }, [isRealUser, user]);
+
+  useEffect(() => {
+    if (!isRealUser || !user?.uid) return;
+
+    const productRequestsQuery = query(
+      collection(
+        db,
+        "artifacts",
+        appId,
+        "public",
+        "data",
+        "product_not_found_requests",
+      ),
+      where("customerId", "==", user.uid),
+    );
+
+    const unsub = onSnapshot(
+      productRequestsQuery,
+      (snapshot) => {
+        const docs = snapshot.docs.map((requestDoc) => ({
+          id: requestDoc.id,
+          ...requestDoc.data(),
+        }));
+
+        setMyProductRequests(
+          docs.sort(
+            (a, b) =>
+              (b.createdAt?.toMillis?.() || 0) -
+              (a.createdAt?.toMillis?.() || 0),
+          ),
+        );
+      },
+      (error) => {
+        console.error("Erro ao carregar solicitações de produto:", error);
+      },
+    );
+
+    return () => unsub();
+  }, [isRealUser, user]);
+
+  const handleOpenNotFoundRequestModal = () => {
+    if (!isRealUser) {
+      showToast("Entre na sua conta para solicitar um produto.", "error");
+      setIsAuthModalOpen(true);
+      return;
+    }
+
+    setNotFoundRequestForm((prev) => ({
+      ...prev,
+      productName: prev.productName || searchTerm,
+    }));
+    setIsNotFoundRequestOpen(true);
+  };
+
+  const handleSubmitNotFoundRequest = async (e) => {
+    e.preventDefault();
+
+    if (!isRealUser || !user?.uid) {
+      showToast("Entre na sua conta para solicitar um produto.", "error");
+      return;
+    }
+
+    if (!String(notFoundRequestForm.productName || "").trim()) {
+      showToast("Informe o nome do produto que você procura.", "error");
+      return;
+    }
+
+    if (String(notFoundRequestForm.description || "").trim().length < 10) {
+      showToast(
+        "Adicione uma descrição com pelo menos 10 caracteres.",
+        "error",
+      );
+      return;
+    }
+
+    setIsSubmittingNotFoundRequest(true);
+    try {
+      const customerName = userProfile
+        ? `${String(userProfile.firstName || "").trim()} ${String(userProfile.lastName || "").trim()}`.trim() ||
+          "Cliente"
+        : String(user.email || "")
+            .split("@")[0]
+            .trim() || "Cliente";
+
+      await addDoc(
+        collection(
+          db,
+          "artifacts",
+          appId,
+          "public",
+          "data",
+          "product_not_found_requests",
+        ),
+        {
+          customerId: user.uid,
+          customerName,
+          customerEmail: String(user.email || "").trim(),
+          customerPhone: String(userProfile?.phone || "").trim(),
+          productName: String(notFoundRequestForm.productName || "").trim(),
+          category: String(notFoundRequestForm.category || "").trim(),
+          brand: String(notFoundRequestForm.brand || "").trim(),
+          description: String(notFoundRequestForm.description || "").trim(),
+          requestedSearchTerm: searchTerm,
+          status: "produto_nao_encontrado",
+          adminLink: "",
+          adminMessage: "",
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        },
+      );
+
+      showToast("Solicitação enviada! Em breve retornaremos com novidades.");
+      setIsNotFoundRequestOpen(false);
+      setNotFoundRequestForm({
+        productName: "",
+        category: "",
+        brand: "",
+        description: "",
+      });
+    } catch (error) {
+      console.error("Erro ao enviar solicitação de produto:", error);
+      showToast("Não foi possível enviar a solicitação.", "error");
+    } finally {
+      setIsSubmittingNotFoundRequest(false);
+    }
+  };
 
   useEffect(() => {
     if (!isRealUser || !user?.uid) return;
@@ -1893,6 +2119,24 @@ function StoreFront({ products, user, showToast, storeSettings }) {
     ...new Set(products.map((p) => p.category).filter(Boolean)),
   ];
 
+  const categoryMenuItems = useMemo(
+    () =>
+      categories
+        .filter((category) => category !== "Todas")
+        .map((category) => ({
+          category,
+          subcategories: [
+            ...new Set(
+              products
+                .filter((product) => product.category === category)
+                .flatMap((product) => getProductSubcategories(product))
+                .filter(Boolean),
+            ),
+          ],
+        })),
+    [categories, products],
+  );
+
   const subcategories = [
     "Todas",
     ...new Set(
@@ -1908,6 +2152,25 @@ function StoreFront({ products, user, showToast, storeSettings }) {
   const effectiveSubcategory = subcategories.includes(selectedSubcategory)
     ? selectedSubcategory
     : "Todas";
+  const hasActiveCategoryFilter =
+    selectedCategory !== "Todas" || effectiveSubcategory !== "Todas";
+  const isSearchLikeMode = isSearchMode || hasActiveCategoryFilter;
+
+  const handleBackToStart = () => {
+    setSearch("");
+    setSelectedCategory("Todas");
+    setSelectedSubcategory("Todas");
+    setSortBy("relevancia");
+    setPriceRange("todos");
+    setOnlyInStock(false);
+    setOnlyWithVariations(false);
+    setActiveShowcaseSectionId("");
+    setProductsPage(1);
+
+    if (typeof window !== "undefined") {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  };
 
   // Adiciona ao carrinho validando o estoque
   const addToCart = (product, qty = 1) => {
@@ -2118,6 +2381,70 @@ function StoreFront({ products, user, showToast, storeSettings }) {
     [trackProductInterest],
   );
 
+  const handleShareProduct = useCallback(
+    async (product) => {
+      const params = new URLSearchParams();
+      params.set("productId", String(product?.id || ""));
+      if (product?.category) params.set("category", String(product.category));
+      if (product?.subcategory)
+        params.set("subcategory", String(product.subcategory));
+
+      const shareUrl = `${window.location.origin}${window.location.pathname}?${params.toString()}${window.location.hash || ""}`;
+
+      try {
+        if (navigator.share) {
+          await navigator.share({
+            title: String(product?.name || "Produto"),
+            text: `Confira este produto: ${String(product?.name || "")}`,
+            url: shareUrl,
+          });
+          return;
+        }
+
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(shareUrl);
+          showToast("Link do produto copiado para compartilhar!");
+          return;
+        }
+
+        showToast(`Link do produto: ${shareUrl}`);
+      } catch (error) {
+        console.error("Erro ao compartilhar produto:", error);
+        showToast("Não foi possível compartilhar este produto.", "error");
+      }
+    },
+    [showToast],
+  );
+
+  useEffect(() => {
+    if (!products.length || hasAppliedSharedLinkRef.current) return;
+
+    const params = new URLSearchParams(window.location.search || "");
+    const productId = String(params.get("productId") || "").trim();
+    const categoryFromUrl = String(params.get("category") || "").trim();
+    const subcategoryFromUrl = String(params.get("subcategory") || "").trim();
+
+    if (!productId && !categoryFromUrl && !subcategoryFromUrl) return;
+
+    hasAppliedSharedLinkRef.current = true;
+
+    if (categoryFromUrl) {
+      setSelectedCategory(categoryFromUrl);
+      setSelectedSubcategory("Todas");
+    }
+
+    if (subcategoryFromUrl) {
+      setSelectedSubcategory(subcategoryFromUrl);
+    }
+
+    if (productId) {
+      const product = products.find((item) => String(item?.id) === productId);
+      if (product) {
+        openProductWithTracking(product);
+      }
+    }
+  }, [products, openProductWithTracking]);
+
   useEffect(() => {
     const previousUser = previousAuthUserRef.current;
     previousAuthUserRef.current = user
@@ -2156,7 +2483,11 @@ function StoreFront({ products, user, showToast, storeSettings }) {
         <div className="max-w-7xl mx-auto px-4 py-3 md:py-4 flex flex-col gap-4">
           <div className="flex justify-between items-center gap-2">
             <div className="flex items-center gap-3 min-w-0">
-              <div className="w-14 h-14 md:w-16 md:h-16 rounded-2xl p-1.5 bg-gradient-to-br from-amber-200 via-rose-100 to-sky-100 shadow-md shrink-0">
+              <button
+                onClick={handleBackToStart}
+                className="w-14 h-14 md:w-16 md:h-16 rounded-2xl p-1.5 bg-gradient-to-br from-amber-200 via-rose-100 to-sky-100 shadow-md shrink-0 cursor-pointer"
+                title="Voltar ao início"
+              >
                 <div className="w-full h-full rounded-xl bg-white flex items-center justify-center overflow-hidden">
                   {storeSettings.logo ? (
                     <img
@@ -2168,11 +2499,64 @@ function StoreFront({ products, user, showToast, storeSettings }) {
                     <ShoppingBag size={24} className="text-slate-700" />
                   )}
                 </div>
-              </div>
+              </button>
               <div className="min-w-0">
-                <h1 className="text-lg sm:text-xl md:text-2xl font-black text-slate-900 truncate leading-tight">
-                  {storeSettings.storeName || "Aucela Multimarcas"}
-                </h1>
+                <div className="flex items-center gap-2 md:gap-3 flex-wrap">
+                  <button
+                    onClick={handleBackToStart}
+                    className="cursor-pointer"
+                    title="Voltar ao início"
+                  >
+                    <h1 className="text-lg sm:text-xl md:text-2xl font-black text-slate-900 truncate leading-tight max-w-[280px] sm:max-w-[360px] md:max-w-none text-left hover:text-indigo-700 transition">
+                      {storeSettings.storeName || "Aucela Multimarcas"}
+                    </h1>
+                  </button>
+                  {!isSearchMode && categoryMenuItems.length > 0 && (
+                    <div className="hidden md:flex items-center gap-2 flex-wrap">
+                      {categoryMenuItems.map((item) => (
+                        <div key={item.category} className="relative group">
+                          <button
+                            onClick={() => {
+                              setSelectedCategory(item.category);
+                              setSelectedSubcategory("Todas");
+                            }}
+                            className={`px-2.5 py-1 rounded-full text-xs font-bold transition cursor-pointer ${
+                              selectedCategory === item.category
+                                ? "bg-slate-900 text-white"
+                                : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                            }`}
+                          >
+                            {item.category}
+                          </button>
+
+                          {item.subcategories.length > 0 && (
+                            <div className="absolute left-0 top-full pt-1 z-50 opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition">
+                              <div className="min-w-[220px] max-w-[320px] flex flex-wrap gap-1.5 bg-white border border-slate-200 rounded-xl p-2 shadow-xl">
+                                {item.subcategories.map((sub) => (
+                                  <button
+                                    key={`${item.category}-${sub}`}
+                                    onClick={() => {
+                                      setSelectedCategory(item.category);
+                                      setSelectedSubcategory(sub);
+                                    }}
+                                    className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                                      selectedCategory === item.category &&
+                                      effectiveSubcategory === sub
+                                        ? "bg-amber-500 text-white"
+                                        : "bg-amber-50 text-amber-700 hover:bg-amber-100"
+                                    }`}
+                                  >
+                                    {sub}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 {storeSettings.storeTagline && (
                   <p className="text-xs md:text-sm text-slate-500 font-semibold truncate">
                     {storeSettings.storeTagline}
@@ -2189,7 +2573,7 @@ function StoreFront({ products, user, showToast, storeSettings }) {
                   </span>
                   <button
                     onClick={() => setIsAccountOpen(true)}
-                    className="flex items-center gap-2 text-slate-700 hover:text-indigo-600 font-bold text-sm transition bg-slate-200 hover:bg-slate-300 px-4 py-2 rounded-full"
+                    className="flex items-center gap-2 text-slate-700 hover:text-indigo-600 font-bold text-sm transition bg-slate-200 hover:bg-slate-300 px-4 py-2 rounded-full cursor-pointer"
                     title="Minha Conta"
                   >
                     <FileText size={18} />
@@ -2197,7 +2581,7 @@ function StoreFront({ products, user, showToast, storeSettings }) {
                   </button>
                   <button
                     onClick={() => signOut(auth)}
-                    className="text-slate-500 hover:text-rose-500 transition"
+                    className="text-slate-500 hover:text-rose-500 transition cursor-pointer"
                     title="Sair"
                   >
                     <LogOut size={22} />
@@ -2206,7 +2590,7 @@ function StoreFront({ products, user, showToast, storeSettings }) {
               ) : (
                 <button
                   onClick={() => setIsAuthModalOpen(true)}
-                  className="flex items-center gap-2 text-slate-700 hover:text-indigo-600 font-bold text-sm transition bg-slate-200 hover:bg-slate-300 px-4 py-2 rounded-full"
+                  className="flex items-center gap-2 text-slate-700 hover:text-indigo-600 font-bold text-sm transition bg-slate-200 hover:bg-slate-300 px-4 py-2 rounded-full cursor-pointer"
                 >
                   <User size={18} />{" "}
                   <span className="hidden sm:inline">Entrar / Cadastrar</span>
@@ -2215,7 +2599,7 @@ function StoreFront({ products, user, showToast, storeSettings }) {
 
               <button
                 onClick={() => setIsCartOpen(true)}
-                className="relative p-2.5 text-slate-700 hover:text-white hover:bg-gradient-to-r hover:from-indigo-600 hover:to-purple-600 hover:shadow-md transition-all duration-300 bg-slate-200 rounded-full hover:scale-105"
+                className="relative p-2.5 text-slate-700 hover:text-white hover:bg-gradient-to-r hover:from-indigo-600 hover:to-purple-600 hover:shadow-md transition-all duration-300 bg-slate-200 rounded-full hover:scale-105 cursor-pointer"
               >
                 <ShoppingCart size={22} />
                 {cart.length > 0 && (
@@ -2227,8 +2611,8 @@ function StoreFront({ products, user, showToast, storeSettings }) {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-3 items-center">
-            <div className="relative">
+          <div className="flex flex-col md:flex-row gap-3 items-stretch md:items-center">
+            <div className="relative flex-1">
               <Search
                 className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"
                 size={20}
@@ -2241,11 +2625,23 @@ function StoreFront({ products, user, showToast, storeSettings }) {
                 className="w-full pl-12 pr-4 py-3 rounded-2xl bg-slate-100 text-slate-900 font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-400 border border-slate-200"
               />
             </div>
+
+            {hasActiveCategoryFilter && (
+              <button
+                onClick={() => {
+                  setSelectedCategory("Todas");
+                  setSelectedSubcategory("Todas");
+                }}
+                className="px-4 py-3 rounded-2xl bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold text-sm transition cursor-pointer whitespace-nowrap"
+              >
+                Limpar filtro
+              </button>
+            )}
           </div>
         </div>
       </header>
 
-      {!isSearchMode && (
+      {!isSearchLikeMode && (
         <>
           {/* Banners Carousel */}
           <BannerCarousel banners={storeSettings.banners} />
@@ -2268,7 +2664,7 @@ function StoreFront({ products, user, showToast, storeSettings }) {
 
       {/* Product Grid */}
       <main className="max-w-[1400px] mx-auto px-4 py-8 md:py-12 pb-20 md:pb-10 flex-1 w-full">
-        {!isSearchMode && showcaseSections.length > 0 && (
+        {!isSearchLikeMode && showcaseSections.length > 0 && (
           <div className="space-y-6 mb-10">
             {showcaseSections
               .filter((section) =>
@@ -2306,7 +2702,7 @@ function StoreFront({ products, user, showToast, storeSettings }) {
                               prev === section.id ? "" : section.id,
                             )
                           }
-                          className="px-3 py-1.5 rounded-full bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 text-xs md:text-sm font-black transition"
+                          className="px-3 py-1.5 rounded-full bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 text-xs md:text-sm font-black transition cursor-pointer"
                         >
                           {isExpanded ? "Voltar" : "Ver todos"}
                         </button>
@@ -2321,6 +2717,7 @@ function StoreFront({ products, user, showToast, storeSettings }) {
                             product={product}
                             onOpenProduct={openProductWithTracking}
                             onAddToCart={addToCart}
+                            onShareProduct={handleShareProduct}
                           />
                         ))}
                       </div>
@@ -2332,6 +2729,7 @@ function StoreFront({ products, user, showToast, storeSettings }) {
                             product={product}
                             onOpenProduct={openProductWithTracking}
                             onAddToCart={addToCart}
+                            onShareProduct={handleShareProduct}
                             isShelf
                           />
                         ))}
@@ -2343,7 +2741,7 @@ function StoreFront({ products, user, showToast, storeSettings }) {
           </div>
         )}
 
-        {!isSearchMode && (
+        {!isSearchLikeMode && (
           <div className="mb-8 bg-white border border-slate-200 rounded-3xl shadow-sm p-4 md:p-6">
             <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
               <h3 className="text-lg md:text-xl font-black text-slate-800 flex items-center gap-2">
@@ -2392,7 +2790,7 @@ function StoreFront({ products, user, showToast, storeSettings }) {
                       <button
                         key={sub}
                         onClick={() => setSelectedSubcategory(sub)}
-                        className={`px-3.5 py-1.5 rounded-full text-xs md:text-sm font-bold transition-all ${
+                        className={`px-3.5 py-1.5 rounded-full text-xs md:text-sm font-bold transition-all cursor-pointer ${
                           effectiveSubcategory === sub
                             ? "bg-amber-500 text-white shadow"
                             : "bg-amber-50 text-amber-700 hover:bg-amber-100"
@@ -2474,6 +2872,12 @@ function StoreFront({ products, user, showToast, storeSettings }) {
               Nenhum produto localizado.
             </h3>
             <p className="text-slate-400 mt-2">Tente buscar por outro termo.</p>
+            <button
+              onClick={handleOpenNotFoundRequestModal}
+              className="mt-5 inline-flex items-center gap-2 px-5 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-2xl transition cursor-pointer"
+            >
+              Solicitar / Indicar um produto
+            </button>
           </div>
         ) : (
           <section className="space-y-4">
@@ -2499,6 +2903,7 @@ function StoreFront({ products, user, showToast, storeSettings }) {
                   product={product}
                   onOpenProduct={openProductWithTracking}
                   onAddToCart={addToCart}
+                  onShareProduct={handleShareProduct}
                 />
               ))}
             </div>
@@ -2702,10 +3107,133 @@ function StoreFront({ products, user, showToast, storeSettings }) {
           user={user}
           userProfile={userProfile}
           orders={myOrders}
+          productRequests={myProductRequests}
           storeSettings={storeSettings}
           close={() => setIsAccountOpen(false)}
           showToast={showToast}
         />
+      )}
+      {isNotFoundRequestOpen && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm">
+          <div className="w-full max-w-2xl rounded-3xl border border-indigo-100 bg-white shadow-2xl overflow-hidden">
+            <div className="px-6 py-5 bg-gradient-to-r from-indigo-50 via-white to-cyan-50 border-b border-slate-100">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-xl md:text-2xl font-black text-slate-800">
+                    Solicitar / Indicar um produto
+                  </h3>
+                  <p className="text-sm text-slate-600 mt-1 leading-relaxed">
+                    Não se preocupe! Não encontrou o produto? Envie o máximo de
+                    informações abaixo e retornaremos com o link pronto do item
+                    ou com uma resposta da sua solicitação.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setIsNotFoundRequestOpen(false)}
+                  className="p-2 rounded-full hover:bg-slate-100 transition cursor-pointer"
+                  aria-label="Fechar modal"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+            </div>
+
+            <form
+              onSubmit={handleSubmitNotFoundRequest}
+              className="p-6 space-y-4"
+            >
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="md:col-span-2">
+                  <label className="block text-xs font-black text-slate-500 uppercase tracking-wider mb-1.5">
+                    Nome do produto*
+                  </label>
+                  <input
+                    value={notFoundRequestForm.productName}
+                    onChange={(e) =>
+                      setNotFoundRequestForm((prev) => ({
+                        ...prev,
+                        productName: e.target.value,
+                      }))
+                    }
+                    placeholder="Ex: Tênis Nike Air Max 90 branco"
+                    className="w-full p-3 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-300"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-black text-slate-500 uppercase tracking-wider mb-1.5">
+                    Categoria
+                  </label>
+                  <input
+                    value={notFoundRequestForm.category}
+                    onChange={(e) =>
+                      setNotFoundRequestForm((prev) => ({
+                        ...prev,
+                        category: e.target.value,
+                      }))
+                    }
+                    placeholder="Ex: Calçados, Camisetas, Acessórios"
+                    className="w-full p-3 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-300"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-black text-slate-500 uppercase tracking-wider mb-1.5">
+                    Marca
+                  </label>
+                  <input
+                    value={notFoundRequestForm.brand}
+                    onChange={(e) =>
+                      setNotFoundRequestForm((prev) => ({
+                        ...prev,
+                        brand: e.target.value,
+                      }))
+                    }
+                    placeholder="Ex: Nike, Adidas, Reserva"
+                    className="w-full p-3 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-300"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-black text-slate-500 uppercase tracking-wider mb-1.5">
+                  Descrição detalhada*
+                </label>
+                <textarea
+                  rows={5}
+                  value={notFoundRequestForm.description}
+                  onChange={(e) =>
+                    setNotFoundRequestForm((prev) => ({
+                      ...prev,
+                      description: e.target.value,
+                    }))
+                  }
+                  placeholder="Modelo, cor, tamanho, faixa de preço, referência, uso, fotos de referência, tudo que ajudar a localizar o produto ideal."
+                  className="w-full p-3 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-300 resize-none"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsNotFoundRequestOpen(false)}
+                  className="px-4 py-2.5 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold transition cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingNotFoundRequest}
+                  className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white font-bold transition cursor-pointer disabled:cursor-not-allowed"
+                >
+                  {isSubmittingNotFoundRequest
+                    ? "Enviando..."
+                    : "Enviar solicitação"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
       {isCheckoutOpen && (
         <CheckoutFlow
@@ -2727,6 +3255,7 @@ function CustomerAccountModal({
   user,
   userProfile,
   orders,
+  productRequests,
   storeSettings,
   close,
   showToast,
@@ -2799,6 +3328,25 @@ function CustomerAccountModal({
       color: "bg-rose-100 text-rose-700",
     },
     cancelado: { label: "Cancelado", color: "bg-slate-100 text-slate-700" },
+  };
+
+  const productRequestStatusCatalog = {
+    produto_nao_encontrado: {
+      label: "Produto não encontrado",
+      color: "bg-amber-100 text-amber-700",
+    },
+    em_analise: {
+      label: "Em análise",
+      color: "bg-sky-100 text-sky-700",
+    },
+    link_disponivel: {
+      label: "Link disponível",
+      color: "bg-emerald-100 text-emerald-700",
+    },
+    nao_disponivel: {
+      label: "Não disponível",
+      color: "bg-slate-100 text-slate-700",
+    },
   };
 
   const resolveOrderStatus = (order) => {
@@ -3375,11 +3923,92 @@ function CustomerAccountModal({
           <div className="p-5 md:p-6">
             <h3 className="font-bold text-slate-800 mb-4">Meus Pedidos</h3>
             <div className="space-y-3 max-h-[420px] overflow-y-auto pr-1">
-              {orders.length === 0 && (
+              {orders.length === 0 && productRequests.length === 0 && (
                 <div className="border border-slate-200 rounded-xl p-4 text-sm text-slate-500 bg-slate-50">
                   Você ainda não possui pedidos registrados.
                 </div>
               )}
+
+              {productRequests.map((request) => {
+                const requestStatusMeta =
+                  productRequestStatusCatalog[request.status] ||
+                  productRequestStatusCatalog.produto_nao_encontrado;
+
+                return (
+                  <div
+                    key={request.id}
+                    className="border border-amber-200 rounded-xl p-4 bg-amber-50/30"
+                  >
+                    <div className="flex items-center justify-between gap-3 mb-3">
+                      <div>
+                        <p className="text-xs text-slate-400">Solicitação</p>
+                        <p className="font-bold text-slate-800">
+                          #{request.id.slice(0, 8).toUpperCase()}
+                        </p>
+                      </div>
+                      <span
+                        className={`px-2.5 py-1 rounded-full text-xs font-bold ${requestStatusMeta.color}`}
+                      >
+                        {requestStatusMeta.label}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                      <div>
+                        <p className="text-slate-400">Produto solicitado</p>
+                        <p className="font-semibold text-slate-700">
+                          {request.productName || "N/A"}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-slate-400">Categoria / Marca</p>
+                        <p className="font-semibold text-slate-700">
+                          {request.category || "—"}
+                          {request.brand ? ` • ${request.brand}` : ""}
+                        </p>
+                      </div>
+                      <div className="sm:col-span-2">
+                        <p className="text-slate-400">Descrição</p>
+                        <p className="font-semibold text-slate-700 leading-relaxed">
+                          {request.description || "Sem descrição."}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-slate-400">Data</p>
+                        <p className="font-semibold text-slate-700">
+                          {request.createdAt
+                            ? new Date(
+                                request.createdAt.toMillis(),
+                              ).toLocaleString("pt-BR")
+                            : "Recente"}
+                        </p>
+                      </div>
+                    </div>
+
+                    {(request.adminMessage || request.adminLink) && (
+                      <div className="mt-3 pt-3 border-t border-amber-200 space-y-2">
+                        {request.adminMessage && (
+                          <p className="text-xs text-slate-700 rounded-lg bg-white p-2.5 border border-slate-200">
+                            <strong>Resposta do admin:</strong>{" "}
+                            {request.adminMessage}
+                          </p>
+                        )}
+
+                        {request.adminLink && (
+                          <a
+                            href={request.adminLink}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition"
+                          >
+                            Ir para o produto indicado
+                          </a>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
 
               {orders.map((order) => {
                 const statusCode = resolveOrderStatus(order);
@@ -3534,7 +4163,7 @@ function CustomerAccountModal({
                             <button
                               onClick={() => handleRetryPayment(order)}
                               disabled={isProcessingOrder}
-                              className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 disabled:bg-slate-300"
+                              className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 disabled:bg-slate-300 cursor-pointer disabled:cursor-not-allowed"
                             >
                               {isProcessingOrder
                                 ? "Processando..."
@@ -3546,7 +4175,7 @@ function CustomerAccountModal({
                             <button
                               onClick={() => handleRequestCancellation(order)}
                               disabled={isProcessingOrder}
-                              className="px-3 py-2 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs font-bold hover:bg-rose-100 disabled:bg-slate-100 disabled:text-slate-400"
+                              className="px-3 py-2 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs font-bold hover:bg-rose-100 disabled:bg-slate-100 disabled:text-slate-400 cursor-pointer disabled:cursor-not-allowed"
                             >
                               Solicitar cancelamento
                             </button>
@@ -4353,7 +4982,7 @@ function ProductModal({ product, close, addToCart }) {
             <button
               onClick={handleAdd}
               disabled={!hasStock}
-              className="w-full py-4 rounded-2xl font-bold text-lg text-white shadow-lg transition-all duration-300 flex items-center justify-center gap-2 bg-gradient-to-r from-indigo-600 to-purple-600 hover:shadow-indigo-500/30 hover:scale-[1.02] disabled:opacity-50 disabled:scale-100"
+              className="w-full py-4 rounded-2xl font-bold text-lg text-white shadow-lg transition-all duration-300 flex items-center justify-center gap-2 bg-gradient-to-r from-indigo-600 to-purple-600 hover:shadow-indigo-500/30 hover:scale-[1.02] disabled:opacity-50 disabled:scale-100 disabled:cursor-not-allowed cursor-pointer"
             >
               <ShoppingBag size={22} />
               {hasStock ? "Adicionar ao Carrinho" : "Produto Esgotado"}
@@ -6151,6 +6780,8 @@ function AdminDashboard({
   orders,
   abandonedCarts,
   productInterestLeads,
+  productNotFoundRequests,
+  coupons,
   showToast,
   storeSettings,
   onAdminLogout,
@@ -6166,27 +6797,41 @@ function AdminDashboard({
     { id: "orders", name: "Vendas", icon: <Clock size={20} /> },
     { id: "carts", name: "Carrinhos Ativos", icon: <ShoppingCart size={20} /> },
     { id: "leads", name: "Interesse em Produtos", icon: <Eye size={20} /> },
+    {
+      id: "notFoundRequests",
+      name: "Não Encontrados",
+      icon: <AlertTriangle size={20} />,
+    },
+    { id: "coupons", name: "Cupons", icon: <Tag size={20} /> },
     { id: "settings", name: "Configurações", icon: <Settings size={20} /> },
   ];
 
   return (
     <div className="flex flex-col md:flex-row min-h-[calc(100vh-36px)] print:bg-white print:h-auto">
       {/* Mobile Nav Header */}
-      <div className="md:hidden bg-slate-800 text-white p-4 flex justify-between items-center sticky top-0 z-20 shadow-md print:hidden">
+      <div className="md:hidden bg-slate-800 text-white p-4 flex justify-between items-center relative z-30 shadow-md print:hidden">
         <h2 className="font-bold text-lg flex items-center gap-2">
           <Store size={20} /> Gestão Loja
         </h2>
         <button
           onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-          className="p-2"
+          className="p-2 cursor-pointer"
         >
           <LayoutDashboard size={24} />
         </button>
       </div>
 
+      {/* Mobile Overlay */}
+      {isMobileMenuOpen && (
+        <div
+          className="fixed inset-0 bg-black/40 z-[5] md:hidden"
+          onClick={() => setIsMobileMenuOpen(false)}
+        />
+      )}
+
       {/* Sidebar */}
       <aside
-        className={`${isMobileMenuOpen ? "block" : "hidden"} md:block w-full md:w-64 bg-slate-900 border-r border-slate-800 text-slate-300 flex-shrink-0 flex flex-col z-10 sticky top-0 md:top-[36px] md:h-[calc(100vh-36px)] overflow-y-auto print:hidden shadow-2xl relative`}
+        className={`${isMobileMenuOpen ? "fixed inset-0 md:relative" : "hidden"} md:block w-full md:w-64 bg-slate-900 border-r border-slate-800 text-slate-300 flex-shrink-0 flex flex-col z-20 md:sticky md:top-[36px] md:h-[calc(100vh-36px)] overflow-y-auto print:hidden shadow-2xl relative`}
       >
         <div className="absolute inset-0 bg-gradient-to-b from-indigo-500/5 to-transparent pointer-events-none"></div>
         <div className="p-6 hidden md:block border-b border-slate-800 relative z-10">
@@ -6206,7 +6851,7 @@ function AdminDashboard({
                 }
                 setIsMobileMenuOpen(false);
               }}
-              className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-xl transition-all duration-300 ${activeTab === tab.id ? "bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg shadow-indigo-500/20 font-bold scale-[1.02]" : "hover:bg-slate-800 hover:text-white font-medium hover:scale-[1.02]"}`}
+              className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-xl transition-all duration-300 cursor-pointer ${activeTab === tab.id ? "bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg shadow-indigo-500/20 font-bold scale-[1.02]" : "hover:bg-slate-800 hover:text-white font-medium hover:scale-[1.02]"}`}
             >
               {tab.icon}
               <span className="font-medium flex-1 text-left">{tab.name}</span>
@@ -6220,13 +6865,19 @@ function AdminDashboard({
                   {productInterestLeads.length}
                 </span>
               )}
+              {tab.id === "notFoundRequests" &&
+                productNotFoundRequests.length > 0 && (
+                  <span className="bg-amber-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+                    {productNotFoundRequests.length}
+                  </span>
+                )}
             </button>
           ))}
         </nav>
         <div className="p-4 border-t border-slate-800 relative z-10">
           <button
             onClick={onAdminLogout}
-            className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-slate-800 hover:bg-rose-600 text-slate-200 hover:text-white font-bold transition-all"
+            className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-slate-800 hover:bg-rose-600 text-slate-200 hover:text-white font-bold transition-all cursor-pointer"
           >
             <LogOut size={18} /> Sair do Admin
           </button>
@@ -6287,6 +6938,19 @@ function AdminDashboard({
               leads={productInterestLeads}
               showToast={showToast}
             />
+          )}
+        </div>
+        <div className={activeTab !== "notFoundRequests" ? "print:hidden" : ""}>
+          {activeTab === "notFoundRequests" && (
+            <ProductNotFoundRequestsList
+              requests={productNotFoundRequests}
+              showToast={showToast}
+            />
+          )}
+        </div>
+        <div className={activeTab !== "coupons" ? "print:hidden" : ""}>
+          {activeTab === "coupons" && (
+            <CouponManager coupons={coupons} showToast={showToast} />
           )}
         </div>
         <div className={activeTab !== "settings" ? "print:hidden" : ""}>
@@ -6418,10 +7082,14 @@ function ProductManager({ products, showToast, storeSettings }) {
   const [bulkErrors, setBulkErrors] = useState([]);
   const [isBulkImporting, setIsBulkImporting] = useState(false);
   const [editingId, setEditingId] = useState(null);
-  const [productToDelete, setProductToDelete] = useState(null); // Estado para o modal de confirmação
+  const [productToDelete, setProductToDelete] = useState(null);
   const [productSearch, setProductSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [stockFilter, setStockFilter] = useState("all");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
+  const itemsPerPage = 20;
   const [formData, setFormData] = useState({
     name: "",
     price: "",
@@ -6534,6 +7202,10 @@ function ProductManager({ products, showToast, storeSettings }) {
       descriptionEditorRef.current.innerHTML = html;
     }
   }, [editingId, isAdding]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [productSearch, categoryFilter, stockFilter]);
 
   const toggleSubcategory = (subcategory) => {
     setFormData((prev) => {
@@ -7375,6 +8047,120 @@ function ProductManager({ products, showToast, storeSettings }) {
     setProductToDelete(null);
   };
 
+  const toggleSelect = (id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === paginatedProducts.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(paginatedProducts.map((p) => p.id)));
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedIds.size === 0) return;
+    try {
+      await Promise.all(
+        Array.from(selectedIds).map((id) =>
+          deleteDoc(
+            doc(db, "artifacts", appId, "public", "data", "products", id),
+          ),
+        ),
+      );
+      showToast(`${selectedIds.size} produto(s) excluído(s) com sucesso!`);
+      setSelectedIds(new Set());
+      setBulkDeleteConfirm(false);
+    } catch (error) {
+      showToast("Erro ao excluir produtos", "error");
+    }
+  };
+
+  const exportCsvSelected = () => {
+    const selectedProducts = filteredProducts.filter((p) =>
+      selectedIds.has(p.id),
+    );
+    if (selectedProducts.length === 0) {
+      showToast("Nenhum produto selecionado para exportar", "error");
+      return;
+    }
+    exportProductsAsCSV(selectedProducts, "produtos-selecionados.csv");
+  };
+
+  const exportCsvAll = () => {
+    if (filteredProducts.length === 0) {
+      showToast("Nenhum produto para exportar", "error");
+      return;
+    }
+    exportProductsAsCSV(filteredProducts, "produtos.csv");
+  };
+
+  const exportProductsAsCSV = (productsToExport, filename) => {
+    const delimiter = ";";
+    const headers = [
+      "name",
+      "price",
+      "priceTag",
+      "category",
+      "subcategory",
+      "subsubcategory",
+      "stock",
+      "allowPickup",
+      "variations",
+    ];
+
+    const escapeCsvValue = (value) => {
+      if (value === null || value === undefined) return "";
+      const str = String(value);
+      if (
+        str.includes(delimiter) ||
+        str.includes('"') ||
+        str.includes("\n") ||
+        str.includes("\r")
+      ) {
+        return `"${str.replace(/"/g, '""')}"`;
+      }
+      return str;
+    };
+
+    const csvRows = productsToExport.map((product) => {
+      const row = {
+        name: product.name || "",
+        price: Number(product.price || 0),
+        priceTag: Number(product.priceTag || 0) || "",
+        category: product.category || "",
+        subcategory: product.subcategory || "",
+        subsubcategory: product.subsubcategory || "",
+        stock: Number(product.stock || 0),
+        allowPickup: Boolean(product.allowPickup),
+        variations: product.variations || "",
+      };
+
+      return headers
+        .map((header) => escapeCsvValue(row[header]))
+        .join(delimiter);
+    });
+
+    // BOM UTF-8 para o Excel abrir acentuação corretamente.
+    const csvContent = `\uFEFF${[headers.join(delimiter), ...csvRows].join("\r\n")}`;
+
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.setAttribute("href", url);
+    link.setAttribute("download", filename);
+    link.style.visibility = "hidden";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    showToast(`${productsToExport.length} produto(s) exportado(s)!`);
+  };
+
   const closeForm = () => {
     setIsAdding(false);
     setEditingId(null);
@@ -7395,6 +8181,15 @@ function ProductManager({ products, showToast, storeSettings }) {
       variationsByType: {},
     });
   };
+
+  const totalPages = Math.ceil(filteredProducts.length / itemsPerPage);
+  const paginatedProducts = filteredProducts.slice(
+    (currentPage - 1) * itemsPerPage,
+    currentPage * itemsPerPage,
+  );
+  const allSelected =
+    paginatedProducts.length > 0 &&
+    paginatedProducts.every((p) => selectedIds.has(p.id));
 
   if (isAdding) {
     return (
@@ -7779,14 +8574,14 @@ function ProductManager({ products, showToast, storeSettings }) {
         <div className="flex items-center gap-2">
           <button
             onClick={() => setIsBulkModalOpen(true)}
-            className="bg-slate-900 hover:bg-slate-700 transition text-white px-4 py-2 rounded-lg font-medium flex items-center gap-2"
+            className="bg-slate-900 hover:bg-slate-700 transition text-white px-4 py-2 rounded-lg font-medium flex items-center gap-2 cursor-pointer"
           >
             <Upload size={18} />
             <span className="hidden sm:inline">Cadastro Massivo</span>
           </button>
           <button
             onClick={() => setIsAdding(true)}
-            className="bg-indigo-600 hover:bg-indigo-700 transition text-white px-4 py-2 rounded-lg font-medium flex items-center gap-2"
+            className="bg-indigo-600 hover:bg-indigo-700 transition text-white px-4 py-2 rounded-lg font-medium flex items-center gap-2 cursor-pointer"
           >
             <Plus size={18} />{" "}
             <span className="hidden sm:inline">Novo Produto</span>
@@ -7795,6 +8590,28 @@ function ProductManager({ products, showToast, storeSettings }) {
       </div>
       <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-x-auto">
         <div className="p-4 md:p-5 border-b border-slate-100 bg-slate-50 flex flex-col md:flex-row gap-3">
+          {selectedIds.size > 0 && (
+            <div className="flex items-center gap-2 w-full md:w-auto">
+              <span className="text-sm font-semibold text-slate-700">
+                {selectedIds.size} selecionado(s)
+              </span>
+              <button
+                onClick={exportCsvSelected}
+                className="px-3 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium flex items-center gap-2 transition cursor-pointer"
+              >
+                <Download size={16} />
+                Exportar Selecionados
+              </button>
+              <button
+                onClick={() => setBulkDeleteConfirm(true)}
+                className="px-3 py-2 text-sm bg-rose-600 hover:bg-rose-700 text-white rounded-lg font-medium flex items-center gap-2 transition cursor-pointer"
+              >
+                <Trash2 size={16} />
+                Excluir Selecionados
+              </button>
+            </div>
+          )}
+          <div className="flex-1" />
           <div className="flex-1">
             <input
               type="text"
@@ -7804,6 +8621,13 @@ function ProductManager({ products, showToast, storeSettings }) {
               className="w-full p-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-300"
             />
           </div>
+          <button
+            onClick={exportCsvAll}
+            className="px-4 py-2 text-sm bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-medium flex items-center gap-2 transition cursor-pointer"
+          >
+            <Download size={16} />
+            Exportar Todos
+          </button>
           <select
             value={categoryFilter}
             onChange={(e) => setCategoryFilter(e.target.value)}
@@ -7830,6 +8654,14 @@ function ProductManager({ products, showToast, storeSettings }) {
         <table className="w-full text-left min-w-[600px]">
           <thead className="bg-slate-50 text-slate-500">
             <tr className="border-b">
+              <th className="p-4">
+                <input
+                  type="checkbox"
+                  checked={allSelected}
+                  onChange={toggleSelectAll}
+                  className="rounded border-slate-300 cursor-pointer"
+                />
+              </th>
               <th className="p-4">Produto</th>
               <th className="p-4">Categoria</th>
               <th className="p-4">Subcategoria</th>
@@ -7839,8 +8671,21 @@ function ProductManager({ products, showToast, storeSettings }) {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {filteredProducts.map((p) => (
-              <tr key={p.id} className="hover:bg-slate-50 transition-colors">
+            {paginatedProducts.map((p) => (
+              <tr
+                key={p.id}
+                className={`hover:bg-slate-50 transition-colors ${
+                  selectedIds.has(p.id) ? "bg-indigo-50" : ""
+                }`}
+              >
+                <td className="p-4">
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.has(p.id)}
+                    onChange={() => toggleSelect(p.id)}
+                    className="rounded border-slate-300 cursor-pointer"
+                  />
+                </td>
                 <td className="p-4 font-medium flex items-center gap-3">
                   <div className="w-10 h-10 bg-slate-100 rounded overflow-hidden shrink-0">
                     {(p.images?.[0] || p.image) && (
@@ -7872,14 +8717,14 @@ function ProductManager({ products, showToast, storeSettings }) {
                   <div className="flex justify-end items-center gap-2">
                     <button
                       onClick={() => handleEdit(p)}
-                      className="text-indigo-400 hover:text-indigo-600 p-2 hover:bg-indigo-50 rounded transition-colors"
+                      className="text-indigo-400 hover:text-indigo-600 p-2 hover:bg-indigo-50 rounded transition-colors cursor-pointer"
                       title="Editar Produto"
                     >
                       <Edit size={18} />
                     </button>
                     <button
                       onClick={() => setProductToDelete(p)}
-                      className="text-rose-400 hover:text-rose-600 p-2 hover:bg-rose-50 rounded transition-colors"
+                      className="text-rose-400 hover:text-rose-600 p-2 hover:bg-rose-50 rounded transition-colors cursor-pointer"
                       title="Excluir Produto"
                     >
                       <Trash2 size={18} />
@@ -7890,14 +8735,67 @@ function ProductManager({ products, showToast, storeSettings }) {
             ))}
             {filteredProducts.length === 0 && (
               <tr>
-                <td colSpan="6" className="p-8 text-center text-slate-400">
+                <td colSpan="7" className="p-8 text-center text-slate-400">
                   Nenhum produto encontrado com os filtros atuais.
                 </td>
               </tr>
             )}
           </tbody>
         </table>
+
+        {totalPages > 1 && (
+          <div className="p-4 border-t border-slate-100 bg-slate-50 flex items-center justify-center gap-2">
+            <button
+              onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+              disabled={currentPage === 1}
+              className="px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed transition font-medium cursor-pointer"
+            >
+              Anterior
+            </button>
+
+            {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
+              <button
+                key={page}
+                onClick={() => setCurrentPage(page)}
+                className={`px-3 py-2 text-sm rounded-lg font-medium transition cursor-pointer ${
+                  currentPage === page
+                    ? "bg-indigo-600 text-white"
+                    : "bg-white border border-slate-200 hover:bg-slate-100"
+                }`}
+              >
+                {page}
+              </button>
+            ))}
+
+            <button
+              onClick={() =>
+                setCurrentPage(Math.min(totalPages, currentPage + 1))
+              }
+              disabled={currentPage === totalPages}
+              className="px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed transition font-medium cursor-pointer"
+            >
+              Próximo
+            </button>
+
+            <span className="text-sm text-slate-600 ml-4">
+              Mostrando {(currentPage - 1) * itemsPerPage + 1} até{" "}
+              {Math.min(currentPage * itemsPerPage, filteredProducts.length)} de{" "}
+              {filteredProducts.length}
+            </span>
+          </div>
+        )}
       </div>
+
+      <ConfirmModal
+        isOpen={bulkDeleteConfirm}
+        title="Excluir Produtos Selecionados"
+        message={`Você está prestes a excluir ${selectedIds.size} produto(s). Esta ação não poderá ser desfeita.`}
+        onConfirm={handleBulkDelete}
+        onCancel={() => setBulkDeleteConfirm(false)}
+        confirmText="Excluir Produtos"
+        cancelText="Cancelar"
+        confirmStyle="bg-rose-600 hover:bg-rose-700"
+      />
 
       <ConfirmModal
         isOpen={!!productToDelete}
@@ -9147,254 +10045,423 @@ function OrdersList({ orders, showToast, storeSettings, quickFilter = "all" }) {
     }
   };
 
-  return (
-    <div className="bg-white rounded-2xl shadow-sm border overflow-x-auto">
-      <div className="p-4 border-b border-slate-100 bg-slate-50 flex flex-col lg:flex-row gap-3">
-        <input
-          type="text"
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          placeholder="Buscar por pedido, cliente, e-mail, telefone ou rastreio"
-          className="flex-1 p-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-300 bg-white"
-        />
-        <select
-          value={typeFilter}
-          onChange={(e) => setTypeFilter(e.target.value)}
-          className="p-3 border border-slate-200 rounded-xl bg-white min-w-[160px]"
-        >
-          <option value="all">Todos os tipos</option>
-          <option value="online">Online</option>
-          <option value="presencial">Presencial</option>
-        </select>
-        <select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          className="p-3 border border-slate-200 rounded-xl bg-white min-w-[220px]"
-        >
-          <option value="all">Todos os status</option>
-          <option value="losses">Perdas (Estornado/Cancelado)</option>
-          <option value="pendente_pagamento">Pendente de Pagamento</option>
-          <option value="pago">Pago</option>
-          <option value="aguardando_retirada">Aguardando Retirada</option>
-          <option value="separacao">Em Separação</option>
-          <option value="enviado">Enviado</option>
-          <option value="entregue">Entregue</option>
-          <option value="concluido">Concluído</option>
-          <option value="estornado">Estornado</option>
-          <option value="cancelado">Cancelado</option>
-        </select>
-      </div>
-      <table className="w-full text-left text-sm min-w-[1120px]">
-        <thead className="bg-slate-50 border-b">
-          <tr>
-            <th className="p-4">ID Pedido</th>
-            <th className="p-4">Data/Hora</th>
-            <th className="p-4">Tipo</th>
-            <th className="p-4">Cliente</th>
-            <th className="p-4">Status</th>
-            <th className="p-4">Rastreio</th>
-            <th className="p-4">Método</th>
-            <th className="p-4 text-right">Valor Total</th>
-            <th className="p-4 text-center">Ações</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-100">
-          {filteredOrders.map((o) => {
-            const status = getOrderStatus(o);
-            const statusMeta = statusCatalog[status] ||
-              statusCatalog.pendente || {
-                label: status,
-                color: "bg-slate-100 text-slate-700",
-              };
-            const allowedStatuses = getAllowedStatuses(o);
-            const isSaving = savingOrderId === o.id;
-            const trackingValue =
-              trackingDrafts[o.id] !== undefined
-                ? trackingDrafts[o.id]
-                : o.trackingCode || "";
-            const cancellationStatus = o?.cancellationRequest?.status || "";
-            const hasPendingCancellation = cancellationStatus === "requested";
-            const customerContactHref = buildCustomerContactHref(o);
+  // Estados para paginação e seleção
+  const [currentPage, setCurrentPage] = useState(1);
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
+  const itemsPerPage = 10;
 
-            return (
-              <tr key={o.id} className="hover:bg-slate-50 align-top">
-                <td className="p-4 font-mono text-xs text-slate-600 whitespace-nowrap">
-                  <span title={o.id}>{o.id.slice(0, 12).toUpperCase()}</span>
-                </td>
-                <td className="p-4 font-medium text-slate-700 whitespace-nowrap">
-                  {o.createdAt
-                    ? new Date(o.createdAt.toMillis()).toLocaleString()
-                    : "Recente"}
-                </td>
-                <td className="p-4">
-                  <span
-                    className={`px-2.5 py-1 rounded-full text-xs font-bold flex items-center w-max gap-1 ${o.type === "online" ? "bg-indigo-100 text-indigo-700" : "bg-amber-100 text-amber-700"}`}
-                  >
-                    {o.type === "online" ? (
-                      <Smartphone size={12} />
-                    ) : (
-                      <Store size={12} />
-                    )}
-                    {o.type.toUpperCase()}
-                  </span>
-                </td>
-                <td className="p-4 text-slate-600 min-w-[200px]">
-                  <span className="font-bold">
-                    {o.customerName ||
-                      o.address?.recebedorNome ||
-                      "Cliente Anônimo"}
-                  </span>
-                  {(o.customerPhone || o.address?.recebedorTelefone) && (
-                    <span className="block text-xs text-slate-400">
-                      {o.customerPhone || o.address?.recebedorTelefone}
+  const toggleSelect = (id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const allSelected =
+    filteredOrders.length > 0 &&
+    filteredOrders.every((o) => selectedIds.has(o.id));
+
+  const toggleSelectAll = () => {
+    if (allSelected) setSelectedIds(new Set());
+    else setSelectedIds(new Set(filteredOrders.map((o) => o.id)));
+  };
+
+  const handleBulkDelete = async () => {
+    try {
+      await Promise.all(
+        [...selectedIds].map((id) =>
+          deleteDoc(
+            doc(db, "artifacts", appId, "public", "data", "orders", id),
+          ),
+        ),
+      );
+      showToast(`${selectedIds.size} pedido(s) excluído(s).`);
+      setSelectedIds(new Set());
+    } catch (e) {
+      showToast("Erro ao excluir pedidos.", "error");
+    } finally {
+      setBulkDeleteConfirm(false);
+    }
+  };
+
+  const totalPages = Math.ceil(filteredOrders.length / itemsPerPage);
+  const paginatedOrders = filteredOrders.slice(
+    (currentPage - 1) * itemsPerPage,
+    currentPage * itemsPerPage,
+  );
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-white rounded-2xl shadow-sm border overflow-x-auto">
+        <div className="p-4 border-b border-slate-100 bg-slate-50 flex flex-col lg:flex-row gap-3">
+          <input
+            type="text"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            placeholder="Buscar por pedido, cliente, e-mail, telefone ou rastreio"
+            className="flex-1 p-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-300 bg-white"
+          />
+          <select
+            value={typeFilter}
+            onChange={(e) => setTypeFilter(e.target.value)}
+            className="p-3 border border-slate-200 rounded-xl bg-white min-w-[160px]"
+          >
+            <option value="all">Todos os tipos</option>
+            <option value="online">Online</option>
+            <option value="presencial">Presencial</option>
+          </select>
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            className="p-3 border border-slate-200 rounded-xl bg-white min-w-[220px]"
+          >
+            <option value="all">Todos os status</option>
+            <option value="losses">Perdas (Estornado/Cancelado)</option>
+            <option value="pendente_pagamento">Pendente de Pagamento</option>
+            <option value="pago">Pago</option>
+            <option value="aguardando_retirada">Aguardando Retirada</option>
+            <option value="separacao">Em Separação</option>
+            <option value="enviado">Enviado</option>
+            <option value="entregue">Entregue</option>
+            <option value="concluido">Concluído</option>
+            <option value="estornado">Estornado</option>
+            <option value="cancelado">Cancelado</option>
+          </select>
+        </div>
+        {selectedIds.size > 0 && (
+          <div className="px-4 py-3 border-b border-rose-200 bg-rose-50 flex items-center gap-3">
+            <span className="text-sm font-semibold text-rose-700 flex-1">
+              {selectedIds.size} pedido(s) selecionado(s)
+            </span>
+            <button
+              onClick={() => setBulkDeleteConfirm(true)}
+              className="flex items-center gap-1.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold px-4 py-2 rounded-lg"
+            >
+              <Trash2 size={13} /> Excluir selecionados
+            </button>
+            <button
+              onClick={() => setSelectedIds(new Set())}
+              className="text-rose-500 hover:text-rose-700 p-1"
+            >
+              <X size={16} />
+            </button>
+          </div>
+        )}
+        <table className="w-full text-left text-sm min-w-[1200px]">
+          <thead className="bg-slate-50 border-b">
+            <tr>
+              <th className="p-4 w-10">
+                <input
+                  type="checkbox"
+                  checked={allSelected}
+                  onChange={toggleSelectAll}
+                  className="w-4 h-4 accent-indigo-600 cursor-pointer"
+                />
+              </th>
+              <th className="p-4">ID Pedido</th>
+              <th className="p-4">Data/Hora</th>
+              <th className="p-4">Tipo</th>
+              <th className="p-4">Cliente</th>
+              <th className="p-4">Status</th>
+              <th className="p-4">Rastreio</th>
+              <th className="p-4">Método</th>
+              <th className="p-4 text-right">Valor Total</th>
+              <th className="p-4 text-right">Lucro Líquido</th>
+              <th className="p-4 text-center">Ações</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {paginatedOrders.map((o) => {
+              const status = getOrderStatus(o);
+              const statusMeta = statusCatalog[status] ||
+                statusCatalog.pendente || {
+                  label: status,
+                  color: "bg-slate-100 text-slate-700",
+                };
+              const allowedStatuses = getAllowedStatuses(o);
+              const isSaving = savingOrderId === o.id;
+              const trackingValue =
+                trackingDrafts[o.id] !== undefined
+                  ? trackingDrafts[o.id]
+                  : o.trackingCode || "";
+              const cancellationStatus = o?.cancellationRequest?.status || "";
+              const hasPendingCancellation = cancellationStatus === "requested";
+              const customerContactHref = buildCustomerContactHref(o);
+              const isSelected = selectedIds.has(o.id);
+
+              return (
+                <tr
+                  key={o.id}
+                  className={`align-top transition-colors ${isSelected ? "bg-indigo-50" : "hover:bg-slate-50"}`}
+                >
+                  <td className="p-4">
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => toggleSelect(o.id)}
+                      className="w-4 h-4 accent-indigo-600 cursor-pointer"
+                    />
+                  </td>
+                  <td className="p-4 font-mono text-xs text-slate-600 whitespace-nowrap">
+                    <span title={o.id}>{o.id.slice(0, 12).toUpperCase()}</span>
+                  </td>
+                  <td className="p-4 font-medium text-slate-700 whitespace-nowrap">
+                    {o.createdAt
+                      ? new Date(o.createdAt.toMillis()).toLocaleString()
+                      : "Recente"}
+                  </td>
+                  <td className="p-4">
+                    <span
+                      className={`px-2.5 py-1 rounded-full text-xs font-bold flex items-center w-max gap-1 ${o.type === "online" ? "bg-indigo-100 text-indigo-700" : "bg-amber-100 text-amber-700"}`}
+                    >
+                      {o.type === "online" ? (
+                        <Smartphone size={12} />
+                      ) : (
+                        <Store size={12} />
+                      )}
+                      {o.type.toUpperCase()}
                     </span>
-                  )}
-                </td>
-                <td className="p-4 min-w-[220px] space-y-2">
-                  <span
-                    className={`px-2.5 py-1 rounded-full text-xs font-bold inline-flex ${statusMeta.color}`}
-                  >
-                    {statusMeta.label}
-                  </span>
-                  {hasPendingCancellation && (
-                    <div className="text-[11px] rounded-lg bg-rose-50 border border-rose-200 text-rose-700 p-2">
-                      <p className="font-bold">Cancelamento solicitado</p>
-                      <p className="mt-1">
-                        {o?.cancellationRequest?.reason ||
-                          "Sem motivo informado."}
-                      </p>
-                    </div>
-                  )}
-                  <select
-                    value={status}
-                    onChange={(e) => handleStatusChange(o, e.target.value)}
-                    disabled={isSaving}
-                    className="w-full p-2 border border-slate-200 rounded-lg text-xs font-semibold bg-white"
-                  >
-                    {allowedStatuses.map((statusCode) => (
-                      <option key={statusCode} value={statusCode}>
-                        {statusCatalog[statusCode]?.label || statusCode}
-                      </option>
-                    ))}
-                  </select>
-                </td>
-                <td className="p-4 min-w-[230px]">
-                  {o.type === "online" && !isPickupOrder(o) ? (
-                    <div className="space-y-2">
-                      <input
-                        value={trackingValue}
-                        onChange={(e) =>
-                          setTrackingDrafts((prev) => ({
-                            ...prev,
-                            [o.id]: e.target.value,
-                          }))
-                        }
-                        placeholder="Código de rastreio"
-                        className="w-full p-2 border border-slate-200 rounded-lg text-xs"
-                        disabled={isSaving}
-                      />
-                      <button
-                        onClick={() => handleSaveTracking(o)}
-                        disabled={isSaving}
-                        className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white text-xs font-bold py-2 rounded-lg"
-                      >
-                        {isSaving ? "Salvando..." : "Salvar Rastreio"}
-                      </button>
-                    </div>
-                  ) : o.type === "online" && isPickupOrder(o) ? (
-                    <div className="text-xs text-slate-500">
-                      <p className="font-semibold text-slate-700">
-                        Retirada na loja
-                      </p>
-                      {pickupMapUrl && (
+                  </td>
+                  <td className="p-4 text-slate-600 min-w-[200px]">
+                    <span className="font-bold">
+                      {o.customerName ||
+                        o.address?.recebedorNome ||
+                        "Cliente Anônimo"}
+                    </span>
+                    {(o.customerPhone || o.address?.recebedorTelefone) && (
+                      <span className="block text-xs text-slate-400">
+                        {o.customerPhone || o.address?.recebedorTelefone}
+                      </span>
+                    )}
+                  </td>
+                  <td className="p-4 min-w-[220px] space-y-2">
+                    <span
+                      className={`px-2.5 py-1 rounded-full text-xs font-bold inline-flex ${statusMeta.color}`}
+                    >
+                      {statusMeta.label}
+                    </span>
+                    {hasPendingCancellation && (
+                      <div className="text-[11px] rounded-lg bg-rose-50 border border-rose-200 text-rose-700 p-2">
+                        <p className="font-bold">Cancelamento solicitado</p>
+                        <p className="mt-1">
+                          {o?.cancellationRequest?.reason ||
+                            "Sem motivo informado."}
+                        </p>
+                      </div>
+                    )}
+                    <select
+                      value={status}
+                      onChange={(e) => handleStatusChange(o, e.target.value)}
+                      disabled={isSaving}
+                      className="w-full p-2 border border-slate-200 rounded-lg text-xs font-semibold bg-white"
+                    >
+                      {allowedStatuses.map((statusCode) => (
+                        <option key={statusCode} value={statusCode}>
+                          {statusCatalog[statusCode]?.label || statusCode}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td className="p-4 min-w-[230px]">
+                    {o.type === "online" && !isPickupOrder(o) ? (
+                      <div className="space-y-2">
+                        <input
+                          value={trackingValue}
+                          onChange={(e) =>
+                            setTrackingDrafts((prev) => ({
+                              ...prev,
+                              [o.id]: e.target.value,
+                            }))
+                          }
+                          placeholder="Código de rastreio"
+                          className="w-full p-2 border border-slate-200 rounded-lg text-xs"
+                          disabled={isSaving}
+                        />
+                        <button
+                          onClick={() => handleSaveTracking(o)}
+                          disabled={isSaving}
+                          className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white text-xs font-bold py-2 rounded-lg"
+                        >
+                          {isSaving ? "Salvando..." : "Salvar Rastreio"}
+                        </button>
+                      </div>
+                    ) : o.type === "online" && isPickupOrder(o) ? (
+                      <div className="text-xs text-slate-500">
+                        <p className="font-semibold text-slate-700">
+                          Retirada na loja
+                        </p>
+                        {pickupMapUrl && (
+                          <a
+                            href={pickupMapUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 mt-1 font-bold text-cyan-700 hover:text-cyan-800"
+                          >
+                            <MapPin size={12} /> Abrir localização
+                          </a>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="text-xs text-slate-400">
+                        Não aplicável
+                      </span>
+                    )}
+                  </td>
+                  <td className="p-4 text-slate-500 whitespace-nowrap">
+                    {o.paymentMethod || "N/A"}
+                  </td>
+                  <td className="p-4 font-bold text-indigo-600 text-right text-base whitespace-nowrap">
+                    R$ {Number(o.total).toFixed(2)}
+                  </td>
+                  <td className="p-4 font-bold text-right text-base whitespace-nowrap">
+                    <span
+                      className={
+                        Number(o.profit || 0) >= 0
+                          ? "text-emerald-600"
+                          : "text-rose-600"
+                      }
+                    >
+                      R$ {Number(o.profit || 0).toFixed(2)}
+                    </span>
+                  </td>
+                  <td className="p-4 text-center min-w-[150px]">
+                    <div className="flex flex-wrap items-center justify-center gap-2">
+                      {o.type === "online" ? (
+                        <button
+                          onClick={() => handleRefund(o)}
+                          disabled={isSaving || status === "estornado"}
+                          className="bg-rose-100 text-rose-700 hover:bg-rose-200 disabled:bg-slate-100 disabled:text-slate-400 text-xs font-bold px-3 py-2 rounded-lg"
+                        >
+                          Estornar
+                        </button>
+                      ) : (
+                        <span className="text-xs text-slate-400">-</span>
+                      )}
+                      {hasPendingCancellation && (
+                        <>
+                          <button
+                            onClick={() =>
+                              handleReviewCancellationRequest(o, "approved")
+                            }
+                            disabled={isSaving}
+                            className="bg-emerald-100 text-emerald-700 hover:bg-emerald-200 disabled:bg-slate-100 disabled:text-slate-400 text-xs font-bold px-3 py-2 rounded-lg"
+                          >
+                            Aprovar cancelamento
+                          </button>
+                          <button
+                            onClick={() =>
+                              handleReviewCancellationRequest(o, "rejected")
+                            }
+                            disabled={isSaving}
+                            className="bg-amber-100 text-amber-700 hover:bg-amber-200 disabled:bg-slate-100 disabled:text-slate-400 text-xs font-bold px-3 py-2 rounded-lg"
+                          >
+                            Recusar
+                          </button>
+                        </>
+                      )}
+                      {customerContactHref && (
                         <a
-                          href={pickupMapUrl}
+                          href={customerContactHref}
                           target="_blank"
                           rel="noreferrer"
-                          className="inline-flex items-center gap-1 mt-1 font-bold text-cyan-700 hover:text-cyan-800"
+                          className="bg-sky-100 text-sky-700 hover:bg-sky-200 text-xs font-bold px-3 py-2 rounded-lg inline-flex items-center gap-1"
                         >
-                          <MapPin size={12} /> Abrir localização
+                          <MessageCircle size={13} /> Contato
                         </a>
                       )}
-                    </div>
-                  ) : (
-                    <span className="text-xs text-slate-400">
-                      Não aplicável
-                    </span>
-                  )}
-                </td>
-                <td className="p-4 text-slate-500 whitespace-nowrap">
-                  {o.paymentMethod || "N/A"}
-                </td>
-                <td className="p-4 font-bold text-indigo-600 text-right text-base whitespace-nowrap">
-                  R$ {Number(o.total).toFixed(2)}
-                </td>
-                <td className="p-4 text-center min-w-[150px]">
-                  <div className="flex flex-wrap items-center justify-center gap-2">
-                    {o.type === "online" ? (
                       <button
-                        onClick={() => handleRefund(o)}
-                        disabled={isSaving || status === "estornado"}
-                        className="bg-rose-100 text-rose-700 hover:bg-rose-200 disabled:bg-slate-100 disabled:text-slate-400 text-xs font-bold px-3 py-2 rounded-lg"
+                        onClick={() => setOrderToDelete(o.id)}
+                        disabled={isSaving}
+                        className="bg-slate-100 text-slate-700 hover:bg-slate-200 disabled:bg-slate-100 disabled:text-slate-400 text-xs font-bold px-3 py-2 rounded-lg"
                       >
-                        Estornar
+                        Excluir
                       </button>
-                    ) : (
-                      <span className="text-xs text-slate-400">-</span>
-                    )}
-                    {hasPendingCancellation && (
-                      <>
-                        <button
-                          onClick={() =>
-                            handleReviewCancellationRequest(o, "approved")
-                          }
-                          disabled={isSaving}
-                          className="bg-emerald-100 text-emerald-700 hover:bg-emerald-200 disabled:bg-slate-100 disabled:text-slate-400 text-xs font-bold px-3 py-2 rounded-lg"
-                        >
-                          Aprovar cancelamento
-                        </button>
-                        <button
-                          onClick={() =>
-                            handleReviewCancellationRequest(o, "rejected")
-                          }
-                          disabled={isSaving}
-                          className="bg-amber-100 text-amber-700 hover:bg-amber-200 disabled:bg-slate-100 disabled:text-slate-400 text-xs font-bold px-3 py-2 rounded-lg"
-                        >
-                          Recusar
-                        </button>
-                      </>
-                    )}
-                    {customerContactHref && (
-                      <a
-                        href={customerContactHref}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="bg-sky-100 text-sky-700 hover:bg-sky-200 text-xs font-bold px-3 py-2 rounded-lg inline-flex items-center gap-1"
-                      >
-                        <MessageCircle size={13} /> Contato
-                      </a>
-                    )}
-                    <button
-                      onClick={() => setOrderToDelete(o.id)}
-                      disabled={isSaving}
-                      className="bg-slate-100 text-slate-700 hover:bg-slate-200 disabled:bg-slate-100 disabled:text-slate-400 text-xs font-bold px-3 py-2 rounded-lg"
-                    >
-                      Excluir
-                    </button>
-                  </div>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+            {filteredOrders.length === 0 && (
+              <tr>
+                <td colSpan="11" className="p-8 text-center text-slate-400">
+                  Nenhuma venda encontrada com os filtros aplicados.
                 </td>
               </tr>
-            );
-          })}
-          {filteredOrders.length === 0 && (
-            <tr>
-              <td colSpan="9" className="p-8 text-center text-slate-400">
-                Nenhuma venda encontrada com os filtros aplicados.
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
+            )}
+          </tbody>
+        </table>
+
+        {totalPages > 1 && (
+          <div className="p-4 border-t border-slate-100 bg-slate-50 flex items-center justify-between">
+            <div className="text-sm text-slate-600">
+              Mostrando {(currentPage - 1) * itemsPerPage + 1} até{" "}
+              {Math.min(currentPage * itemsPerPage, filteredOrders.length)} de{" "}
+              {filteredOrders.length} pedidos
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+                disabled={currentPage === 1}
+                className="px-3 py-2 text-xs font-bold border border-slate-200 rounded-lg disabled:opacity-50 hover:bg-slate-100"
+              >
+                Anterior
+              </button>
+              {Array.from({ length: totalPages }).map((_, i) => (
+                <button
+                  key={i + 1}
+                  onClick={() => setCurrentPage(i + 1)}
+                  className={`px-3 py-2 text-xs font-bold rounded-lg ${
+                    currentPage === i + 1
+                      ? "bg-indigo-600 text-white"
+                      : "border border-slate-200 hover:bg-slate-100"
+                  }`}
+                >
+                  {i + 1}
+                </button>
+              ))}
+              <button
+                onClick={() =>
+                  setCurrentPage(Math.min(totalPages, currentPage + 1))
+                }
+                disabled={currentPage === totalPages}
+                className="px-3 py-2 text-xs font-bold border border-slate-200 rounded-lg disabled:opacity-50 hover:bg-slate-100"
+              >
+                Próxima
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {bulkDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-xl p-6 max-w-sm">
+            <h3 className="text-lg font-bold text-slate-800 mb-2">
+              Excluir {selectedIds.size} pedido(s)?
+            </h3>
+            <p className="text-sm text-slate-600 mb-6">
+              Tem certeza que deseja excluir {selectedIds.size} pedido(s)
+              selecionado(s)? Esta ação não pode ser desfeita.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setBulkDeleteConfirm(false)}
+                className="px-4 py-2 text-sm font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleBulkDelete}
+                className="px-4 py-2 text-sm font-semibold text-white bg-rose-600 hover:bg-rose-700 rounded-lg"
+              >
+                Excluir
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <ConfirmModal
         isOpen={!!orderToDelete}
@@ -9422,6 +10489,8 @@ function OrdersList({ orders, showToast, storeSettings, quickFilter = "all" }) {
 function AbandonedCartsList({ carts, showToast }) {
   const [viewingCart, setViewingCart] = useState(null);
   const [cartToDelete, setCartToDelete] = useState(null);
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
 
   const executeDeleteCart = async () => {
     if (!cartToDelete) return;
@@ -9444,6 +10513,48 @@ function AbandonedCartsList({ carts, showToast }) {
     setCartToDelete(null);
   };
 
+  const toggleSelect = (id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const allSelected =
+    carts.length > 0 && carts.every((c) => selectedIds.has(c.id));
+
+  const toggleSelectAll = () => {
+    if (allSelected) setSelectedIds(new Set());
+    else setSelectedIds(new Set(carts.map((c) => c.id)));
+  };
+
+  const handleBulkDelete = async () => {
+    try {
+      await Promise.all(
+        [...selectedIds].map((id) =>
+          deleteDoc(
+            doc(
+              db,
+              "artifacts",
+              appId,
+              "public",
+              "data",
+              "abandoned_carts",
+              id,
+            ),
+          ),
+        ),
+      );
+      showToast(`${selectedIds.size} carrinho(s) removido(s).`);
+      setSelectedIds(new Set());
+    } catch (e) {
+      showToast("Erro ao remover carrinhos.", "error");
+    } finally {
+      setBulkDeleteConfirm(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-2">
@@ -9456,9 +10567,36 @@ function AbandonedCartsList({ carts, showToast }) {
       </div>
 
       <div className="bg-white rounded-2xl shadow-sm border overflow-x-auto">
+        {selectedIds.size > 0 && (
+          <div className="p-4 border-b border-rose-200 bg-rose-50 flex items-center gap-3">
+            <span className="text-sm font-semibold text-rose-700 flex-1">
+              {selectedIds.size} selecionado(s)
+            </span>
+            <button
+              onClick={() => setBulkDeleteConfirm(true)}
+              className="flex items-center gap-1.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold px-4 py-2 rounded-lg"
+            >
+              <Trash2 size={13} /> Excluir selecionados
+            </button>
+            <button
+              onClick={() => setSelectedIds(new Set())}
+              className="text-rose-500 hover:text-rose-700 p-1"
+            >
+              <X size={16} />
+            </button>
+          </div>
+        )}
         <table className="w-full text-left text-sm min-w-[800px]">
           <thead className="bg-slate-50 border-b">
             <tr>
+              <th className="p-4 w-10">
+                <input
+                  type="checkbox"
+                  checked={allSelected}
+                  onChange={toggleSelectAll}
+                  className="w-4 h-4 accent-indigo-600 cursor-pointer"
+                />
+              </th>
               <th className="p-4">Última Ação</th>
               <th className="p-4">Cliente / Contacto</th>
               <th className="p-4">Itens no Carrinho</th>
@@ -9472,12 +10610,21 @@ function AbandonedCartsList({ carts, showToast }) {
                 cart.customerPhone !== "N/A"
                   ? cart.customerPhone.replace(/\D/g, "")
                   : null;
+              const isSelected = selectedIds.has(cart.id);
 
               return (
                 <tr
                   key={cart.id}
-                  className="hover:bg-slate-50 transition-colors"
+                  className={`transition-colors ${isSelected ? "bg-indigo-50" : "hover:bg-slate-50"}`}
                 >
+                  <td className="p-4">
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => toggleSelect(cart.id)}
+                      className="w-4 h-4 accent-indigo-600 cursor-pointer"
+                    />
+                  </td>
                   <td className="p-4">
                     <span className="font-medium text-slate-700">
                       {cart.updatedAt
@@ -9550,7 +10697,7 @@ function AbandonedCartsList({ carts, showToast }) {
             })}
             {carts.length === 0 && (
               <tr>
-                <td colSpan="5" className="p-8 text-center text-slate-400">
+                <td colSpan="6" className="p-8 text-center text-slate-400">
                   Nenhum carrinho ativo no momento.
                 </td>
               </tr>
@@ -9567,6 +10714,34 @@ function AbandonedCartsList({ carts, showToast }) {
         onCancel={() => setCartToDelete(null)}
         confirmText="Excluir Carrinho"
       />
+
+      {bulkDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-xl p-6 max-w-sm">
+            <h3 className="text-lg font-bold text-slate-800 mb-2">
+              Excluir {selectedIds.size} carrinho(s)?
+            </h3>
+            <p className="text-sm text-slate-600 mb-6">
+              Tem certeza que deseja excluir {selectedIds.size} carrinho(s)
+              selecionado(s)? Esta ação não pode ser desfeita.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setBulkDeleteConfirm(false)}
+                className="px-4 py-2 text-sm font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleBulkDelete}
+                className="px-4 py-2 text-sm font-semibold text-white bg-rose-600 hover:bg-rose-700 rounded-lg"
+              >
+                Excluir
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal para Visualizar Carrinho */}
       {viewingCart && (
@@ -9688,6 +10863,9 @@ function AbandonedCartsList({ carts, showToast }) {
 
 function ProductInterestLeads({ leads, showToast }) {
   const [searchTerm, setSearchTerm] = useState("");
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
 
   const filteredLeads = useMemo(() => {
     const query = String(searchTerm || "")
@@ -9722,6 +10900,73 @@ function ProductInterestLeads({ leads, showToast }) {
     return `https://wa.me/55${digits}?text=${encodeURIComponent(text)}`;
   };
 
+  const toggleSelect = (id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const allSelected =
+    filteredLeads.length > 0 &&
+    filteredLeads.every((lead) => selectedIds.has(lead.id));
+
+  const toggleSelectAll = () => {
+    if (allSelected) setSelectedIds(new Set());
+    else setSelectedIds(new Set(filteredLeads.map((lead) => lead.id)));
+  };
+
+  const handleDeleteLead = async (id) => {
+    setDeletingId(id);
+    try {
+      await deleteDoc(
+        doc(
+          db,
+          "artifacts",
+          appId,
+          "public",
+          "data",
+          "product_interest_leads",
+          id,
+        ),
+      );
+      showToast("Lead excluído com sucesso!");
+    } catch (error) {
+      console.error("Erro ao excluir lead:", error);
+      showToast("Erro ao excluir lead", "error");
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    try {
+      await Promise.all(
+        [...selectedIds].map((id) =>
+          deleteDoc(
+            doc(
+              db,
+              "artifacts",
+              appId,
+              "public",
+              "data",
+              "product_interest_leads",
+              id,
+            ),
+          ),
+        ),
+      );
+      showToast(`${selectedIds.size} lead(s) excluído(s).`);
+      setSelectedIds(new Set());
+    } catch (error) {
+      console.error("Erro ao excluir leads:", error);
+      showToast("Erro ao excluir leads", "error");
+    } finally {
+      setBulkDeleteConfirm(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-2">
@@ -9744,14 +10989,42 @@ function ProductInterestLeads({ leads, showToast }) {
           />
         </div>
 
+        {selectedIds.size > 0 && (
+          <div className="px-4 py-3 border-b border-rose-200 bg-rose-50 flex items-center gap-3">
+            <span className="text-sm font-semibold text-rose-700 flex-1">
+              {selectedIds.size} lead(s) selecionado(s)
+            </span>
+            <button
+              onClick={() => setBulkDeleteConfirm(true)}
+              className="flex items-center gap-1.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold px-4 py-2 rounded-lg"
+            >
+              <Trash2 size={13} /> Excluir selecionados
+            </button>
+            <button
+              onClick={() => setSelectedIds(new Set())}
+              className="text-rose-500 hover:text-rose-700 p-1"
+            >
+              <X size={16} />
+            </button>
+          </div>
+        )}
+
         <table className="w-full text-left text-sm min-w-[980px]">
           <thead className="bg-slate-50 border-b">
             <tr>
+              <th className="p-4 w-10">
+                <input
+                  type="checkbox"
+                  checked={allSelected}
+                  onChange={toggleSelectAll}
+                  className="w-4 h-4 accent-indigo-600 cursor-pointer"
+                />
+              </th>
               <th className="p-4">Último Clique</th>
               <th className="p-4">Cliente</th>
               <th className="p-4">Produto de Interesse</th>
               <th className="p-4 text-center">Cliques</th>
-              <th className="p-4 text-center">Contato</th>
+              <th className="p-4 text-center">Ações</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -9761,12 +11034,21 @@ function ProductInterestLeads({ leads, showToast }) {
                 String(lead?.customerEmail || "").trim(),
               );
               const clickCount = Number(lead?.clickCount || 0);
+              const isSelected = selectedIds.has(lead.id);
 
               return (
                 <tr
                   key={lead.id}
-                  className="hover:bg-slate-50 transition-colors"
+                  className={`transition-colors ${isSelected ? "bg-indigo-50" : "hover:bg-slate-50"}`}
                 >
+                  <td className="p-4">
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => toggleSelect(lead.id)}
+                      className="w-4 h-4 accent-indigo-600 cursor-pointer"
+                    />
+                  </td>
                   <td className="p-4 text-slate-700 font-medium whitespace-nowrap">
                     {lead?.lastClickedAt
                       ? new Date(lead.lastClickedAt.toMillis()).toLocaleString()
@@ -9851,6 +11133,13 @@ function ProductInterestLeads({ leads, showToast }) {
                           Copiar e-mail
                         </button>
                       )}
+                      <button
+                        onClick={() => handleDeleteLead(lead.id)}
+                        disabled={deletingId === lead.id}
+                        className="bg-rose-100 text-rose-700 hover:bg-rose-200 disabled:bg-slate-100 disabled:text-slate-400 text-xs font-bold px-3 py-2 rounded-lg"
+                      >
+                        {deletingId === lead.id ? "..." : "Excluir"}
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -9858,13 +11147,685 @@ function ProductInterestLeads({ leads, showToast }) {
             })}
             {filteredLeads.length === 0 && (
               <tr>
-                <td colSpan="5" className="p-8 text-center text-slate-400">
+                <td colSpan="6" className="p-8 text-center text-slate-400">
                   Nenhum registro de interesse encontrado.
                 </td>
               </tr>
             )}
           </tbody>
         </table>
+      </div>
+
+      {bulkDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-xl p-6 max-w-sm">
+            <h3 className="text-lg font-bold text-slate-800 mb-2">
+              Excluir {selectedIds.size} lead(s)?
+            </h3>
+            <p className="text-sm text-slate-600 mb-6">
+              Tem certeza que deseja excluir {selectedIds.size} lead(s)
+              selecionado(s)? Esta ação não pode ser desfeita.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setBulkDeleteConfirm(false)}
+                className="px-4 py-2 text-sm font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleBulkDelete}
+                className="px-4 py-2 text-sm font-semibold text-white bg-rose-600 hover:bg-rose-700 rounded-lg"
+              >
+                Excluir
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ProductNotFoundRequestsList({ requests, showToast }) {
+  const [searchTerm, setSearchTerm] = useState("");
+  const [savingId, setSavingId] = useState(null);
+  const [drafts, setDrafts] = useState({});
+
+  useEffect(() => {
+    const nextDrafts = {};
+    requests.forEach((request) => {
+      nextDrafts[request.id] = {
+        status: request.status || "produto_nao_encontrado",
+        adminLink: request.adminLink || "",
+        adminMessage: request.adminMessage || "",
+      };
+    });
+    setDrafts(nextDrafts);
+  }, [requests]);
+
+  const filteredRequests = useMemo(() => {
+    const query = String(searchTerm || "")
+      .trim()
+      .toLowerCase();
+    if (!query) return requests;
+
+    return requests.filter((request) => {
+      return [
+        request.productName,
+        request.category,
+        request.brand,
+        request.customerName,
+        request.customerEmail,
+      ]
+        .map((item) => String(item || "").toLowerCase())
+        .some((item) => item.includes(query));
+    });
+  }, [requests, searchTerm]);
+
+  const handleDraftChange = (id, field, value) => {
+    setDrafts((prev) => ({
+      ...prev,
+      [id]: {
+        ...(prev[id] || {}),
+        [field]: value,
+      },
+    }));
+  };
+
+  const handleSave = async (requestId) => {
+    const draft = drafts[requestId] || {};
+    setSavingId(requestId);
+    try {
+      const payload = {
+        status: String(draft.status || "produto_nao_encontrado"),
+        adminLink: String(draft.adminLink || "").trim(),
+        adminMessage: String(draft.adminMessage || "").trim(),
+        updatedAt: serverTimestamp(),
+      };
+
+      if (payload.status === "link_disponivel") {
+        payload.resolvedAt = serverTimestamp();
+      }
+
+      await updateDoc(
+        doc(
+          db,
+          "artifacts",
+          appId,
+          "public",
+          "data",
+          "product_not_found_requests",
+          requestId,
+        ),
+        payload,
+      );
+
+      showToast("Solicitação atualizada com sucesso!");
+    } catch (error) {
+      console.error("Erro ao atualizar solicitação:", error);
+      showToast("Erro ao atualizar solicitação", "error");
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+        <h2 className="text-2xl font-black text-slate-800">
+          Solicitações de Produto Não Encontrado
+        </h2>
+        <input
+          type="text"
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          placeholder="Buscar por produto, categoria, marca, cliente..."
+          className="w-full md:w-[420px] p-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-300"
+        />
+      </div>
+
+      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-x-auto">
+        <table className="w-full min-w-[1100px] text-sm text-left">
+          <thead className="bg-slate-50 border-b border-slate-100">
+            <tr>
+              <th className="p-4">Solicitação</th>
+              <th className="p-4">Cliente</th>
+              <th className="p-4">Produto</th>
+              <th className="p-4">Descrição</th>
+              <th className="p-4">Status</th>
+              <th className="p-4">Resposta / Link</th>
+              <th className="p-4 text-center">Ação</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {filteredRequests.map((request) => {
+              const draft = drafts[request.id] || {};
+
+              return (
+                <tr key={request.id} className="hover:bg-slate-50">
+                  <td className="p-4 whitespace-nowrap">
+                    <p className="font-bold text-slate-800">
+                      #{request.id.slice(0, 8).toUpperCase()}
+                    </p>
+                    <p className="text-xs text-slate-500">
+                      {request.createdAt
+                        ? new Date(request.createdAt.toMillis()).toLocaleString(
+                            "pt-BR",
+                          )
+                        : "Recente"}
+                    </p>
+                  </td>
+                  <td className="p-4">
+                    <p className="font-semibold text-slate-800">
+                      {request.customerName || "Cliente"}
+                    </p>
+                    <p className="text-xs text-slate-500">
+                      {request.customerEmail || "E-mail não informado"}
+                    </p>
+                    <p className="text-xs text-slate-500">
+                      {request.customerPhone || "Telefone não informado"}
+                    </p>
+                  </td>
+                  <td className="p-4">
+                    <p className="font-semibold text-slate-800">
+                      {request.productName || "Produto não informado"}
+                    </p>
+                    <p className="text-xs text-slate-500">
+                      {request.category || "Sem categoria"}
+                      {request.brand ? ` • ${request.brand}` : ""}
+                    </p>
+                    {request.requestedSearchTerm && (
+                      <p className="text-xs text-indigo-600 mt-1">
+                        Busca: "{request.requestedSearchTerm}"
+                      </p>
+                    )}
+                  </td>
+                  <td className="p-4 max-w-[260px]">
+                    <p className="text-xs text-slate-700 leading-relaxed line-clamp-4">
+                      {request.description || "Sem descrição."}
+                    </p>
+                  </td>
+                  <td className="p-4">
+                    <select
+                      value={draft.status || "produto_nao_encontrado"}
+                      onChange={(e) =>
+                        handleDraftChange(request.id, "status", e.target.value)
+                      }
+                      className="w-full p-2 border border-slate-200 rounded-lg bg-white outline-none focus:ring-2 focus:ring-amber-300"
+                    >
+                      <option value="produto_nao_encontrado">
+                        Produto não encontrado
+                      </option>
+                      <option value="em_analise">Em análise</option>
+                      <option value="link_disponivel">Link disponível</option>
+                      <option value="nao_disponivel">Não disponível</option>
+                    </select>
+                  </td>
+                  <td className="p-4 min-w-[280px]">
+                    <input
+                      type="url"
+                      value={draft.adminLink || ""}
+                      onChange={(e) =>
+                        handleDraftChange(
+                          request.id,
+                          "adminLink",
+                          e.target.value,
+                        )
+                      }
+                      placeholder="https://... link do produto"
+                      className="w-full p-2 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-indigo-300"
+                    />
+                    <textarea
+                      rows={2}
+                      value={draft.adminMessage || ""}
+                      onChange={(e) =>
+                        handleDraftChange(
+                          request.id,
+                          "adminMessage",
+                          e.target.value,
+                        )
+                      }
+                      placeholder="Mensagem para o cliente"
+                      className="mt-2 w-full p-2 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-indigo-300 resize-none"
+                    />
+                  </td>
+                  <td className="p-4 text-center">
+                    <button
+                      onClick={() => handleSave(request.id)}
+                      disabled={savingId === request.id}
+                      className="px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white text-xs font-bold transition cursor-pointer"
+                    >
+                      {savingId === request.id ? "Salvando..." : "Salvar"}
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+
+            {filteredRequests.length === 0 && (
+              <tr>
+                <td colSpan="7" className="p-8 text-center text-slate-400">
+                  Nenhuma solicitação encontrada.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function CouponManager({ coupons, showToast }) {
+  const [form, setForm] = useState({
+    code: "",
+    type: "percent",
+    value: "",
+    minOrderValue: "",
+    usageLimit: "",
+    usagePerUser: "",
+    expiresAt: "",
+    active: true,
+  });
+  const [isSaving, setIsSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
+  const [editingId, setEditingId] = useState(null);
+
+  const handleEdit = (coupon) => {
+    setForm({
+      code: coupon.code || "",
+      type: coupon.type || "percent",
+      value: coupon.value || "",
+      minOrderValue: coupon.minOrderValue || "",
+      usageLimit: coupon.usageLimit || "",
+      usagePerUser: coupon.usagePerUser || "",
+      expiresAt: coupon.expiresAt
+        ? new Date(coupon.expiresAt?.toDate?.() || coupon.expiresAt)
+            .toISOString()
+            .split("T")[0]
+        : "",
+      active: coupon.active ?? true,
+    });
+    setEditingId(coupon.id);
+  };
+
+  const handleCancelEdit = () => {
+    setEditingId(null);
+    setForm({
+      code: "",
+      type: "percent",
+      value: "",
+      minOrderValue: "",
+      usageLimit: "",
+      usagePerUser: "",
+      expiresAt: "",
+      active: true,
+    });
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!form.code || !form.value) {
+      showToast("Código e valor são obrigatórios", "error");
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      const payload = {
+        code: String(form.code).toUpperCase().trim(),
+        type: form.type,
+        value: Number(form.value),
+        minOrderValue: Number(form.minOrderValue) || 0,
+        usageLimit: Number(form.usageLimit) || 0,
+        usagePerUser: Number(form.usagePerUser) || 0,
+        expiresAt: form.expiresAt
+          ? new Date(form.expiresAt).toISOString()
+          : null,
+        active: form.active,
+      };
+
+      if (editingId) {
+        await updateDoc(
+          doc(db, "artifacts", appId, "public", "data", "coupons", editingId),
+          payload,
+        );
+        showToast("Cupom atualizado com sucesso!");
+        handleCancelEdit();
+      } else {
+        payload.usageCount = 0;
+        payload.createdAt = serverTimestamp();
+        await addDoc(
+          collection(db, "artifacts", appId, "public", "data", "coupons"),
+          payload,
+        );
+        showToast("Cupom criado com sucesso!");
+        setForm({
+          code: "",
+          type: "percent",
+          value: "",
+          minOrderValue: "",
+          usageLimit: "",
+          usagePerUser: "",
+          expiresAt: "",
+          active: true,
+        });
+      }
+    } catch (error) {
+      console.error("Erro ao salvar cupom:", error);
+      showToast("Erro ao salvar cupom", "error");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const toggleActive = async (coupon) => {
+    try {
+      await updateDoc(
+        doc(db, "artifacts", appId, "public", "data", "coupons", coupon.id),
+        { active: !coupon.active },
+      );
+      showToast(coupon.active ? "Cupom desativado!" : "Cupom ativado!");
+    } catch (error) {
+      console.error("Erro ao ativar/desativar cupom:", error);
+      showToast("Erro ao ativar/desativar cupom", "error");
+    }
+  };
+
+  const handleDelete = async (id) => {
+    setDeletingId(id);
+    try {
+      await deleteDoc(
+        doc(db, "artifacts", appId, "public", "data", "coupons", id),
+      );
+      showToast("Cupom excluído com sucesso!");
+    } catch (error) {
+      console.error("Erro ao excluir cupom:", error);
+      showToast("Erro ao excluir cupom", "error");
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  return (
+    <div className="space-y-6 p-6">
+      <div className="flex flex-col gap-2">
+        <h1 className="text-3xl font-bold text-slate-800">
+          Cupons de Desconto
+        </h1>
+        <p className="text-sm text-slate-500">
+          Gerenciar códigos de desconto para seus clientes
+        </p>
+      </div>
+
+      {/* Formulário de Criação */}
+      <div className="bg-white rounded-2xl shadow-sm border p-6">
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-xl font-bold text-slate-800">
+            {editingId ? "Editar Cupom" : "Criar Novo Cupom"}
+          </h2>
+          {editingId && (
+            <button
+              onClick={handleCancelEdit}
+              className="text-sm font-semibold text-slate-600 hover:text-slate-800 px-3 py-1.5 hover:bg-slate-100 rounded-lg transition"
+            >
+              Cancelar Edição
+            </button>
+          )}
+        </div>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-1">
+                Código do Cupom*
+              </label>
+              <input
+                type="text"
+                value={form.code}
+                onChange={(e) =>
+                  setForm((p) => ({ ...p, code: e.target.value.toUpperCase() }))
+                }
+                placeholder="EX: DESCONTO10"
+                className="w-full p-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-300"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-1">
+                Tipo de Desconto*
+              </label>
+              <select
+                value={form.type}
+                onChange={(e) =>
+                  setForm((p) => ({ ...p, type: e.target.value }))
+                }
+                className="w-full p-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-300"
+              >
+                <option value="percent">Percentual (%)</option>
+                <option value="fixed">Fixo (R$)</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-1">
+                Valor do Desconto*
+              </label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={form.value}
+                onChange={(e) =>
+                  setForm((p) => ({ ...p, value: e.target.value }))
+                }
+                placeholder={form.type === "percent" ? "10" : "50.00"}
+                className="w-full p-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-300"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-1">
+                Valor Mínimo (R$)
+              </label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={form.minOrderValue}
+                onChange={(e) =>
+                  setForm((p) => ({ ...p, minOrderValue: e.target.value }))
+                }
+                placeholder="0 = sem mínimo"
+                className="w-full p-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-300"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-1">
+                Limite de Usos
+              </label>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={form.usageLimit}
+                onChange={(e) =>
+                  setForm((p) => ({ ...p, usageLimit: e.target.value }))
+                }
+                placeholder="0 = ilimitado"
+                className="w-full p-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-300"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-1">
+                Limite por Usuário
+              </label>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={form.usagePerUser}
+                onChange={(e) =>
+                  setForm((p) => ({ ...p, usagePerUser: e.target.value }))
+                }
+                placeholder="0 = sem limite"
+                className="w-full p-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-300"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-1">
+                Data de Validade
+              </label>
+              <input
+                type="date"
+                value={form.expiresAt}
+                onChange={(e) =>
+                  setForm((p) => ({ ...p, expiresAt: e.target.value }))
+                }
+                className="w-full p-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-300"
+              />
+            </div>
+          </div>
+          <div className="flex justify-end gap-2">
+            {editingId && (
+              <button
+                type="button"
+                onClick={handleCancelEdit}
+                className="flex items-center gap-2 bg-slate-300 hover:bg-slate-400 text-slate-800 font-bold px-6 py-3 rounded-xl transition"
+              >
+                Cancelar
+              </button>
+            )}
+            <button
+              type="submit"
+              disabled={isSaving}
+              className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-6 py-3 rounded-xl disabled:opacity-50 transition"
+            >
+              {editingId ? (
+                <>
+                  <Edit size={18} />
+                  {isSaving ? "Atualizando..." : "Atualizar Cupom"}
+                </>
+              ) : (
+                <>
+                  <Plus size={18} />
+                  {isSaving ? "Salvando..." : "Criar Cupom"}
+                </>
+              )}
+            </button>
+          </div>
+        </form>
+      </div>
+
+      {/* Lista de cupons */}
+      <div className="bg-white rounded-2xl shadow-sm border overflow-x-auto">
+        <div className="p-4 border-b border-slate-100 bg-slate-50">
+          <p className="font-semibold text-slate-700">
+            {coupons.length === 0
+              ? "Nenhum cupom cadastrado"
+              : `${coupons.length} cupom${coupons.length > 1 ? "s" : ""} cadastrado${coupons.length > 1 ? "s" : ""}`}
+          </p>
+        </div>
+        {coupons.length > 0 && (
+          <table className="w-full text-left text-sm min-w-[700px]">
+            <thead className="bg-slate-50 border-b">
+              <tr>
+                <th className="p-4">Código</th>
+                <th className="p-4">Desconto</th>
+                <th className="p-4">Mínimo</th>
+                <th className="p-4">Usos</th>
+                <th className="p-4">Por Usuário</th>
+                <th className="p-4">Validade</th>
+                <th className="p-4 text-center">Status</th>
+                <th className="p-4 text-center">Ações</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {coupons.map((coupon) => {
+                const isExpired =
+                  coupon.expiresAt &&
+                  (coupon.expiresAt?.toDate?.() || new Date(coupon.expiresAt)) <
+                    new Date();
+                const limitReached =
+                  coupon.usageLimit > 0 &&
+                  coupon.usageCount >= coupon.usageLimit;
+
+                return (
+                  <tr
+                    key={coupon.id}
+                    className="hover:bg-slate-50 transition-colors"
+                  >
+                    <td className="p-4">
+                      <span className="font-mono font-black text-indigo-700 bg-indigo-50 px-2 py-1 rounded-lg text-sm">
+                        {coupon.code || coupon.id}
+                      </span>
+                    </td>
+                    <td className="p-4 font-semibold text-slate-800">
+                      {coupon.type === "percent"
+                        ? `${coupon.value}%`
+                        : `R$ ${Number(coupon.value).toFixed(2)}`}
+                    </td>
+                    <td className="p-4 text-slate-600">
+                      {Number(coupon.minOrderValue) > 0
+                        ? `R$ ${Number(coupon.minOrderValue).toFixed(2)}`
+                        : "—"}
+                    </td>
+                    <td className="p-4 text-slate-600">
+                      {Number(coupon.usageCount) || 0}
+                      {coupon.usageLimit > 0 ? `/${coupon.usageLimit}` : ""}
+                    </td>
+                    <td className="p-4 text-slate-600">
+                      {coupon.usagePerUser > 0 ? coupon.usagePerUser : "—"}
+                    </td>
+                    <td className="p-4 text-slate-600">
+                      {coupon.expiresAt
+                        ? (
+                            coupon.expiresAt?.toDate?.() ||
+                            new Date(coupon.expiresAt)
+                          ).toLocaleDateString("pt-BR")
+                        : "Sem validade"}
+                    </td>
+                    <td className="p-4 text-center">
+                      {isExpired || limitReached ? (
+                        <span className="bg-red-100 text-red-700 px-2 py-1 rounded-full text-xs font-bold">
+                          {isExpired ? "Expirado" : "Esgotado"}
+                        </span>
+                      ) : coupon.active ? (
+                        <span className="bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full text-xs font-bold">
+                          Ativo
+                        </span>
+                      ) : (
+                        <span className="bg-slate-200 text-slate-600 px-2 py-1 rounded-full text-xs font-bold">
+                          Inativo
+                        </span>
+                      )}
+                    </td>
+                    <td className="p-4">
+                      <div className="flex items-center justify-center gap-2">
+                        <button
+                          onClick={() => handleEdit(coupon)}
+                          className="text-xs font-bold px-3 py-1.5 rounded-lg bg-blue-100 text-blue-700 hover:bg-blue-200 transition cursor-pointer"
+                        >
+                          Editar
+                        </button>
+                        <button
+                          onClick={() => toggleActive(coupon)}
+                          className={`text-xs font-bold px-3 py-1.5 rounded-lg transition cursor-pointer ${coupon.active ? "bg-amber-100 text-amber-700 hover:bg-amber-200" : "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"}`}
+                        >
+                          {coupon.active ? "Desativar" : "Ativar"}
+                        </button>
+                        <button
+                          onClick={() => handleDelete(coupon.id)}
+                          disabled={deletingId === coupon.id}
+                          className="text-xs font-bold px-3 py-1.5 rounded-lg bg-red-100 text-red-700 hover:bg-red-200 disabled:opacity-50 transition cursor-pointer"
+                        >
+                          {deletingId === coupon.id ? "..." : "Excluir"}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
       </div>
     </div>
   );

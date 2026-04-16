@@ -1,0 +1,56 @@
+MODELO DE TABELA DE MEDIDAS (TEXTO)
+
+Formato recomendado por linha:
+[TAMANHO] [LARGURA cm] [COMPRIMENTO cm]
+
+Exemplo:
+S (P) 50 cm 70 cm
+M (M) 52 cm 72 cm
+L (G) 54 cm 74 cm
+XL (GG) 56 cm 76 cm
+2XL (XG) 58 cm 78 cm
+
+Observacoes:
+- Use sempre "cm" nas medidas.
+- Cada tamanho deve ficar em uma linha.
+- Voce pode colar este bloco diretamente no campo de cadastro da tabela.
+
+----------------------------------------
+MODELO DE TABELA DE MEDIDAS (HTML)
+
+<table>
+  <thead>
+    <tr>
+      <th>Tamanho</th>
+      <th>Largura (Peito)</th>
+      <th>Comprimento (Altura)</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>S (P)</td>
+      <td>50 cm</td>
+      <td>70 cm</td>
+    </tr>
+    <tr>
+      <td>M (M)</td>
+      <td>52 cm</td>
+      <td>72 cm</td>
+    </tr>
+    <tr>
+      <td>L (G)</td>
+      <td>54 cm</td>
+      <td>74 cm</td>
+    </tr>
+    <tr>
+      <td>XL (GG)</td>
+      <td>56 cm</td>
+      <td>76 cm</td>
+    </tr>
+    <tr>
+      <td>2XL (XG)</td>
+      <td>58 cm</td>
+      <td>78 cm</td>
+    </tr>
+  </tbody>
+</table>
