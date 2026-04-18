@@ -17,6 +17,7 @@ import {
   Image as ImageIcon,
   Trash2,
   CheckCircle2,
+  XCircle,
   X,
   Smartphone,
   Monitor,
@@ -244,6 +245,28 @@ const maskPhone = (value) => {
     return v.replace(/(\d{2})(\d{4})(\d)/, "($1) $2-$3");
   }
   return v.replace(/(\d{2})(\d{5})(\d{4}).*/, "($1) $2-$3");
+};
+
+const maskCpf = (value) => {
+  const v = String(value || "")
+    .replace(/\D/g, "")
+    .slice(0, 11);
+  if (v.length <= 3) return v;
+  if (v.length <= 6) return v.replace(/(\d{3})(\d+)/, "$1.$2");
+  if (v.length <= 9) return v.replace(/(\d{3})(\d{3})(\d+)/, "$1.$2.$3");
+  return v.replace(/(\d{3})(\d{3})(\d{3})(\d{1,2})/, "$1.$2.$3-$4");
+};
+
+const validateCpf = (cpf) => {
+  const d = String(cpf || "").replace(/\D/g, "");
+  if (d.length !== 11 || /^(\d)\1{10}$/.test(d)) return false;
+  const calc = (len) => {
+    let s = 0;
+    for (let i = 0; i < len; i++) s += parseInt(d[i]) * (len + 1 - i);
+    const r = (s * 10) % 11;
+    return r === 10 || r === 11 ? 0 : r;
+  };
+  return calc(9) === parseInt(d[9]) && calc(10) === parseInt(d[10]);
 };
 
 const normalizePhoneDigits = (value) => String(value || "").replace(/\D/g, "");
@@ -4030,6 +4053,7 @@ function CustomerAccountModal({
     firstName: "",
     lastName: "",
     phone: "",
+    cpf: "",
     email: "",
   });
   const [newAddress, setNewAddress] = useState({
@@ -4042,6 +4066,7 @@ function CustomerAccountModal({
     estado: "",
     recebedorNome: "",
     recebedorTelefone: "",
+    recebedorCpf: "",
   });
   const [editingAddressId, setEditingAddressId] = useState("");
   const [editAddressDraft, setEditAddressDraft] = useState({
@@ -4054,6 +4079,7 @@ function CustomerAccountModal({
     estado: "",
     recebedorNome: "",
     recebedorTelefone: "",
+    recebedorCpf: "",
   });
   const [isUpdatingAddress, setIsUpdatingAddress] = useState(false);
   const [isSettingPrimaryId, setIsSettingPrimaryId] = useState("");
@@ -4063,6 +4089,7 @@ function CustomerAccountModal({
       firstName: userProfile?.firstName || "",
       lastName: userProfile?.lastName || "",
       phone: userProfile?.phone || "",
+      cpf: userProfile?.cpf || "",
       email: user?.email || userProfile?.email || "",
     });
   }, [userProfile, user]);
@@ -4146,6 +4173,7 @@ function CustomerAccountModal({
         estado: "",
         recebedorNome: "",
         recebedorTelefone: "",
+        recebedorCpf: "",
       });
       showToast("Endereço salvo com sucesso!");
     } catch (error) {
@@ -4258,6 +4286,7 @@ function CustomerAccountModal({
       estado: String(address.estado || ""),
       recebedorNome: String(address.recebedorNome || ""),
       recebedorTelefone: String(address.recebedorTelefone || ""),
+      recebedorCpf: String(address.recebedorCpf || ""),
     });
   };
 
@@ -4273,6 +4302,7 @@ function CustomerAccountModal({
       estado: "",
       recebedorNome: "",
       recebedorTelefone: "",
+      recebedorCpf: "",
     });
   };
 
@@ -4824,6 +4854,10 @@ function CustomerAccountModal({
       return showToast("Nome e sobrenome são obrigatórios.", "error");
     }
 
+    if (formData.cpf.trim() && !validateCpf(formData.cpf)) {
+      return showToast("CPF inválido. Verifique o número informado.", "error");
+    }
+
     setIsSaving(true);
     try {
       await setDoc(
@@ -4832,6 +4866,7 @@ function CustomerAccountModal({
           firstName: formData.firstName.trim(),
           lastName: formData.lastName.trim(),
           phone: maskPhone(formData.phone),
+          cpf: formData.cpf.trim(),
           email: formData.email || user.email || "",
           updatedAt: serverTimestamp(),
         },
@@ -4843,6 +4878,7 @@ function CustomerAccountModal({
         {
           name: `${formData.firstName.trim()} ${formData.lastName.trim()}`.trim(),
           phone: maskPhone(formData.phone),
+          cpf: formData.cpf.trim(),
           email: formData.email || user.email || "",
           userId: user.uid,
           updatedAt: serverTimestamp(),
@@ -4931,6 +4967,44 @@ function CustomerAccountModal({
 
                 <div>
                   <label className="block text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider">
+                    CPF
+                  </label>
+                  <div className="relative">
+                    <input
+                      value={formData.cpf}
+                      onChange={(e) =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          cpf: maskCpf(e.target.value),
+                        }))
+                      }
+                      maxLength={14}
+                      placeholder="000.000.000-00"
+                      className={`w-full p-3 pr-10 border rounded-xl outline-none focus:ring-2 transition-all ${
+                        !formData.cpf
+                          ? "border-slate-200 focus:ring-indigo-500"
+                          : validateCpf(formData.cpf)
+                            ? "border-green-400 focus:ring-green-400"
+                            : "border-red-400 focus:ring-red-400"
+                      }`}
+                    />
+                    {formData.cpf && (
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none">
+                        {validateCpf(formData.cpf) ? (
+                          <CheckCircle2 size={18} className="text-green-500" />
+                        ) : (
+                          <XCircle size={18} className="text-red-400" />
+                        )}
+                      </span>
+                    )}
+                  </div>
+                  {formData.cpf && !validateCpf(formData.cpf) && (
+                    <p className="text-xs text-red-500 mt-1">CPF inválido</p>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider">
                     E-mail
                   </label>
                   <input
@@ -4942,7 +5016,9 @@ function CustomerAccountModal({
 
                 <button
                   type="submit"
-                  disabled={isSaving}
+                  disabled={
+                    isSaving || (!!formData.cpf && !validateCpf(formData.cpf))
+                  }
                   className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white py-3 rounded-xl font-bold transition"
                 >
                   {isSaving ? "Salvando..." : "Salvar Dados"}
@@ -5133,6 +5209,18 @@ function CustomerAccountModal({
                               }
                               className="w-full p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-indigo-400"
                             />
+                            <input
+                              placeholder="CPF (000.000.000-00)"
+                              maxLength={14}
+                              value={editAddressDraft.recebedorCpf || ""}
+                              onChange={(e) =>
+                                setEditAddressDraft((prev) => ({
+                                  ...prev,
+                                  recebedorCpf: maskCpf(e.target.value),
+                                }))
+                              }
+                              className="w-full p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-indigo-400"
+                            />
                           </div>
 
                           <div className="flex justify-end gap-2">
@@ -5305,6 +5393,23 @@ function CustomerAccountModal({
                         setNewAddress((prev) => ({
                           ...prev,
                           recebedorTelefone: maskPhone(e.target.value),
+                        }))
+                      }
+                      className="w-full p-3 border rounded-lg outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 transition-all"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1">
+                      CPF do Recebedor
+                    </label>
+                    <input
+                      maxLength={14}
+                      placeholder="000.000.000-00"
+                      value={newAddress.recebedorCpf || ""}
+                      onChange={(e) =>
+                        setNewAddress((prev) => ({
+                          ...prev,
+                          recebedorCpf: maskCpf(e.target.value),
                         }))
                       }
                       className="w-full p-3 border rounded-lg outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 transition-all"
@@ -7350,6 +7455,7 @@ function CheckoutFlow({
     estado: "",
     recebedorNome: "",
     recebedorTelefone: "",
+    recebedorCpf: "",
   });
   const [shippingOption, setShippingOption] = useState(null);
   const [paymentMethod, setPaymentMethod] = useState("");
@@ -7797,6 +7903,7 @@ function CheckoutFlow({
         estado: "",
         recebedorNome: "",
         recebedorTelefone: "",
+        recebedorCpf: "",
       });
       showToast("Endereço salvo com sucesso!");
     } catch (error) {
@@ -7992,6 +8099,7 @@ function CheckoutFlow({
         estado: selectedAddress.estado || "",
         recebedorNome: selectedAddress.recebedorNome || "",
         recebedorTelefone: selectedAddress.recebedorTelefone || "",
+        recebedorCpf: selectedAddress.recebedorCpf || userProfile?.cpf || "",
       };
 
       const customerName =
@@ -8430,6 +8538,31 @@ function CheckoutFlow({
                       }
                       className="w-full p-3 border rounded-lg outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 transition-all"
                     />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1">
+                      CPF do Recebedor
+                    </label>
+                    <input
+                      maxLength={14}
+                      placeholder={
+                        userProfile?.cpf ? userProfile.cpf : "000.000.000-00"
+                      }
+                      value={newAddress.recebedorCpf || ""}
+                      onChange={(e) =>
+                        setNewAddress({
+                          ...newAddress,
+                          recebedorCpf: maskCpf(e.target.value),
+                        })
+                      }
+                      className="w-full p-3 border rounded-lg outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 transition-all"
+                    />
+                    {userProfile?.cpf && !newAddress.recebedorCpf && (
+                      <p className="text-xs text-slate-400 mt-1">
+                        Deixe em branco para usar o CPF do seu cadastro (
+                        {userProfile.cpf})
+                      </p>
+                    )}
                   </div>
                 </div>
                 <button
@@ -12207,6 +12340,7 @@ function OrdersList({ orders, showToast, storeSettings, quickFilter = "all" }) {
   const [trackingDrafts, setTrackingDrafts] = useState({});
   const [orderToDelete, setOrderToDelete] = useState(null);
   const [orderToRefund, setOrderToRefund] = useState(null);
+  const [selectedOrder, setSelectedOrder] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
@@ -12764,7 +12898,12 @@ function OrdersList({ orders, showToast, storeSettings, quickFilter = "all" }) {
               return (
                 <tr
                   key={o.id}
-                  className={`align-top transition-colors ${isSelected ? "bg-indigo-50" : "hover:bg-slate-50"}`}
+                  onClick={(e) => {
+                    // não abre detalhes se clicou em checkbox, select, input ou botão
+                    if (e.target.closest("input,select,button,a")) return;
+                    setSelectedOrder(o);
+                  }}
+                  className={`align-top transition-colors cursor-pointer ${isSelected ? "bg-indigo-50" : "hover:bg-slate-50"}`}
                 >
                   <td className="p-4">
                     <input
@@ -12942,6 +13081,12 @@ function OrdersList({ orders, showToast, storeSettings, quickFilter = "all" }) {
                         </a>
                       )}
                       <button
+                        onClick={() => setSelectedOrder(o)}
+                        className="bg-indigo-50 text-indigo-700 hover:bg-indigo-100 text-xs font-bold px-3 py-2 rounded-lg inline-flex items-center gap-1"
+                      >
+                        <Eye size={13} /> Detalhes
+                      </button>
+                      <button
                         onClick={() => setOrderToDelete(o.id)}
                         disabled={isSaving}
                         className="bg-slate-100 text-slate-700 hover:bg-slate-200 disabled:bg-slate-100 disabled:text-slate-400 text-xs font-bold px-3 py-2 rounded-lg"
@@ -13051,6 +13196,415 @@ function OrdersList({ orders, showToast, storeSettings, quickFilter = "all" }) {
         confirmText="Estornar Pedido"
         confirmStyle="bg-rose-600 hover:bg-rose-700"
       />
+
+      {selectedOrder && (
+        <OrderDetailModal
+          order={selectedOrder}
+          statusCatalog={statusCatalog}
+          getOrderStatus={getOrderStatus}
+          onClose={() => setSelectedOrder(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// Modal de Detalhe do Pedido
+function OrderDetailModal({ order, statusCatalog, getOrderStatus, onClose }) {
+  const status = getOrderStatus(order);
+  const statusMeta = statusCatalog[status] || {
+    label: status,
+    color: "bg-slate-100 text-slate-700",
+  };
+  const items = Array.isArray(order?.items) ? order.items : [];
+  const address = order?.address || {};
+  const history = Array.isArray(order?.statusHistory)
+    ? order.statusHistory
+    : [];
+
+  const subtotal = items.reduce(
+    (s, i) => s + Number(i.price || 0) * Number(i.qty || 1),
+    0,
+  );
+  const shippingCost = Number(order?.shipping?.price || 0);
+  const discountAmount = Number(order?.discountAmount || 0);
+  const shippingDiscount = Number(order?.shippingDiscount || 0);
+  const total = Number(order?.total || 0);
+
+  const formatDate = (ts) => {
+    if (!ts) return "—";
+    try {
+      const d =
+        typeof ts.toMillis === "function"
+          ? new Date(ts.toMillis())
+          : new Date(ts);
+      return d.toLocaleString("pt-BR");
+    } catch {
+      return "—";
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+          <div>
+            <h2 className="text-lg font-black text-slate-800 tracking-tight">
+              Detalhes do Pedido
+            </h2>
+            <p className="text-xs text-slate-400 font-mono mt-0.5">
+              {String(order.id).toUpperCase()}
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-2 rounded-xl hover:bg-slate-100 text-slate-500 cursor-pointer"
+          >
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="overflow-y-auto flex-1 px-6 py-4 space-y-5">
+          {/* Status + Meta */}
+          <div className="flex flex-wrap gap-3 items-center">
+            <span
+              className={`px-3 py-1 rounded-full text-xs font-bold ${statusMeta.color}`}
+            >
+              {statusMeta.label}
+            </span>
+            <span
+              className={`px-3 py-1 rounded-full text-xs font-bold ${order.type === "online" ? "bg-indigo-100 text-indigo-700" : "bg-amber-100 text-amber-700"}`}
+            >
+              {order.type === "online" ? "Online" : "Presencial"}
+            </span>
+            <span className="text-xs text-slate-400">
+              {formatDate(order.createdAt)}
+            </span>
+          </div>
+
+          {/* Cliente */}
+          <section>
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">
+              Cliente
+            </h3>
+            <div className="bg-slate-50 rounded-xl p-4 space-y-1 text-sm text-slate-700">
+              <p>
+                <span className="font-semibold">Nome:</span>{" "}
+                {order.customerName || address.recebedorNome || "—"}
+              </p>
+              {order.customerEmail && (
+                <p>
+                  <span className="font-semibold">E-mail:</span>{" "}
+                  {order.customerEmail}
+                </p>
+              )}
+              {(order.customerPhone || address.recebedorTelefone) && (
+                <p>
+                  <span className="font-semibold">Telefone:</span>{" "}
+                  {order.customerPhone || address.recebedorTelefone}
+                </p>
+              )}
+              {address.recebedorCpf && (
+                <p>
+                  <span className="font-semibold">CPF:</span>{" "}
+                  {address.recebedorCpf}
+                </p>
+              )}
+            </div>
+          </section>
+
+          {/* Endereço de entrega */}
+          {order.type === "online" && (address.rua || address.logradouro) && (
+            <section>
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">
+                Endereço de Entrega
+              </h3>
+              <div className="bg-slate-50 rounded-xl p-4 text-sm text-slate-700 space-y-1">
+                {address.recebedorNome && (
+                  <p>
+                    <span className="font-semibold">Recebedor:</span>{" "}
+                    {address.recebedorNome}
+                    {address.recebedorTelefone && (
+                      <span className="text-slate-400">
+                        {" "}
+                        — {address.recebedorTelefone}
+                      </span>
+                    )}
+                  </p>
+                )}
+                {address.recebedorCpf && (
+                  <p>
+                    <span className="font-semibold">CPF:</span>{" "}
+                    {address.recebedorCpf}
+                  </p>
+                )}
+                <p>
+                  <span className="font-semibold">Endereço:</span>{" "}
+                  {address.rua || address.logradouro}
+                  {address.numero ? `, ${address.numero}` : ""}
+                  {address.complemento ? ` — ${address.complemento}` : ""}
+                </p>
+                {address.bairro && (
+                  <p>
+                    <span className="font-semibold">Bairro:</span>{" "}
+                    {address.bairro}
+                  </p>
+                )}
+                {(address.cidade || address.estado) && (
+                  <p>
+                    <span className="font-semibold">Cidade/UF:</span>{" "}
+                    {[address.cidade, address.estado]
+                      .filter(Boolean)
+                      .join(" / ")}
+                  </p>
+                )}
+                {address.cep && (
+                  <p>
+                    <span className="font-semibold">CEP:</span> {address.cep}
+                  </p>
+                )}
+              </div>
+            </section>
+          )}
+
+          {/* Itens */}
+          <section>
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">
+              Itens do Pedido
+            </h3>
+            <div className="rounded-xl border border-slate-200 overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50 text-slate-500 text-xs">
+                  <tr>
+                    <th className="px-4 py-2 text-left font-semibold">
+                      Produto
+                    </th>
+                    <th className="px-4 py-2 text-center font-semibold">Qtd</th>
+                    <th className="px-4 py-2 text-right font-semibold">
+                      Unit.
+                    </th>
+                    <th className="px-4 py-2 text-right font-semibold">
+                      Subtotal
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {items.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan="4"
+                        className="px-4 py-3 text-center text-slate-400"
+                      >
+                        Sem itens
+                      </td>
+                    </tr>
+                  ) : (
+                    items.map((item, idx) => {
+                      const personalization = item?.selectedPersonalization;
+                      const hasPersonalization =
+                        personalization?.usePersonalization;
+                      const variationMap =
+                        item?.selectedVariationMap &&
+                        typeof item.selectedVariationMap === "object"
+                          ? Object.entries(item.selectedVariationMap)
+                          : [];
+                      const basePrice = Number(
+                        item?.basePrice || item?.price || 0,
+                      );
+                      const personalizationPrice = Number(
+                        item?.personalizationPrice || 0,
+                      );
+
+                      return (
+                        <tr
+                          key={idx}
+                          className={`align-top ${idx % 2 === 0 ? "bg-white" : "bg-slate-50/50"}`}
+                        >
+                          <td className="px-4 py-3 text-slate-700">
+                            {/* Nome do produto */}
+                            <span className="font-semibold text-slate-800">
+                              {item.name || "—"}
+                            </span>
+
+                            {/* Variações detalhadas */}
+                            {variationMap.length > 0 && (
+                              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                                {variationMap.map(([tipo, valor]) => (
+                                  <span
+                                    key={tipo}
+                                    className="inline-flex items-center gap-1 bg-slate-100 text-slate-600 text-[11px] font-semibold px-2 py-0.5 rounded-full"
+                                  >
+                                    <span className="text-slate-400">
+                                      {tipo}:
+                                    </span>{" "}
+                                    {valor}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+
+                            {/* Variação (label legado, se não tiver mapa) */}
+                            {!variationMap.length && item.selectedVariation && (
+                              <span className="block mt-1 text-xs text-slate-500">
+                                Variação: {item.selectedVariation}
+                              </span>
+                            )}
+
+                            {/* Personalização */}
+                            {hasPersonalization && (
+                              <div className="mt-1.5 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2 space-y-0.5">
+                                <p className="text-[11px] font-bold text-indigo-600 uppercase tracking-wider">
+                                  Personalização
+                                </p>
+                                {personalization.name && (
+                                  <p className="text-xs text-indigo-800">
+                                    <span className="font-semibold">Nome:</span>{" "}
+                                    {personalization.name}
+                                  </p>
+                                )}
+                                {personalization.number && (
+                                  <p className="text-xs text-indigo-800">
+                                    <span className="font-semibold">
+                                      Número:
+                                    </span>{" "}
+                                    {personalization.number}
+                                  </p>
+                                )}
+                                {personalizationPrice > 0 && (
+                                  <p className="text-xs text-indigo-500">
+                                    + R$ {personalizationPrice.toFixed(2)}
+                                  </p>
+                                )}
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-center text-slate-600 font-semibold">
+                            {item.qty || 1}
+                          </td>
+                          <td className="px-4 py-3 text-right text-slate-600 whitespace-nowrap align-top">
+                            <span>R$ {basePrice.toFixed(2)}</span>
+                            {personalizationPrice > 0 && (
+                              <span className="block text-[11px] text-indigo-400">
+                                + R$ {personalizationPrice.toFixed(2)} pers.
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-right font-bold text-slate-800 whitespace-nowrap align-top">
+                            R${" "}
+                            {(
+                              Number(item.price || 0) * Number(item.qty || 1)
+                            ).toFixed(2)}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          {/* Resumo financeiro */}
+          <section>
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">
+              Resumo Financeiro
+            </h3>
+            <div className="bg-slate-50 rounded-xl p-4 space-y-2 text-sm text-slate-700">
+              <div className="flex justify-between">
+                <span>Subtotal dos produtos</span>
+                <span>R$ {subtotal.toFixed(2)}</span>
+              </div>
+              {discountAmount > 0 && (
+                <div className="flex justify-between text-emerald-700">
+                  <span>Desconto (cupom)</span>
+                  <span>− R$ {discountAmount.toFixed(2)}</span>
+                </div>
+              )}
+              {shippingCost > 0 && (
+                <div className="flex justify-between">
+                  <span>
+                    Frete
+                    {order.shipping?.name ? ` (${order.shipping.name})` : ""}
+                  </span>
+                  <span>R$ {shippingCost.toFixed(2)}</span>
+                </div>
+              )}
+              {shippingDiscount > 0 && (
+                <div className="flex justify-between text-emerald-700">
+                  <span>Desconto no frete</span>
+                  <span>− R$ {shippingDiscount.toFixed(2)}</span>
+                </div>
+              )}
+              <div className="flex justify-between font-black text-base text-indigo-700 border-t border-slate-200 pt-2 mt-1">
+                <span>Total</span>
+                <span>R$ {total.toFixed(2)}</span>
+              </div>
+              {order.paymentMethod && (
+                <p className="text-xs text-slate-400 mt-1">
+                  Forma de pagamento:{" "}
+                  <span className="font-semibold text-slate-600">
+                    {order.paymentMethod}
+                  </span>
+                </p>
+              )}
+              {Array.isArray(order.appliedCoupons) &&
+                order.appliedCoupons.length > 0 && (
+                  <div className="mt-2">
+                    <p className="text-xs text-slate-400 font-semibold mb-1">
+                      Cupons aplicados:
+                    </p>
+                    <div className="flex flex-wrap gap-1">
+                      {order.appliedCoupons.map((c, i) => (
+                        <span
+                          key={i}
+                          className="bg-emerald-100 text-emerald-700 text-xs font-bold px-2 py-0.5 rounded-full"
+                        >
+                          {c.code || c}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+            </div>
+          </section>
+
+          {/* Histórico de status */}
+          {history.length > 0 && (
+            <section>
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">
+                Histórico de Status
+              </h3>
+              <ol className="relative border-l border-slate-200 ml-2 space-y-3">
+                {history.map((h, i) => (
+                  <li key={i} className="ml-4">
+                    <span className="absolute -left-1.5 mt-1 w-3 h-3 rounded-full bg-indigo-400 border-2 border-white"></span>
+                    <p className="text-xs text-slate-500">{formatDate(h.at)}</p>
+                    <p className="text-sm font-semibold text-slate-700">
+                      {h.from} → {h.to}
+                      {h.action ? (
+                        <span className="text-xs text-slate-400 font-normal ml-1">
+                          ({h.action})
+                        </span>
+                      ) : null}
+                    </p>
+                  </li>
+                ))}
+              </ol>
+            </section>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="px-6 py-4 border-t border-slate-100 flex justify-end">
+          <button
+            onClick={onClose}
+            className="px-5 py-2.5 text-sm font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl cursor-pointer"
+          >
+            Fechar
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
