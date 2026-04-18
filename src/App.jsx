@@ -9395,12 +9395,25 @@ function AdminOverview({ products, orders, abandonedCarts, onOpenLosses }) {
     return order?.type === "online" ? "pendente_pagamento" : "concluido";
   };
 
-  const totalRevenue = orders
-    .filter((order) => {
-      const status = resolveOrderStatus(order);
-      return status !== "estornado" && status !== "cancelado";
-    })
-    .reduce((sum, order) => sum + (Number(order.total) || 0), 0);
+  const paidOrders = orders.filter((order) => {
+    const status = resolveOrderStatus(order);
+    return status !== "estornado" && status !== "cancelado";
+  });
+
+  const totalRevenue = paidOrders.reduce(
+    (sum, order) => sum + (Number(order.total) || 0),
+    0,
+  );
+
+  const totalCosts = paidOrders.reduce((sum, order) => {
+    const rawCost =
+      order?.cost !== undefined && order?.cost !== null
+        ? order.cost
+        : order?.orderCost;
+    return sum + (Number(rawCost) || 0);
+  }, 0);
+
+  const netProfit = totalRevenue - totalCosts;
 
   const totalLosses = orders
     .filter((order) => {
@@ -9424,6 +9437,22 @@ function AdminOverview({ products, orders, abandonedCarts, onOpenLosses }) {
           color="bg-gradient-to-br from-emerald-400 to-emerald-600 shadow-emerald-500/30"
         />
         <StatCard
+          title="Custos"
+          value={`R$ ${totalCosts.toFixed(2)}`}
+          icon={<CreditCard size={24} />}
+          color="bg-gradient-to-br from-amber-400 to-orange-500 shadow-orange-500/30"
+        />
+        <StatCard
+          title="Lucro Líquido"
+          value={`R$ ${netProfit.toFixed(2)}`}
+          icon={<CheckCircle2 size={24} />}
+          color={
+            netProfit >= 0
+              ? "bg-gradient-to-br from-emerald-500 to-teal-600 shadow-emerald-500/30"
+              : "bg-gradient-to-br from-rose-500 to-red-600 shadow-rose-500/30"
+          }
+        />
+        <StatCard
           title="Perdas (Estorno/Cancel.)"
           value={`R$ ${totalLosses.toFixed(2)}`}
           helperText="Clique para abrir vendas com perda"
@@ -9442,7 +9471,7 @@ function AdminOverview({ products, orders, abandonedCarts, onOpenLosses }) {
           title="Carrinhos Ativos"
           value={abandonedCarts?.length || 0}
           icon={<ShoppingCart size={24} />}
-          color="bg-gradient-to-br from-amber-400 to-orange-500 shadow-orange-500/30"
+          color="bg-gradient-to-br from-cyan-400 to-sky-500 shadow-sky-500/30"
         />
         <StatCard
           title="Produtos"
@@ -12372,6 +12401,7 @@ function PointOfSale({ products, showToast, storeSettings }) {
 function OrdersList({ orders, showToast, storeSettings, quickFilter = "all" }) {
   const [savingOrderId, setSavingOrderId] = useState(null);
   const [trackingDrafts, setTrackingDrafts] = useState({});
+  const [costDrafts, setCostDrafts] = useState({});
   const [orderToDelete, setOrderToDelete] = useState(null);
   const [orderToRefund, setOrderToRefund] = useState(null);
   const [selectedOrder, setSelectedOrder] = useState(null);
@@ -12668,6 +12698,65 @@ function OrdersList({ orders, showToast, storeSettings, quickFilter = "all" }) {
     }
   };
 
+  const getOrderCost = (order) => {
+    const raw =
+      order?.cost !== undefined && order?.cost !== null
+        ? order.cost
+        : order?.orderCost;
+    const parsed = Number(raw || 0);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+
+  const getOrderProfit = (order) => {
+    const total = Number(order?.total || 0);
+    const cost = getOrderCost(order);
+    return total - cost;
+  };
+
+  const handleSaveCost = async (order) => {
+    if (!order?.id) return;
+
+    const rawDraft =
+      costDrafts[order.id] !== undefined
+        ? costDrafts[order.id]
+        : getOrderCost(order);
+    const normalizedValue =
+      typeof rawDraft === "string" ? rawDraft.replace(",", ".") : rawDraft;
+    const cost = Number(normalizedValue);
+
+    if (!Number.isFinite(cost) || cost < 0) {
+      return showToast(
+        "Informe um custo válido (maior ou igual a zero)",
+        "error",
+      );
+    }
+
+    const profit = Number(order?.total || 0) - cost;
+
+    setSavingOrderId(order.id);
+    try {
+      await updateDoc(
+        doc(db, "artifacts", appId, "public", "data", "orders", order.id),
+        {
+          cost,
+          profit,
+          profitUpdatedAt: serverTimestamp(),
+        },
+      );
+      setCostDrafts((prev) => {
+        const next = { ...prev };
+        delete next[order.id];
+        return next;
+      });
+      showToast("Custo do pedido salvo e lucro recalculado!");
+    } catch (error) {
+      console.error("Erro ao salvar custo do pedido:", error);
+      showToast("Erro ao salvar custo do pedido", "error");
+    } finally {
+      setSavingOrderId(null);
+    }
+  };
+
   const handleRefund = async (order) => {
     if (!order?.id) return;
     setOrderToRefund(order.id);
@@ -12887,7 +12976,7 @@ function OrdersList({ orders, showToast, storeSettings, quickFilter = "all" }) {
             </button>
           </div>
         )}
-        <table className="w-full text-left text-sm min-w-[1200px]">
+        <table className="w-full text-left text-sm min-w-[1360px]">
           <thead className="bg-slate-50 border-b">
             <tr>
               <th className="p-4 w-10">
@@ -12906,6 +12995,7 @@ function OrdersList({ orders, showToast, storeSettings, quickFilter = "all" }) {
               <th className="p-4">Rastreio</th>
               <th className="p-4">Método</th>
               <th className="p-4 text-right">Valor Total</th>
+              <th className="p-4">Custo</th>
               <th className="p-4 text-right">Lucro Líquido</th>
               <th className="p-4 text-center">Ações</th>
             </tr>
@@ -12928,6 +13018,11 @@ function OrdersList({ orders, showToast, storeSettings, quickFilter = "all" }) {
               const hasPendingCancellation = cancellationStatus === "requested";
               const customerContactHref = buildCustomerContactHref(o);
               const isSelected = selectedIds.has(o.id);
+              const costValue =
+                costDrafts[o.id] !== undefined
+                  ? costDrafts[o.id]
+                  : getOrderCost(o);
+              const orderProfit = getOrderProfit(o);
 
               return (
                 <tr
@@ -13058,15 +13153,41 @@ function OrdersList({ orders, showToast, storeSettings, quickFilter = "all" }) {
                   <td className="p-4 font-bold text-indigo-600 text-right text-base whitespace-nowrap">
                     R$ {Number(o.total).toFixed(2)}
                   </td>
+                  <td className="p-4 min-w-[190px]">
+                    <div className="space-y-2">
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={costValue}
+                        onChange={(e) =>
+                          setCostDrafts((prev) => ({
+                            ...prev,
+                            [o.id]: e.target.value,
+                          }))
+                        }
+                        placeholder="0,00"
+                        className="w-full p-2 border border-slate-200 rounded-lg text-xs"
+                        disabled={isSaving}
+                      />
+                      <button
+                        onClick={() => handleSaveCost(o)}
+                        disabled={isSaving}
+                        className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white text-xs font-bold py-2 rounded-lg"
+                      >
+                        {isSaving ? "Salvando..." : "Salvar Custo"}
+                      </button>
+                    </div>
+                  </td>
                   <td className="p-4 font-bold text-right text-base whitespace-nowrap">
                     <span
                       className={
-                        Number(o.profit || 0) >= 0
+                        Number(orderProfit) >= 0
                           ? "text-emerald-600"
                           : "text-rose-600"
                       }
                     >
-                      R$ {Number(o.profit || 0).toFixed(2)}
+                      R$ {Number(orderProfit).toFixed(2)}
                     </span>
                   </td>
                   <td className="p-4 text-center min-w-[150px]">
@@ -13134,7 +13255,7 @@ function OrdersList({ orders, showToast, storeSettings, quickFilter = "all" }) {
             })}
             {filteredOrders.length === 0 && (
               <tr>
-                <td colSpan="11" className="p-8 text-center text-slate-400">
+                <td colSpan="12" className="p-8 text-center text-slate-400">
                   Nenhuma venda encontrada com os filtros aplicados.
                 </td>
               </tr>
