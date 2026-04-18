@@ -37,6 +37,7 @@ import {
   Map as MapIcon,
   MessageCircle,
   Edit,
+  Copy,
   Eye,
   UserPlus,
   FileText,
@@ -10234,9 +10235,9 @@ function ProductManager({ products, showToast, storeSettings }) {
     }
   };
 
-  const handleEdit = (product) => {
+  const buildProductFormData = (product) => {
     const personalization = normalizeProductPersonalization(product);
-    setFormData({
+    return {
       name: product.name || "",
       price: product.price || "",
       priceTag: product.priceTag || "",
@@ -10260,9 +10261,20 @@ function ProductManager({ products, showToast, storeSettings }) {
         allowNumber: personalization.allowNumber,
         details: personalization.details,
       },
-    });
+    };
+  };
+
+  const handleEdit = (product) => {
+    setFormData(buildProductFormData(product));
     setEditingId(product.id);
     setIsAdding(true);
+  };
+
+  const handleClone = (product) => {
+    setFormData(buildProductFormData(product));
+    setEditingId(null);
+    setIsAdding(true);
+    showToast("Produto clonado. Ajuste os dados e salve como novo produto.");
   };
 
   const executeDeleteProduct = async () => {
@@ -11108,6 +11120,13 @@ function ProductManager({ products, showToast, storeSettings }) {
                       title="Editar Produto"
                     >
                       <Edit size={18} />
+                    </button>
+                    <button
+                      onClick={() => handleClone(p)}
+                      className="text-sky-500 hover:text-sky-700 p-2 hover:bg-sky-50 rounded transition-colors cursor-pointer"
+                      title="Clonar Produto"
+                    >
+                      <Copy size={18} />
                     </button>
                     <button
                       onClick={() => setProductToDelete(p)}
