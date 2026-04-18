@@ -1492,83 +1492,6 @@ export default function App() {
       (err) => console.error(err),
     );
 
-    const ordersRef = collection(
-      db,
-      "artifacts",
-      appId,
-      "public",
-      "data",
-      "orders",
-    );
-    const unsubOrders = onSnapshot(
-      ordersRef,
-      (snapshot) => {
-        const ords = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        }));
-        setOrders(
-          ords.sort(
-            (a, b) =>
-              (b.createdAt?.toMillis() || 0) - (a.createdAt?.toMillis() || 0),
-          ),
-        );
-      },
-      (err) => console.error(err),
-    );
-
-    const cartsRef = collection(
-      db,
-      "artifacts",
-      appId,
-      "public",
-      "data",
-      "abandoned_carts",
-    );
-    const unsubCarts = onSnapshot(
-      cartsRef,
-      (snapshot) => {
-        const carts = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        }));
-        setAbandonedCarts(
-          carts.sort(
-            (a, b) =>
-              (b.updatedAt?.toMillis() || 0) - (a.updatedAt?.toMillis() || 0),
-          ),
-        );
-      },
-      (err) => console.error(err),
-    );
-
-    const leadsRef = collection(
-      db,
-      "artifacts",
-      appId,
-      "public",
-      "data",
-      "product_interest_leads",
-    );
-    const unsubLeads = onSnapshot(
-      leadsRef,
-      (snapshot) => {
-        const leads = snapshot.docs.map((leadDoc) => ({
-          id: leadDoc.id,
-          ...leadDoc.data(),
-        }));
-
-        setProductInterestLeads(
-          leads.sort(
-            (a, b) =>
-              (b.lastClickedAt?.toMillis?.() || 0) -
-              (a.lastClickedAt?.toMillis?.() || 0),
-          ),
-        );
-      },
-      (err) => console.error(err),
-    );
-
     const couponsRef = collection(
       db,
       "artifacts",
@@ -1585,32 +1508,6 @@ export default function App() {
           ...doc.data(),
         }));
         setCoupons(
-          list.sort(
-            (a, b) =>
-              (b.createdAt?.toMillis?.() || 0) -
-              (a.createdAt?.toMillis?.() || 0),
-          ),
-        );
-      },
-      (err) => console.error(err),
-    );
-
-    const productRequestsRef = collection(
-      db,
-      "artifacts",
-      appId,
-      "public",
-      "data",
-      "product_not_found_requests",
-    );
-    const unsubProductRequests = onSnapshot(
-      productRequestsRef,
-      (snapshot) => {
-        const list = snapshot.docs.map((requestDoc) => ({
-          id: requestDoc.id,
-          ...requestDoc.data(),
-        }));
-        setProductNotFoundRequests(
           list.sort(
             (a, b) =>
               (b.createdAt?.toMillis?.() || 0) -
@@ -1667,15 +1564,132 @@ export default function App() {
 
     return () => {
       unsubProducts();
-      unsubOrders();
-      unsubCarts();
-      unsubLeads();
       unsubCoupons();
-      unsubProductRequests();
       unsubCustomerFeedbacks();
       unsubSettings();
     };
   }, [user]);
+
+  // Data Fetching (Admin Data)
+  useEffect(() => {
+    if (!user || !isAdminRoute || !isAdminAuthenticated) {
+      setOrders([]);
+      setAbandonedCarts([]);
+      setProductInterestLeads([]);
+      setProductNotFoundRequests([]);
+      return;
+    }
+
+    const ordersRef = collection(
+      db,
+      "artifacts",
+      appId,
+      "public",
+      "data",
+      "orders",
+    );
+    const unsubOrders = onSnapshot(
+      ordersRef,
+      (snapshot) => {
+        const ords = snapshot.docs.map((docItem) => ({
+          id: docItem.id,
+          ...docItem.data(),
+        }));
+        setOrders(
+          ords.sort(
+            (a, b) =>
+              (b.createdAt?.toMillis() || 0) - (a.createdAt?.toMillis() || 0),
+          ),
+        );
+      },
+      (err) => console.error(err),
+    );
+
+    const cartsRef = collection(
+      db,
+      "artifacts",
+      appId,
+      "public",
+      "data",
+      "abandoned_carts",
+    );
+    const unsubCarts = onSnapshot(
+      cartsRef,
+      (snapshot) => {
+        const carts = snapshot.docs.map((docItem) => ({
+          id: docItem.id,
+          ...docItem.data(),
+        }));
+        setAbandonedCarts(
+          carts.sort(
+            (a, b) =>
+              (b.updatedAt?.toMillis() || 0) - (a.updatedAt?.toMillis() || 0),
+          ),
+        );
+      },
+      (err) => console.error(err),
+    );
+
+    const leadsRef = collection(
+      db,
+      "artifacts",
+      appId,
+      "public",
+      "data",
+      "product_interest_leads",
+    );
+    const unsubLeads = onSnapshot(
+      leadsRef,
+      (snapshot) => {
+        const leads = snapshot.docs.map((leadDoc) => ({
+          id: leadDoc.id,
+          ...leadDoc.data(),
+        }));
+
+        setProductInterestLeads(
+          leads.sort(
+            (a, b) =>
+              (b.lastClickedAt?.toMillis?.() || 0) -
+              (a.lastClickedAt?.toMillis?.() || 0),
+          ),
+        );
+      },
+      (err) => console.error(err),
+    );
+
+    const productRequestsRef = collection(
+      db,
+      "artifacts",
+      appId,
+      "public",
+      "data",
+      "product_not_found_requests",
+    );
+    const unsubProductRequests = onSnapshot(
+      productRequestsRef,
+      (snapshot) => {
+        const list = snapshot.docs.map((requestDoc) => ({
+          id: requestDoc.id,
+          ...requestDoc.data(),
+        }));
+        setProductNotFoundRequests(
+          list.sort(
+            (a, b) =>
+              (b.createdAt?.toMillis?.() || 0) -
+              (a.createdAt?.toMillis?.() || 0),
+          ),
+        );
+      },
+      (err) => console.error(err),
+    );
+
+    return () => {
+      unsubOrders();
+      unsubCarts();
+      unsubLeads();
+      unsubProductRequests();
+    };
+  }, [user, isAdminRoute, isAdminAuthenticated]);
 
   const showToast = (message, type = "success") => {
     setToast({ message, type });
@@ -2655,6 +2669,14 @@ function StoreFront({
     [queueResultsScroll],
   );
 
+  const applySearchFilter = useCallback(
+    (value) => {
+      queueResultsScroll();
+      setSearch(value);
+    },
+    [queueResultsScroll],
+  );
+
   // Adiciona ao carrinho validando o estoque
   const addToCart = (product, qty = 1) => {
     const cartItemId =
@@ -2780,7 +2802,8 @@ function StoreFront({
           ? 3
           : 2;
 
-  const productsPerPage = productGridColumns * 3;
+  const isDesktopViewport = viewportWidth >= 1024;
+  const productsPerPage = isDesktopViewport ? 20 : productGridColumns * 3;
   const totalProductPages = Math.max(
     1,
     Math.ceil(visibleProducts.length / productsPerPage),
@@ -2832,6 +2855,7 @@ function StoreFront({
       window.scrollTo({ top: Math.max(top, 0), behavior: "smooth" });
     });
   }, [
+    searchTerm,
     selectedCategory,
     effectiveSubcategory,
     sortBy,
@@ -3149,7 +3173,7 @@ function StoreFront({
                 type="text"
                 placeholder="Buscar produtos, marcas e estilos..."
                 value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                onChange={(e) => applySearchFilter(e.target.value)}
                 className="w-full pl-12 pr-4 py-3 rounded-2xl bg-slate-100 text-slate-900 font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-400 border border-slate-200"
               />
             </div>
@@ -3250,7 +3274,7 @@ function StoreFront({
                       </div>
                     ) : (
                       <div className="flex gap-3 md:gap-4 overflow-x-auto hide-scrollbar snap-x snap-mandatory pb-1">
-                        {section.products.map((product) => (
+                        {section.products.slice(0, 10).map((product) => (
                           <StoreProductCard
                             key={`${section.id}-${product.id}`}
                             product={product}
@@ -3439,9 +3463,22 @@ function StoreFront({
             {totalProductPages > 1 && (
               <div className="pt-6 flex items-center justify-center gap-2">
                 <button
-                  onClick={() =>
-                    setProductsPage((prev) => Math.max(1, prev - 1))
-                  }
+                  onClick={() => {
+                    setProductsPage((prev) => Math.max(1, prev - 1));
+                    setTimeout(() => {
+                      const el = resultsAnchorRef.current;
+                      if (!el) return;
+                      const headerOffset = window.innerWidth >= 768 ? 80 : 60;
+                      const top =
+                        el.getBoundingClientRect().top +
+                        window.scrollY -
+                        headerOffset;
+                      window.scrollTo({
+                        top: Math.max(top, 0),
+                        behavior: "smooth",
+                      });
+                    }, 50);
+                  }}
                   disabled={productsPage === 1}
                   className="inline-flex items-center gap-1 px-3 py-2 rounded-xl border border-slate-200 bg-white text-slate-600 font-bold text-sm disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
                 >
@@ -3457,11 +3494,24 @@ function StoreFront({
                 </span>
 
                 <button
-                  onClick={() =>
+                  onClick={() => {
                     setProductsPage((prev) =>
                       Math.min(totalProductPages, prev + 1),
-                    )
-                  }
+                    );
+                    setTimeout(() => {
+                      const el = resultsAnchorRef.current;
+                      if (!el) return;
+                      const headerOffset = window.innerWidth >= 768 ? 80 : 60;
+                      const top =
+                        el.getBoundingClientRect().top +
+                        window.scrollY -
+                        headerOffset;
+                      window.scrollTo({
+                        top: Math.max(top, 0),
+                        behavior: "smooth",
+                      });
+                    }, 50);
+                  }}
                   disabled={productsPage === totalProductPages}
                   className="inline-flex items-center gap-1 px-3 py-2 rounded-xl border border-slate-200 bg-white text-slate-600 font-bold text-sm disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
                 >
