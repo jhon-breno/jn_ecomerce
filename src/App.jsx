@@ -328,6 +328,12 @@ const validateCpf = (cpf) => {
 
 const normalizePhoneDigits = (value) => String(value || "").replace(/\D/g, "");
 
+const normalizeForSearch = (str) =>
+  String(str || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+
 const formatContactPhone = (value) => {
   const digits = normalizePhoneDigits(value);
   if (digits.length === 11) {
@@ -2824,9 +2830,9 @@ function StoreFront({
     );
 
   const filteredProducts = products.filter((p) => {
-    const matchesSearch = p.name
-      .toLowerCase()
-      .includes(searchTerm.toLowerCase());
+    const matchesSearch = normalizeForSearch(p.name).includes(
+      normalizeForSearch(searchTerm),
+    );
     const matchesCategory =
       selectedCategory === "Todas" || p.category === selectedCategory;
     const productSubcategories = getProductSubcategories(p);
@@ -2857,9 +2863,7 @@ function StoreFront({
   });
 
   const textSearchProducts = products.filter((p) =>
-    String(p?.name || "")
-      .toLowerCase()
-      .includes(searchTerm.toLowerCase()),
+    normalizeForSearch(p?.name).includes(normalizeForSearch(searchTerm)),
   );
 
   const sortedProducts = [...filteredProducts].sort((a, b) => {
@@ -4955,31 +4959,28 @@ function CustomerAccountModal({
     }
   };
 
-  const normalizedMyOrdersSearchTerm = String(myOrdersSearchTerm || "")
-    .trim()
-    .toLowerCase();
+  const normalizedMyOrdersSearchTerm =
+    normalizeForSearch(myOrdersSearchTerm).trim();
 
   const filteredAccountOrders = useMemo(() => {
     if (!normalizedMyOrdersSearchTerm) return orders;
 
     return orders.filter((order) => {
-      const number = String(order?.orderNumber || "").toLowerCase();
-      const displayId = formatOrderDisplayId(order).toLowerCase();
-      const legacyId = String(order?.id || "").toLowerCase();
+      const number = normalizeForSearch(order?.orderNumber);
+      const displayId = normalizeForSearch(formatOrderDisplayId(order));
+      const legacyId = normalizeForSearch(order?.id);
       const dateLabel = order?.createdAt?.toMillis
         ? new Date(order.createdAt.toMillis()).toLocaleString("pt-BR")
         : "";
       const products = Array.isArray(order?.items)
-        ? order.items
-            .map((item) => String(item?.name || "").toLowerCase())
-            .join(" ")
+        ? order.items.map((item) => normalizeForSearch(item?.name)).join(" ")
         : "";
 
       return [
         number,
         displayId,
         legacyId,
-        dateLabel.toLowerCase(),
+        normalizeForSearch(dateLabel),
         products,
       ].some((value) => value.includes(normalizedMyOrdersSearchTerm));
     });
@@ -5002,7 +5003,7 @@ function CustomerAccountModal({
         request?.requestedSearchTerm,
         createdAtLabel,
       ]
-        .map((value) => String(value || "").toLowerCase())
+        .map((value) => normalizeForSearch(value))
         .some((value) => value.includes(normalizedMyOrdersSearchTerm));
     });
   }, [productRequests, normalizedMyOrdersSearchTerm]);
@@ -9716,23 +9717,19 @@ function ProductManager({ products, showToast, storeSettings }) {
   );
 
   const filteredProducts = useMemo(() => {
-    const query = String(productSearch || "")
-      .trim()
-      .toLowerCase();
+    const query = normalizeForSearch(productSearch).trim();
 
     return products.filter((product) => {
       const category = String(product?.category || "").trim();
-      const name = String(product?.name || "").toLowerCase();
-      const subcategory = String(product?.subcategory || "").toLowerCase();
-      const subsubcategory = String(
-        product?.subsubcategory || "",
-      ).toLowerCase();
+      const name = normalizeForSearch(product?.name);
+      const subcategory = normalizeForSearch(product?.subcategory);
+      const subsubcategory = normalizeForSearch(product?.subsubcategory);
       const stock = Number(product?.stock || 0);
 
       const matchesQuery =
         !query ||
         name.includes(query) ||
-        category.toLowerCase().includes(query) ||
+        normalizeForSearch(category).includes(query) ||
         subcategory.includes(query) ||
         subsubcategory.includes(query);
 
@@ -11883,7 +11880,9 @@ function PointOfSale({ products, showToast, storeSettings }) {
 
   const filteredCustomers = customers.filter(
     (c) =>
-      c.name?.toLowerCase().includes(customerSearchTerm.toLowerCase()) ||
+      normalizeForSearch(c.name).includes(
+        normalizeForSearch(customerSearchTerm),
+      ) ||
       c.phone?.includes(customerSearchTerm) ||
       c.document?.includes(customerSearchTerm),
   );
@@ -11954,7 +11953,7 @@ function PointOfSale({ products, showToast, storeSettings }) {
   );
 
   const availableProducts = products.filter((p) =>
-    p.name.toLowerCase().includes(searchTerm.toLowerCase()),
+    normalizeForSearch(p.name).includes(normalizeForSearch(searchTerm)),
   );
 
   const finalizeSale = async () => {
@@ -12586,25 +12585,23 @@ function OrdersList({ orders, showToast, storeSettings, quickFilter = "all" }) {
   }, [quickFilter]);
 
   const filteredOrders = useMemo(() => {
-    const query = String(searchTerm || "")
-      .trim()
-      .toLowerCase();
+    const query = normalizeForSearch(searchTerm).trim();
 
     return orders.filter((order) => {
       const status = getOrderStatus(order);
-      const type = String(order?.type || "").toLowerCase();
-      const orderRef = String(order?.id || "").toLowerCase();
-      const orderNumber = String(order?.orderNumber || "").toLowerCase();
-      const orderDisplay = formatOrderDisplayId(order).toLowerCase();
-      const customer = String(
+      const type = normalizeForSearch(order?.type);
+      const orderRef = normalizeForSearch(order?.id);
+      const orderNumber = normalizeForSearch(order?.orderNumber);
+      const orderDisplay = normalizeForSearch(formatOrderDisplayId(order));
+      const customer = normalizeForSearch(
         order?.customerName || order?.address?.recebedorNome || "",
-      ).toLowerCase();
-      const email = String(order?.customerEmail || "").toLowerCase();
-      const phone = String(
+      );
+      const email = normalizeForSearch(order?.customerEmail);
+      const phone = normalizeForSearch(
         order?.customerPhone || order?.address?.recebedorTelefone || "",
-      ).toLowerCase();
-      const tracking = String(order?.trackingCode || "").toLowerCase();
-      const paymentMethod = String(order?.paymentMethod || "").toLowerCase();
+      );
+      const tracking = normalizeForSearch(order?.trackingCode);
+      const paymentMethod = normalizeForSearch(order?.paymentMethod);
 
       const matchesQuery =
         !query ||
@@ -14290,18 +14287,16 @@ function ProductInterestLeads({ leads, showToast }) {
   const [deletingId, setDeletingId] = useState(null);
 
   const filteredLeads = useMemo(() => {
-    const query = String(searchTerm || "")
-      .trim()
-      .toLowerCase();
+    const query = normalizeForSearch(searchTerm).trim();
 
     if (!query) return leads;
 
     return leads.filter((lead) => {
-      const name = String(lead?.customerName || "").toLowerCase();
-      const email = String(lead?.customerEmail || "").toLowerCase();
-      const phone = String(lead?.customerPhone || "").toLowerCase();
-      const product = String(lead?.productName || "").toLowerCase();
-      const category = String(lead?.productCategory || "").toLowerCase();
+      const name = normalizeForSearch(lead?.customerName);
+      const email = normalizeForSearch(lead?.customerEmail);
+      const phone = normalizeForSearch(lead?.customerPhone);
+      const product = normalizeForSearch(lead?.productName);
+      const category = normalizeForSearch(lead?.productCategory);
 
       return (
         name.includes(query) ||
@@ -14631,9 +14626,7 @@ function ProductNotFoundRequestsList({
   }, [requests]);
 
   const filteredRequests = useMemo(() => {
-    const query = String(searchTerm || "")
-      .trim()
-      .toLowerCase();
+    const query = normalizeForSearch(searchTerm).trim();
     if (!query) return requests;
 
     return requests.filter((request) => {
@@ -14653,7 +14646,7 @@ function ProductNotFoundRequestsList({
         request.adminMessage,
         createdAtLabel,
       ]
-        .map((item) => String(item || "").toLowerCase())
+        .map((item) => normalizeForSearch(item))
         .some((item) => item.includes(query));
     });
   }, [requests, searchTerm]);
