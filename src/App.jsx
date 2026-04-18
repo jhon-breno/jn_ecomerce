@@ -10372,6 +10372,57 @@ function ProductManager({ products, showToast, storeSettings }) {
     showToast("Produto clonado. Ajuste os dados e salve como novo produto.");
   };
 
+  const buildProductShareUrl = (product) => {
+    const params = new URLSearchParams();
+    params.set("productId", String(product?.id || ""));
+    if (product?.category) params.set("category", String(product.category));
+    if (product?.subcategory) {
+      params.set("subcategory", String(product.subcategory));
+    }
+
+    const url = new URL(window.location.href);
+    const normalizedPath = String(url.pathname || "").toLowerCase();
+    const normalizedHash = String(url.hash || "")
+      .replace(/^#/, "")
+      .toLowerCase();
+
+    if (normalizedPath === "/admin") {
+      url.pathname = "/";
+    }
+
+    if (normalizedHash === "admin" || normalizedHash === "/admin") {
+      url.hash = "";
+    }
+
+    url.search = params.toString();
+    return url.toString();
+  };
+
+  const handleCopyShareLink = async (product) => {
+    try {
+      const shareUrl = buildProductShareUrl(product);
+
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(shareUrl);
+      } else {
+        const tempInput = document.createElement("textarea");
+        tempInput.value = shareUrl;
+        tempInput.setAttribute("readonly", "");
+        tempInput.style.position = "absolute";
+        tempInput.style.left = "-9999px";
+        document.body.appendChild(tempInput);
+        tempInput.select();
+        document.execCommand("copy");
+        document.body.removeChild(tempInput);
+      }
+
+      showToast("Link de compartilhamento copiado!");
+    } catch (error) {
+      console.error("Erro ao copiar link de compartilhamento:", error);
+      showToast("Nao foi possivel copiar o link do produto.", "error");
+    }
+  };
+
   const executeDeleteProduct = async () => {
     if (!productToDelete) return;
     try {
@@ -11233,6 +11284,13 @@ function ProductManager({ products, showToast, storeSettings }) {
                       title="Clonar Produto"
                     >
                       <Copy size={18} />
+                    </button>
+                    <button
+                      onClick={() => handleCopyShareLink(p)}
+                      className="text-emerald-500 hover:text-emerald-700 p-2 hover:bg-emerald-50 rounded transition-colors cursor-pointer"
+                      title="Copiar link de compartilhamento"
+                    >
+                      <Share2 size={18} />
                     </button>
                     <button
                       onClick={() => setProductToDelete(p)}
