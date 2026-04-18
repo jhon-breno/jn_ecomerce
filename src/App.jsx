@@ -7861,6 +7861,25 @@ function CheckoutFlow({
 
   // Constrói array com detalhes de cada cupom aplicado
   const couponDetails = appliedCoupons.map((coupon) => {
+    // Base de cálculo: se o cupom tem restrição de produtos, usa só os itens elegíveis
+    const hasProductRestriction =
+      Array.isArray(coupon.restrictedProductIds) &&
+      coupon.restrictedProductIds.length > 0;
+
+    const eligibleCartTotal = hasProductRestriction
+      ? cart.reduce((sum, item) => {
+          if (coupon.restrictedProductIds.includes(item.id)) {
+            const qty = Number(item.qty) || 1;
+            const price =
+              typeof item.salePrice === "number" && item.salePrice > 0
+                ? item.salePrice
+                : Number(item.price) || 0;
+            return sum + price * qty;
+          }
+          return sum;
+        }, 0)
+      : cartTotal;
+
     const couponMinPurchase = coupon.minOrderValue
       ? Number(coupon.minOrderValue)
       : null;
@@ -7874,11 +7893,11 @@ function CheckoutFlow({
     let shippingDiscountAmount = 0;
 
     if (isCouponEligible) {
-      // Desconto em produtos
+      // Desconto em produtos (aplicado sobre a base elegível)
       if (coupon.type === "percent" || coupon.type === "percentage") {
-        discountAmount = (cartTotal * coupon.value) / 100;
+        discountAmount = (eligibleCartTotal * coupon.value) / 100;
       } else if (coupon.type === "fixed") {
-        discountAmount = coupon.value;
+        discountAmount = Math.min(coupon.value, eligibleCartTotal);
       }
 
       // Desconto em frete
@@ -7900,6 +7919,8 @@ function CheckoutFlow({
       couponMinimumGap,
       discountAmount,
       shippingDiscountAmount,
+      hasProductRestriction,
+      eligibleCartTotal,
     };
   });
 
@@ -9170,7 +9191,11 @@ function AdminDashboard({
         </div>
         <div className={activeTab !== "coupons" ? "print:hidden" : ""}>
           {activeTab === "coupons" && (
-            <CouponManager coupons={coupons} showToast={showToast} />
+            <CouponManager
+              coupons={coupons}
+              showToast={showToast}
+              products={products}
+            />
           )}
         </div>
         <div className={activeTab !== "settings" ? "print:hidden" : ""}>
@@ -14160,7 +14185,7 @@ function CustomerFeedbackModerationList({ feedbacks, showToast }) {
   );
 }
 
-function CouponManager({ coupons, showToast }) {
+function CouponManager({ coupons, showToast, products = [] }) {
   const [form, setForm] = useState({
     code: "",
     type: "percent",
@@ -14171,10 +14196,22 @@ function CouponManager({ coupons, showToast }) {
     firstPurchaseOnly: false,
     expiresAt: "",
     active: true,
+    restrictToProducts: false,
+    restrictedProductIds: [],
   });
+  const [productSearch, setProductSearch] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
   const [editingId, setEditingId] = useState(null);
+
+  const filteredProductOptions = products.filter((p) => {
+    const q = productSearch.toLowerCase();
+    return (
+      !q ||
+      (p.name || "").toLowerCase().includes(q) ||
+      (p.brand || "").toLowerCase().includes(q)
+    );
+  });
 
   const handleEdit = (coupon) => {
     setForm({
@@ -14193,12 +14230,18 @@ function CouponManager({ coupons, showToast }) {
           })()
         : "",
       active: coupon.active ?? true,
+      restrictToProducts:
+        Array.isArray(coupon.restrictedProductIds) &&
+        coupon.restrictedProductIds.length > 0,
+      restrictedProductIds: coupon.restrictedProductIds || [],
     });
+    setProductSearch("");
     setEditingId(coupon.id);
   };
 
   const handleCancelEdit = () => {
     setEditingId(null);
+    setProductSearch("");
     setForm({
       code: "",
       type: "percent",
@@ -14209,6 +14252,8 @@ function CouponManager({ coupons, showToast }) {
       firstPurchaseOnly: false,
       expiresAt: "",
       active: true,
+      restrictToProducts: false,
+      restrictedProductIds: [],
     });
   };
 
@@ -14237,6 +14282,9 @@ function CouponManager({ coupons, showToast }) {
           ? new Date(form.expiresAt + "T23:59:59").toISOString()
           : null,
         active: form.active,
+        restrictedProductIds: form.restrictToProducts
+          ? form.restrictedProductIds
+          : [],
       };
 
       if (editingId) {
@@ -14254,6 +14302,7 @@ function CouponManager({ coupons, showToast }) {
           payload,
         );
         showToast("Cupom criado com sucesso!");
+        setProductSearch("");
         setForm({
           code: "",
           type: "percent",
@@ -14264,6 +14313,8 @@ function CouponManager({ coupons, showToast }) {
           firstPurchaseOnly: false,
           expiresAt: "",
           active: true,
+          restrictToProducts: false,
+          restrictedProductIds: [],
         });
       }
     } catch (error) {
@@ -14476,6 +14527,131 @@ function CouponManager({ coupons, showToast }) {
               </label>
             </div>
           </div>
+
+          {/* Restrição por produtos */}
+          <div className="border border-slate-200 rounded-xl p-4 bg-slate-50 space-y-3">
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={form.restrictToProducts}
+                onChange={(e) =>
+                  setForm((p) => ({
+                    ...p,
+                    restrictToProducts: e.target.checked,
+                    restrictedProductIds: e.target.checked
+                      ? p.restrictedProductIds
+                      : [],
+                  }))
+                }
+                className="mt-1 w-4 h-4 accent-indigo-600"
+              />
+              <span>
+                <span className="block text-sm font-semibold text-slate-700">
+                  Restringir a produtos específicos
+                </span>
+                <span className="block text-xs text-slate-500 mt-0.5">
+                  Se ativado, o desconto só se aplica aos produtos selecionados
+                  abaixo.
+                </span>
+              </span>
+            </label>
+
+            {form.restrictToProducts && (
+              <div className="space-y-2">
+                <input
+                  type="text"
+                  placeholder="Buscar produto pelo nome ou marca..."
+                  value={productSearch}
+                  onChange={(e) => setProductSearch(e.target.value)}
+                  className="w-full p-2.5 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-300 text-sm"
+                />
+
+                {form.restrictedProductIds.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {form.restrictedProductIds.map((pid) => {
+                      const prod = products.find((p) => p.id === pid);
+                      return (
+                        <span
+                          key={pid}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-indigo-100 text-indigo-700 text-xs font-semibold"
+                        >
+                          {prod ? prod.name : pid}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setForm((p) => ({
+                                ...p,
+                                restrictedProductIds:
+                                  p.restrictedProductIds.filter(
+                                    (id) => id !== pid,
+                                  ),
+                              }))
+                            }
+                            className="hover:text-rose-600 transition"
+                          >
+                            ×
+                          </button>
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
+
+                <div className="max-h-48 overflow-y-auto border border-slate-200 rounded-xl bg-white divide-y divide-slate-100">
+                  {filteredProductOptions.length === 0 && (
+                    <p className="p-3 text-sm text-slate-400 text-center">
+                      Nenhum produto encontrado.
+                    </p>
+                  )}
+                  {filteredProductOptions.map((prod) => {
+                    const selected = form.restrictedProductIds.includes(
+                      prod.id,
+                    );
+                    return (
+                      <label
+                        key={prod.id}
+                        className={`flex items-center gap-3 px-3 py-2.5 cursor-pointer hover:bg-slate-50 transition ${selected ? "bg-indigo-50" : ""}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selected}
+                          onChange={() =>
+                            setForm((p) => ({
+                              ...p,
+                              restrictedProductIds: selected
+                                ? p.restrictedProductIds.filter(
+                                    (id) => id !== prod.id,
+                                  )
+                                : [...p.restrictedProductIds, prod.id],
+                            }))
+                          }
+                          className="w-4 h-4 accent-indigo-600"
+                        />
+                        {prod.image && (
+                          <img
+                            src={prod.image}
+                            alt={prod.name}
+                            className="w-8 h-8 rounded-lg object-cover shrink-0"
+                          />
+                        )}
+                        <span className="flex-1 min-w-0">
+                          <span className="block text-sm font-semibold text-slate-800 truncate">
+                            {prod.name}
+                          </span>
+                          {prod.brand && (
+                            <span className="block text-xs text-slate-400">
+                              {prod.brand}
+                            </span>
+                          )}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+
           <div className="flex justify-end gap-2">
             {editingId && (
               <button
