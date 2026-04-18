@@ -80,6 +80,7 @@ import {
   setDoc,
   getDoc,
   getDocs,
+  runTransaction,
 } from "firebase/firestore";
 
 const BACKEND_URL = String(import.meta.env.VITE_BACKEND_URL || "")
@@ -123,6 +124,29 @@ const normalizeExternalImageUrl = (value) => {
 
 const createIdempotencyKey = (scope) =>
   `${scope}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+const ORDER_NUMBER_START = 200;
+const ORDER_COUNTER_BASE = ORDER_NUMBER_START - 1;
+
+const getOrderNumberValue = (order) => {
+  const parsed = Number(order?.orderNumber);
+  if (!Number.isInteger(parsed) || parsed < ORDER_NUMBER_START) return null;
+  return parsed;
+};
+
+const formatOrderDisplayId = (order) => {
+  const orderNumber = getOrderNumberValue(order);
+  if (orderNumber !== null) {
+    return `#${orderNumber}`;
+  }
+
+  const fallback = String(order?.id || "")
+    .trim()
+    .slice(0, 8)
+    .toUpperCase();
+
+  return fallback ? `#${fallback}` : "#-";
+};
 
 const PAYMENT_PENDING_STORAGE_KEY = "jn_pending_payment_v1";
 const ACCOUNT_AUTO_OPEN_KEY = "jn_open_account_after_reload_v1";
@@ -225,6 +249,39 @@ const app = initializeApp(appConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = "minha-loja-oficial"; // Este será o ID fixo da sua base de dados
+
+const generateNextOrderNumber = async () => {
+  const counterRef = doc(
+    db,
+    "artifacts",
+    appId,
+    "public",
+    "data",
+    "counters",
+    "order_number",
+  );
+
+  return runTransaction(db, async (transaction) => {
+    const counterSnap = await transaction.get(counterRef);
+    const rawCurrent = Number(counterSnap.data()?.lastOrderNumber);
+    const current =
+      Number.isInteger(rawCurrent) && rawCurrent >= ORDER_COUNTER_BASE
+        ? rawCurrent
+        : ORDER_COUNTER_BASE;
+    const nextOrderNumber = current + 1;
+
+    transaction.set(
+      counterRef,
+      {
+        lastOrderNumber: nextOrderNumber,
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true },
+    );
+
+    return nextOrderNumber;
+  });
+};
 
 // const app = initializeApp(appConfig);
 // const auth = getAuth(app);
@@ -4050,6 +4107,7 @@ function CustomerAccountModal({
   const [cancelModalOrder, setCancelModalOrder] = useState(null);
   const [cancelReasonDraft, setCancelReasonDraft] = useState("");
   const [cancelReasonError, setCancelReasonError] = useState("");
+  const [myOrdersSearchTerm, setMyOrdersSearchTerm] = useState("");
   const [formData, setFormData] = useState({
     firstName: "",
     lastName: "",
@@ -4639,7 +4697,7 @@ function CustomerAccountModal({
           },
           body: JSON.stringify({
             transaction_amount: Number(paymentModalOrder.total || 0),
-            description: `Pagamento do pedido #${paymentModalOrder.id.slice(0, 8).toUpperCase()}`,
+            description: `Pagamento do pedido ${formatOrderDisplayId(paymentModalOrder)}`,
             external_reference: `${baseExternalReference}-pix`,
             payer: {
               email:
@@ -4896,6 +4954,63 @@ function CustomerAccountModal({
       setIsSaving(false);
     }
   };
+
+  const normalizedMyOrdersSearchTerm = String(myOrdersSearchTerm || "")
+    .trim()
+    .toLowerCase();
+
+  const filteredAccountOrders = useMemo(() => {
+    if (!normalizedMyOrdersSearchTerm) return orders;
+
+    return orders.filter((order) => {
+      const number = String(order?.orderNumber || "").toLowerCase();
+      const displayId = formatOrderDisplayId(order).toLowerCase();
+      const legacyId = String(order?.id || "").toLowerCase();
+      const dateLabel = order?.createdAt?.toMillis
+        ? new Date(order.createdAt.toMillis()).toLocaleString("pt-BR")
+        : "";
+      const products = Array.isArray(order?.items)
+        ? order.items
+            .map((item) => String(item?.name || "").toLowerCase())
+            .join(" ")
+        : "";
+
+      return [
+        number,
+        displayId,
+        legacyId,
+        dateLabel.toLowerCase(),
+        products,
+      ].some((value) => value.includes(normalizedMyOrdersSearchTerm));
+    });
+  }, [orders, normalizedMyOrdersSearchTerm]);
+
+  const filteredAccountProductRequests = useMemo(() => {
+    if (!normalizedMyOrdersSearchTerm) return productRequests;
+
+    return productRequests.filter((request) => {
+      const createdAtLabel = request?.createdAt?.toMillis
+        ? new Date(request.createdAt.toMillis()).toLocaleString("pt-BR")
+        : "";
+
+      return [
+        request?.id,
+        request?.productName,
+        request?.category,
+        request?.brand,
+        request?.description,
+        request?.requestedSearchTerm,
+        createdAtLabel,
+      ]
+        .map((value) => String(value || "").toLowerCase())
+        .some((value) => value.includes(normalizedMyOrdersSearchTerm));
+    });
+  }, [productRequests, normalizedMyOrdersSearchTerm]);
+
+  const hasAccountRecords = orders.length > 0 || productRequests.length > 0;
+  const hasFilteredAccountRecords =
+    filteredAccountOrders.length > 0 ||
+    filteredAccountProductRequests.length > 0;
 
   return (
     <div className="fixed inset-0 z-[80] flex items-start sm:items-center justify-center p-2 sm:p-6 bg-slate-900/60 backdrop-blur-sm overflow-hidden print:hidden">
@@ -5463,15 +5578,30 @@ function CustomerAccountModal({
           </div>
 
           <div className="p-5 md:p-6">
-            <h3 className="font-bold text-slate-800 mb-4">Meus Pedidos</h3>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+              <h3 className="font-bold text-slate-800">Meus Pedidos</h3>
+              <input
+                type="text"
+                value={myOrdersSearchTerm}
+                onChange={(e) => setMyOrdersSearchTerm(e.target.value)}
+                placeholder="Buscar por número, data ou produto"
+                className="w-full sm:w-[320px] p-2.5 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-300"
+              />
+            </div>
             <div className="space-y-3 max-h-[420px] overflow-y-auto pr-1">
-              {orders.length === 0 && productRequests.length === 0 && (
+              {!hasAccountRecords && (
                 <div className="border border-slate-200 rounded-xl p-4 text-sm text-slate-500 bg-slate-50">
                   Você ainda não possui pedidos registrados.
                 </div>
               )}
 
-              {productRequests.map((request) => {
+              {hasAccountRecords && !hasFilteredAccountRecords && (
+                <div className="border border-slate-200 rounded-xl p-4 text-sm text-slate-500 bg-slate-50">
+                  Nenhum pedido encontrado para a busca informada.
+                </div>
+              )}
+
+              {filteredAccountProductRequests.map((request) => {
                 const requestStatusMeta =
                   productRequestStatusCatalog[request.status] ||
                   productRequestStatusCatalog.produto_nao_encontrado;
@@ -5552,7 +5682,7 @@ function CustomerAccountModal({
                 );
               })}
 
-              {orders.map((order) => {
+              {filteredAccountOrders.map((order) => {
                 const statusCode = resolveOrderStatus(order);
                 const statusMeta =
                   statusCatalog[statusCode] || statusCatalog.pendente;
@@ -5581,7 +5711,7 @@ function CustomerAccountModal({
                       <div>
                         <p className="text-xs text-slate-400">Pedido</p>
                         <p className="font-bold text-slate-800">
-                          #{order.id.slice(0, 8).toUpperCase()}
+                          {formatOrderDisplayId(order)}
                         </p>
                       </div>
                       <span
@@ -5745,7 +5875,7 @@ function CustomerAccountModal({
                   <p className="text-sm text-slate-600 mt-1">
                     Informe o motivo para enviarmos ao admin e agilizar o
                     contato sobre o pedido #
-                    {cancelModalOrder.id.slice(0, 8).toUpperCase()}.
+                    {formatOrderDisplayId(cancelModalOrder)}.
                   </p>
                 </div>
                 <button
@@ -5819,8 +5949,8 @@ function CustomerAccountModal({
                     Realizar pagamento
                   </h4>
                   <p className="text-sm text-slate-600 mt-1">
-                    Pedido #{paymentModalOrder.id.slice(0, 8).toUpperCase()} |
-                    Total: R$ {Number(paymentModalOrder.total || 0).toFixed(2)}
+                    Pedido {formatOrderDisplayId(paymentModalOrder)} | Total: R${" "}
+                    {Number(paymentModalOrder.total || 0).toFixed(2)}
                   </p>
                 </div>
                 <button
@@ -8169,6 +8299,7 @@ function CheckoutFlow({
         paymentMethod: paymentMethod,
         status: "pendente_pagamento",
         createdAt: serverTimestamp(),
+        orderNumber: await generateNextOrderNumber(),
       };
 
       const externalReference = `online-${user.uid}-${Date.now()}`;
@@ -11848,6 +11979,7 @@ function PointOfSale({ products, showToast, storeSettings }) {
         paymentMethod: paymentMethod,
         createdAt: serverTimestamp(),
         receiptId: Math.floor(100000 + Math.random() * 900000).toString(),
+        orderNumber: await generateNextOrderNumber(),
       };
 
       const externalReference = `pdv-${order.receiptId}-${Date.now()}`;
@@ -12462,6 +12594,8 @@ function OrdersList({ orders, showToast, storeSettings, quickFilter = "all" }) {
       const status = getOrderStatus(order);
       const type = String(order?.type || "").toLowerCase();
       const orderRef = String(order?.id || "").toLowerCase();
+      const orderNumber = String(order?.orderNumber || "").toLowerCase();
+      const orderDisplay = formatOrderDisplayId(order).toLowerCase();
       const customer = String(
         order?.customerName || order?.address?.recebedorNome || "",
       ).toLowerCase();
@@ -12474,6 +12608,8 @@ function OrdersList({ orders, showToast, storeSettings, quickFilter = "all" }) {
 
       const matchesQuery =
         !query ||
+        orderNumber.includes(query) ||
+        orderDisplay.includes(query) ||
         orderRef.includes(query) ||
         customer.includes(query) ||
         email.includes(query) ||
@@ -12927,7 +13063,7 @@ function OrdersList({ orders, showToast, storeSettings, quickFilter = "all" }) {
             type="text"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Buscar por pedido, cliente, e-mail, telefone ou rastreio"
+            placeholder="Buscar por número do pedido, cliente, e-mail, telefone ou rastreio"
             className="flex-1 p-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-300 bg-white"
           />
           <select
@@ -12987,7 +13123,7 @@ function OrdersList({ orders, showToast, storeSettings, quickFilter = "all" }) {
                   className="w-4 h-4 accent-indigo-600 cursor-pointer"
                 />
               </th>
-              <th className="p-4">ID Pedido</th>
+              <th className="p-4">Pedido</th>
               <th className="p-4">Data/Hora</th>
               <th className="p-4">Tipo</th>
               <th className="p-4">Cliente</th>
@@ -13043,7 +13179,9 @@ function OrdersList({ orders, showToast, storeSettings, quickFilter = "all" }) {
                     />
                   </td>
                   <td className="p-4 font-mono text-xs text-slate-600 whitespace-nowrap">
-                    <span title={o.id}>{o.id.slice(0, 12).toUpperCase()}</span>
+                    <span title={String(o.orderNumber || o.id)}>
+                      {formatOrderDisplayId(o)}
+                    </span>
                   </td>
                   <td className="p-4 font-medium text-slate-700 whitespace-nowrap">
                     {o.createdAt
@@ -13409,7 +13547,7 @@ function OrderDetailModal({ order, statusCatalog, getOrderStatus, onClose }) {
               Detalhes do Pedido
             </h2>
             <p className="text-xs text-slate-400 font-mono mt-0.5">
-              {String(order.id).toUpperCase()}
+              {formatOrderDisplayId(order)}
             </p>
           </div>
           <button
@@ -14499,12 +14637,21 @@ function ProductNotFoundRequestsList({
     if (!query) return requests;
 
     return requests.filter((request) => {
+      const createdAtLabel = request?.createdAt?.toMillis
+        ? new Date(request.createdAt.toMillis()).toLocaleString("pt-BR")
+        : "";
+
       return [
+        request.id,
         request.productName,
         request.category,
         request.brand,
         request.customerName,
         request.customerEmail,
+        request.customerPhone,
+        request.requestedSearchTerm,
+        request.adminMessage,
+        createdAtLabel,
       ]
         .map((item) => String(item || "").toLowerCase())
         .some((item) => item.includes(query));
@@ -14625,7 +14772,7 @@ function ProductNotFoundRequestsList({
           type="text"
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
-          placeholder="Buscar por produto, categoria, marca, cliente..."
+          placeholder="Buscar por produto, cliente, telefone, data ou texto da busca"
           className="w-full md:w-[420px] p-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-300"
         />
       </div>
@@ -14769,7 +14916,7 @@ function ProductNotFoundRequestsList({
             {filteredRequests.length === 0 && (
               <tr>
                 <td colSpan="7" className="p-8 text-center text-slate-400">
-                  Nenhuma solicitação encontrada.
+                  Nenhuma solicitação encontrada para os filtros aplicados.
                 </td>
               </tr>
             )}
