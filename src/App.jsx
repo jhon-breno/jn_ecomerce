@@ -4037,6 +4037,7 @@ function CustomerAccountModal({
   const [isSaving, setIsSaving] = useState(false);
   const [addresses, setAddresses] = useState([]);
   const [isSavingAddress, setIsSavingAddress] = useState(false);
+  const [isNewAddressFormOpen, setIsNewAddressFormOpen] = useState(false);
   const [isDeletingAddressId, setIsDeletingAddressId] = useState("");
   const [processingOrderId, setProcessingOrderId] = useState(null);
   const [paymentModalOrder, setPaymentModalOrder] = useState(null);
@@ -4175,6 +4176,7 @@ function CustomerAccountModal({
         recebedorTelefone: "",
         recebedorCpf: "",
       });
+      setIsNewAddressFormOpen(false);
       showToast("Endereço salvo com sucesso!");
     } catch (error) {
       console.error("Erro ao salvar endereço da conta:", error);
@@ -5247,184 +5249,216 @@ function CustomerAccountModal({
                 )}
               </div>
 
-              <form
-                onSubmit={saveAccountAddress}
-                className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-4"
-              >
-                <h4 className="font-semibold text-sm border-b border-slate-200 pb-2">
-                  Adicionar Novo Endereço
-                </h4>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-500 mb-1">
-                      CEP
-                    </label>
-                    <input
-                      required
-                      placeholder="00000-000"
-                      value={newAddress.cep}
-                      onChange={handleAccountCepChange}
-                      maxLength={9}
-                      className="w-full p-3 border rounded-lg outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 transition-all"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-500 mb-1">
-                      Cidade
-                    </label>
-                    <input
-                      required
-                      value={newAddress.cidade}
-                      onChange={(e) =>
-                        setNewAddress((prev) => ({
-                          ...prev,
-                          cidade: e.target.value,
-                        }))
-                      }
-                      className="w-full p-3 border rounded-lg outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 transition-all bg-white"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-500 mb-1">
-                      Estado (UF)
-                    </label>
-                    <input
-                      required
-                      maxLength={2}
-                      value={newAddress.estado}
-                      onChange={(e) =>
-                        setNewAddress((prev) => ({
-                          ...prev,
-                          estado: e.target.value.toUpperCase(),
-                        }))
-                      }
-                      className="w-full p-3 border rounded-lg outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 transition-all"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-500 mb-1">
-                      Bairro
-                    </label>
-                    <input
-                      required
-                      value={newAddress.bairro}
-                      onChange={(e) =>
-                        setNewAddress((prev) => ({
-                          ...prev,
-                          bairro: e.target.value,
-                        }))
-                      }
-                      className="w-full p-3 border rounded-lg outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 transition-all"
-                    />
-                  </div>
-                  <div className="sm:col-span-2">
-                    <label className="block text-xs font-semibold text-slate-500 mb-1">
-                      Logradouro
-                    </label>
-                    <input
-                      required
-                      value={newAddress.rua}
-                      onChange={(e) =>
-                        setNewAddress((prev) => ({
-                          ...prev,
-                          rua: e.target.value,
-                        }))
-                      }
-                      className="w-full p-3 border rounded-lg outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 transition-all"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-500 mb-1">
-                      Número
-                    </label>
-                    <input
-                      required
-                      value={newAddress.numero}
-                      onChange={(e) =>
-                        setNewAddress((prev) => ({
-                          ...prev,
-                          numero: e.target.value,
-                        }))
-                      }
-                      className="w-full p-3 border rounded-lg outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 transition-all"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-500 mb-1">
-                      Complemento
-                    </label>
-                    <input
-                      value={newAddress.complemento}
-                      onChange={(e) =>
-                        setNewAddress((prev) => ({
-                          ...prev,
-                          complemento: e.target.value,
-                        }))
-                      }
-                      className="w-full p-3 border rounded-lg outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 transition-all"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-500 mb-1">
-                      Nome do recebedor
-                    </label>
-                    <input
-                      required
-                      value={newAddress.recebedorNome}
-                      onChange={(e) =>
-                        setNewAddress((prev) => ({
-                          ...prev,
-                          recebedorNome: e.target.value,
-                        }))
-                      }
-                      className="w-full p-3 border rounded-lg outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 transition-all"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-500 mb-1">
-                      Telefone
-                    </label>
-                    <input
-                      required
-                      maxLength={15}
-                      value={newAddress.recebedorTelefone}
-                      onChange={(e) =>
-                        setNewAddress((prev) => ({
-                          ...prev,
-                          recebedorTelefone: maskPhone(e.target.value),
-                        }))
-                      }
-                      className="w-full p-3 border rounded-lg outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 transition-all"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-500 mb-1">
-                      CPF do Recebedor
-                    </label>
-                    <input
-                      maxLength={14}
-                      placeholder="000.000.000-00"
-                      value={newAddress.recebedorCpf || ""}
-                      onChange={(e) =>
-                        setNewAddress((prev) => ({
-                          ...prev,
-                          recebedorCpf: maskCpf(e.target.value),
-                        }))
-                      }
-                      className="w-full p-3 border rounded-lg outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 transition-all"
-                    />
-                  </div>
-                </div>
-
+              <div className="bg-slate-50 rounded-xl border border-slate-200 overflow-hidden">
                 <button
-                  type="submit"
-                  disabled={isSavingAddress}
-                  className="w-full bg-slate-900 hover:bg-slate-800 disabled:bg-slate-300 text-white py-3 rounded-xl font-bold transition"
+                  type="button"
+                  onClick={() => setIsNewAddressFormOpen((prev) => !prev)}
+                  className="w-full px-4 py-3 flex items-center justify-between gap-3 text-left hover:bg-slate-100 transition"
                 >
-                  {isSavingAddress ? "Salvando..." : "Salvar Novo Endereço"}
+                  <div>
+                    <h4 className="font-semibold text-sm text-slate-800">
+                      Adicionar Novo Endereço
+                    </h4>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Clique para{" "}
+                      {isNewAddressFormOpen ? "recolher" : "expandir"} o
+                      formulário
+                    </p>
+                  </div>
+                  <ChevronRight
+                    size={18}
+                    className={`text-slate-500 transition-transform ${isNewAddressFormOpen ? "rotate-90" : ""}`}
+                  />
                 </button>
-              </form>
+
+                {isNewAddressFormOpen && (
+                  <form
+                    onSubmit={saveAccountAddress}
+                    className="p-4 border-t border-slate-200 space-y-4"
+                  >
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-500 mb-1">
+                          CEP
+                        </label>
+                        <input
+                          required
+                          placeholder="00000-000"
+                          value={newAddress.cep}
+                          onChange={handleAccountCepChange}
+                          maxLength={9}
+                          className="w-full p-3 border rounded-lg outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 transition-all"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-500 mb-1">
+                          Cidade
+                        </label>
+                        <input
+                          required
+                          value={newAddress.cidade}
+                          onChange={(e) =>
+                            setNewAddress((prev) => ({
+                              ...prev,
+                              cidade: e.target.value,
+                            }))
+                          }
+                          className="w-full p-3 border rounded-lg outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 transition-all bg-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-500 mb-1">
+                          Estado (UF)
+                        </label>
+                        <input
+                          required
+                          maxLength={2}
+                          value={newAddress.estado}
+                          onChange={(e) =>
+                            setNewAddress((prev) => ({
+                              ...prev,
+                              estado: e.target.value.toUpperCase(),
+                            }))
+                          }
+                          className="w-full p-3 border rounded-lg outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 transition-all"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-500 mb-1">
+                          Bairro
+                        </label>
+                        <input
+                          required
+                          value={newAddress.bairro}
+                          onChange={(e) =>
+                            setNewAddress((prev) => ({
+                              ...prev,
+                              bairro: e.target.value,
+                            }))
+                          }
+                          className="w-full p-3 border rounded-lg outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 transition-all"
+                        />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="block text-xs font-semibold text-slate-500 mb-1">
+                          Logradouro
+                        </label>
+                        <input
+                          required
+                          value={newAddress.rua}
+                          onChange={(e) =>
+                            setNewAddress((prev) => ({
+                              ...prev,
+                              rua: e.target.value,
+                            }))
+                          }
+                          className="w-full p-3 border rounded-lg outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 transition-all"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-500 mb-1">
+                          Número
+                        </label>
+                        <input
+                          required
+                          value={newAddress.numero}
+                          onChange={(e) =>
+                            setNewAddress((prev) => ({
+                              ...prev,
+                              numero: e.target.value,
+                            }))
+                          }
+                          className="w-full p-3 border rounded-lg outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 transition-all"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-500 mb-1">
+                          Complemento
+                        </label>
+                        <input
+                          value={newAddress.complemento}
+                          onChange={(e) =>
+                            setNewAddress((prev) => ({
+                              ...prev,
+                              complemento: e.target.value,
+                            }))
+                          }
+                          className="w-full p-3 border rounded-lg outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 transition-all"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-500 mb-1">
+                          Nome do recebedor
+                        </label>
+                        <input
+                          required
+                          value={newAddress.recebedorNome}
+                          onChange={(e) =>
+                            setNewAddress((prev) => ({
+                              ...prev,
+                              recebedorNome: e.target.value,
+                            }))
+                          }
+                          className="w-full p-3 border rounded-lg outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 transition-all"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-500 mb-1">
+                          Telefone
+                        </label>
+                        <input
+                          required
+                          maxLength={15}
+                          value={newAddress.recebedorTelefone}
+                          onChange={(e) =>
+                            setNewAddress((prev) => ({
+                              ...prev,
+                              recebedorTelefone: maskPhone(e.target.value),
+                            }))
+                          }
+                          className="w-full p-3 border rounded-lg outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 transition-all"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-500 mb-1">
+                          CPF do Recebedor
+                        </label>
+                        <input
+                          maxLength={14}
+                          placeholder="000.000.000-00"
+                          value={newAddress.recebedorCpf || ""}
+                          onChange={(e) =>
+                            setNewAddress((prev) => ({
+                              ...prev,
+                              recebedorCpf: maskCpf(e.target.value),
+                            }))
+                          }
+                          className="w-full p-3 border rounded-lg outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 transition-all"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row gap-3">
+                      <button
+                        type="submit"
+                        disabled={isSavingAddress}
+                        className="w-full bg-slate-900 hover:bg-slate-800 disabled:bg-slate-300 text-white py-3 rounded-xl font-bold transition"
+                      >
+                        {isSavingAddress
+                          ? "Salvando..."
+                          : "Salvar Novo Endereço"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setIsNewAddressFormOpen(false)}
+                        className="w-full sm:w-auto px-5 py-3 rounded-xl border border-slate-200 text-slate-700 font-semibold hover:bg-slate-100 transition"
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  </form>
+                )}
+              </div>
             </div>
           </div>
 
