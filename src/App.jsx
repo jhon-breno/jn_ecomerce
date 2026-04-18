@@ -9485,6 +9485,15 @@ function ProductManager({ products, showToast, storeSettings }) {
     });
   };
 
+  const clearAllImages = () => {
+    setFormData((prev) => ({
+      ...prev,
+      images: [],
+      image: "",
+    }));
+    showToast("Todas as imagens foram removidas.");
+  };
+
   const moveImage = (index, direction) => {
     setFormData((prev) => {
       const imgs = [...(prev.images || [])];
@@ -10473,9 +10482,20 @@ function ProductManager({ products, showToast, storeSettings }) {
         </div>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="flex flex-col gap-3">
-            <label className="text-sm font-bold text-slate-700">
-              Imagens do Produto
-            </label>
+            <div className="flex items-center justify-between gap-2">
+              <label className="text-sm font-bold text-slate-700">
+                Imagens do Produto
+              </label>
+              {(formData.images || []).length > 0 && (
+                <button
+                  type="button"
+                  onClick={clearAllImages}
+                  className="text-xs font-bold text-rose-600 hover:text-rose-700 px-2.5 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 border border-rose-200"
+                >
+                  Remover todas as imagens
+                </button>
+              )}
+            </div>
             {(formData.images || []).length > 1 && (
               <p className="text-xs text-slate-500">
                 A primeira imagem e a capa do produto. Use as setas para
