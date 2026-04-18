@@ -13770,35 +13770,43 @@ function ProductNotFoundRequestsList({
       ""
     ).trim();
 
-    const e = {
-      smile: String.fromCodePoint(128522),
-      party: String.fromCodePoint(127881),
-      point: String.fromCodePoint(128073),
-      pray: String.fromCodePoint(128591),
+    // emojis como percent-encoding UTF-8 para evitar problemas de codificacao de arquivo
+    const EM = {
+      smile: "%F0%9F%98%8A",
+      party: "%F0%9F%8E%89",
+      point: "%F0%9F%91%89",
+      pray: "%F0%9F%99%8F",
     };
 
-    const lines = [
-      `Ol\u00e1, ${firstName}! ${e.smile}`,
+    const enc = (s) => encodeURIComponent(s);
+    const nl = "%0A";
+
+    const parts = [
+      `Ol${enc("\u00e1")}, ${enc(firstName)}! ${EM.smile}`,
       ``,
-      `Temos uma \u00f3tima not\u00edcia para voc\u00ea! ${e.party}`,
-      `Localizamos *${productName}* que voc\u00ea solicitou em ${storeName}.`,
+      `Temos uma ${enc("\u00f3tima not\u00edcia")} para voc${enc("\u00ea")}! ${EM.party}`,
+      enc(
+        `Localizamos *${productName}* que voc\u00ea solicitou em ${storeName}.`,
+      ),
       ``,
-      `Aqui est\u00e1 o link com todas as informa\u00e7\u00f5es e op\u00e7\u00f5es de compra:`,
-      `${e.point} ${link}`,
+      enc(
+        `Aqui est\u00e1 o link com todas as informa\u00e7\u00f5es e op\u00e7\u00f5es de compra:`,
+      ),
+      `${EM.point} ${enc(link)}`,
     ];
 
     if (extraMessage) {
-      lines.push(``);
-      lines.push(extraMessage);
+      parts.push(``);
+      parts.push(enc(extraMessage));
     }
 
-    lines.push(``);
-    lines.push(
-      `Qualquer d\u00favida, \u00e9 s\u00f3 chamar. Estamos \u00e0 disposi\u00e7\u00e3o! ${e.pray}`,
+    parts.push(``);
+    parts.push(
+      `Qualquer d${enc("\u00favida")}, ${enc("\u00e9 s\u00f3 chamar. Estamos \u00e0 disposi\u00e7\u00e3o")}! ${EM.pray}`,
     );
-    lines.push(`Att, equipe ${storeName}`);
+    parts.push(enc(`Att, equipe ${storeName}`));
 
-    const text = encodeURIComponent(lines.join("\n"));
+    const text = parts.join(nl);
     const whatsappNumber = phone.startsWith("55") ? phone : `55${phone}`;
     window.open(`https://wa.me/${whatsappNumber}?text=${text}`, "_blank");
   };
