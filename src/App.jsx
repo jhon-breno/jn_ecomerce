@@ -229,9 +229,17 @@ const clearPaymentReturnParamsFromUrl = () => {
   window.history.replaceState({}, document.title, target);
 };
 
-const ADMIN_EMAIL = "admin@jnfutshirt.com.br";
-const ADMIN_PASSWORD = "Joao@2405";
-const ADMIN_SESSION_KEY = "jn_admin_auth_v1";
+const ADMIN_ALLOWED_EMAILS = String(import.meta.env.VITE_ADMIN_EMAILS || "")
+  .split(/[;,\n]/)
+  .map((item) => item.trim().toLowerCase())
+  .filter(Boolean);
+
+const isAllowedAdminEmail = (email) =>
+  ADMIN_ALLOWED_EMAILS.includes(
+    String(email || "")
+      .trim()
+      .toLowerCase(),
+  );
 
 // Configuração apontando para .env (Ambiente Local/Vite)
 
@@ -1649,7 +1657,6 @@ export default function App() {
   });
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState(null);
-  const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
 
   // Inicializa o Mercado Pago Globalmente quando a chave estiver disponível (Apenas Localmente se descomentar os imports)
   /*
@@ -1674,11 +1681,8 @@ export default function App() {
   }, []);
 
   const isAdminRoute = currentRoute === "admin";
-
-  useEffect(() => {
-    const savedSession = sessionStorage.getItem(ADMIN_SESSION_KEY);
-    setIsAdminAuthenticated(savedSession === "ok");
-  }, []);
+  const isAdminAuthenticated =
+    Boolean(user) && !user?.isAnonymous && isAllowedAdminEmail(user?.email);
 
   // --- Atualização Dinâmica do Título e Favicon ---
   useEffect(() => {
@@ -1951,27 +1955,41 @@ export default function App() {
     setTimeout(() => setToast(null), 3000);
   };
 
-  const handleAdminLogin = (email, password) => {
-    const validEmail =
-      String(email || "")
-        .trim()
-        .toLowerCase() === ADMIN_EMAIL;
-    const validPassword = String(password || "") === ADMIN_PASSWORD;
-
-    if (!validEmail || !validPassword) {
-      showToast("Credenciais de administrador inválidas.", "error");
+  const handleAdminLogin = async (email, password) => {
+    if (!ADMIN_ALLOWED_EMAILS.length) {
+      showToast(
+        "VITE_ADMIN_EMAILS não está configurada. Defina os e-mails admin no ambiente.",
+        "error",
+      );
       return false;
     }
 
-    sessionStorage.setItem(ADMIN_SESSION_KEY, "ok");
-    setIsAdminAuthenticated(true);
-    showToast("Acesso administrativo liberado.");
-    return true;
+    try {
+      const userCredential = await signInWithEmailAndPassword(
+        auth,
+        String(email || "").trim(),
+        password,
+      );
+
+      if (!isAllowedAdminEmail(userCredential.user?.email)) {
+        await signOut(auth);
+        showToast(
+          "Este usuário não está autorizado para o painel admin.",
+          "error",
+        );
+        return false;
+      }
+
+      showToast("Acesso administrativo liberado.");
+      return true;
+    } catch (error) {
+      showToast(getFriendlyAuthErrorMessage(error), "error");
+      return false;
+    }
   };
 
-  const handleAdminLogout = () => {
-    sessionStorage.removeItem(ADMIN_SESSION_KEY);
-    setIsAdminAuthenticated(false);
+  const handleAdminLogout = async () => {
+    await signOut(auth);
     showToast("Sessão administrativa encerrada.");
   };
 
@@ -2094,10 +2112,16 @@ export default function App() {
 function AdminAuthGate({ onLogin, storeName, logo }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    onLogin(email, password);
+    try {
+      setIsSubmitting(true);
+      await onLogin(email, password);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -2131,6 +2155,7 @@ function AdminAuthGate({ onLogin, storeName, logo }) {
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
+              disabled={isSubmitting}
               className="w-full p-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
               placeholder="admin@empresa.com"
             />
@@ -2145,16 +2170,23 @@ function AdminAuthGate({ onLogin, storeName, logo }) {
               required
               value={password}
               onChange={(e) => setPassword(e.target.value)}
+              disabled={isSubmitting}
               className="w-full p-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
               placeholder="••••••••"
             />
           </div>
 
+          <p className="text-xs text-slate-500 leading-relaxed">
+            O acesso depende de autenticação no Firebase e do e-mail estar
+            listado em VITE_ADMIN_EMAILS.
+          </p>
+
           <button
             type="submit"
-            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-3 rounded-xl font-bold transition"
+            disabled={isSubmitting}
+            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-3 rounded-xl font-bold transition disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            Entrar no Painel
+            {isSubmitting ? "Entrando..." : "Entrar no Painel"}
           </button>
         </form>
       </div>

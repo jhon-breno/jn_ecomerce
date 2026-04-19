@@ -24,6 +24,18 @@ Este projeto está configurado para:
 - Para o recurso funcionar, habilite o provedor Google em Authentication > Sign-in method no painel do Firebase do projeto.
 - Garanta também que o domínio local/produção usado pelo site esteja autorizado em Authentication > Settings > Authorized domains.
 
+## Acesso Administrativo
+
+- O painel admin não usa mais credenciais hardcoded no código.
+- O login admin agora valida o usuário no Firebase Authentication e só libera acesso para e-mails listados em VITE_ADMIN_EMAILS.
+- Defina VITE_ADMIN_EMAILS com uma lista separada por vírgula, ponto e vírgula ou quebra de linha.
+
+Exemplo:
+
+```env
+VITE_ADMIN_EMAILS=admin@empresa.com,financeiro@empresa.com
+```
+
 ### Frontend
 
 1. Crie `.env` na raiz com base em [.env.example](.env.example).
