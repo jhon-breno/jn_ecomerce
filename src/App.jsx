@@ -64,6 +64,8 @@ import {
   signInWithCustomToken,
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
+  GoogleAuthProvider,
+  signInWithPopup,
   signOut,
 } from "firebase/auth";
 import {
@@ -249,6 +251,142 @@ const app = initializeApp(appConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = "minha-loja-oficial"; // Este será o ID fixo da sua base de dados
+const googleAuthProvider = new GoogleAuthProvider();
+googleAuthProvider.setCustomParameters({ prompt: "select_account" });
+
+const splitFullName = (value) => {
+  const parts = String(value || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+
+  if (parts.length === 0) {
+    return { firstName: "", lastName: "" };
+  }
+
+  if (parts.length === 1) {
+    return { firstName: parts[0], lastName: "" };
+  }
+
+  return {
+    firstName: parts[0],
+    lastName: parts.slice(1).join(" "),
+  };
+};
+
+const getFriendlyAuthErrorMessage = (error) => {
+  if (error?.code === "auth/email-already-in-use") {
+    return "Este e-mail já está em uso.";
+  }
+
+  if (error?.code === "auth/invalid-credential") {
+    return "E-mail ou senha incorretos.";
+  }
+
+  if (error?.code === "auth/popup-closed-by-user") {
+    return "O login com Google foi cancelado antes da conclusão.";
+  }
+
+  if (error?.code === "auth/popup-blocked") {
+    return "O navegador bloqueou a janela do Google. Libere pop-ups e tente novamente.";
+  }
+
+  if (error?.code === "auth/account-exists-with-different-credential") {
+    return "Já existe uma conta com este e-mail usando outro método de acesso.";
+  }
+
+  if (error?.code === "auth/operation-not-allowed") {
+    return "O provedor correspondente não está habilitado no Firebase. Ative E-mail/Senha ou Google no painel.";
+  }
+
+  return error?.message || "Não foi possível concluir a autenticação.";
+};
+
+const syncCustomerIdentity = async (firebaseUser, profileOverrides = {}) => {
+  if (!firebaseUser?.uid) return;
+
+  const profileRef = doc(
+    db,
+    "artifacts",
+    appId,
+    "users",
+    firebaseUser.uid,
+    "profile",
+    "info",
+  );
+  const customerRef = doc(
+    db,
+    "artifacts",
+    appId,
+    "public",
+    "data",
+    "customers",
+    firebaseUser.uid,
+  );
+
+  const [profileSnap, customerSnap] = await Promise.all([
+    getDoc(profileRef),
+    getDoc(customerRef),
+  ]);
+
+  const existingProfile = profileSnap.exists() ? profileSnap.data() : {};
+  const existingCustomer = customerSnap.exists() ? customerSnap.data() : {};
+  const displayNameParts = splitFullName(firebaseUser.displayName);
+
+  const firstName =
+    String(profileOverrides.firstName || "").trim() ||
+    String(existingProfile.firstName || "").trim() ||
+    displayNameParts.firstName;
+  const lastName =
+    String(profileOverrides.lastName || "").trim() ||
+    String(existingProfile.lastName || "").trim() ||
+    displayNameParts.lastName;
+  const phone =
+    maskPhone(String(profileOverrides.phone || existingProfile.phone || "")) ||
+    "";
+  const cpf = String(profileOverrides.cpf || existingProfile.cpf || "").trim();
+  const email =
+    String(profileOverrides.email || "").trim() ||
+    String(firebaseUser.email || "").trim() ||
+    String(existingProfile.email || existingCustomer.email || "").trim();
+  const fullName =
+    `${firstName} ${lastName}`.trim() ||
+    String(
+      existingCustomer.name || firebaseUser.displayName || "Cliente",
+    ).trim();
+
+  const profilePayload = {
+    firstName,
+    lastName,
+    phone,
+    cpf,
+    email,
+    updatedAt: serverTimestamp(),
+  };
+
+  const customerPayload = {
+    name: fullName,
+    phone,
+    cpf,
+    email,
+    document: String(existingCustomer.document || "").trim(),
+    userId: firebaseUser.uid,
+    updatedAt: serverTimestamp(),
+  };
+
+  if (!profileSnap.exists()) {
+    profilePayload.createdAt = serverTimestamp();
+  }
+
+  if (!customerSnap.exists()) {
+    customerPayload.createdAt = serverTimestamp();
+  }
+
+  await Promise.all([
+    setDoc(profileRef, profilePayload, { merge: true }),
+    setDoc(customerRef, customerPayload, { merge: true }),
+  ]);
+};
 
 const generateNextOrderNumber = async () => {
   const counterRef = doc(
@@ -429,6 +567,37 @@ function TikTokBrandIcon({ size = 16, className = "" }) {
       <path
         d="M14 4V12.5C14 14.43 12.43 16 10.5 16C8.57 16 7 14.43 7 12.5C7 10.57 8.57 9 10.5 9C10.86 9 11.2 9.05 11.53 9.16V11.4C11.24 11.19 10.88 11.06 10.5 11.06C9.71 11.06 9.06 11.71 9.06 12.5C9.06 13.29 9.71 13.94 10.5 13.94C11.29 13.94 11.94 13.29 11.94 12.5V4H14ZM17.93 7.37C17.04 6.69 16.4 5.7 16.16 4.56H14.02C14.3 6.49 15.57 8.14 17.35 8.98C17.53 9.06 17.72 9.14 17.93 9.2V7.37Z"
         fill="currentColor"
+      />
+    </svg>
+  );
+}
+
+function GoogleBrandIcon({ size = 18, className = "" }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      className={className}
+      aria-hidden="true"
+    >
+      <path
+        d="M21.805 12.23C21.805 11.55 21.744 10.906 21.629 10.286H12.24V14.127H17.606C17.375 15.369 16.668 16.422 15.606 17.13V19.62H18.814C20.69 17.893 21.805 15.351 21.805 12.23Z"
+        fill="#4285F4"
+      />
+      <path
+        d="M12.24 21.96C14.934 21.96 17.191 21.067 18.814 19.62L15.606 17.13C14.713 17.727 13.572 18.08 12.24 18.08C9.643 18.08 7.446 16.326 6.661 13.969H3.344V16.538C4.958 19.746 8.276 21.96 12.24 21.96Z"
+        fill="#34A853"
+      />
+      <path
+        d="M6.661 13.969C6.462 13.372 6.349 12.735 6.349 12.08C6.349 11.425 6.462 10.788 6.661 10.191V7.622H3.344C2.679 8.945 2.3 10.435 2.3 12.08C2.3 13.725 2.679 15.215 3.344 16.538L6.661 13.969Z"
+        fill="#FBBC05"
+      />
+      <path
+        d="M12.24 6.08C13.693 6.08 14.997 6.58 16.022 7.562L18.886 4.698C17.186 3.112 14.928 2.2 12.24 2.2C8.276 2.2 4.958 4.414 3.344 7.622L6.661 10.191C7.446 7.834 9.643 6.08 12.24 6.08Z"
+        fill="#EA4335"
       />
     </svg>
   );
@@ -4924,31 +5093,13 @@ function CustomerAccountModal({
 
     setIsSaving(true);
     try {
-      await setDoc(
-        doc(db, "artifacts", appId, "users", user.uid, "profile", "info"),
-        {
-          firstName: formData.firstName.trim(),
-          lastName: formData.lastName.trim(),
-          phone: maskPhone(formData.phone),
-          cpf: formData.cpf.trim(),
-          email: formData.email || user.email || "",
-          updatedAt: serverTimestamp(),
-        },
-        { merge: true },
-      );
-
-      await setDoc(
-        doc(db, "artifacts", appId, "public", "data", "customers", user.uid),
-        {
-          name: `${formData.firstName.trim()} ${formData.lastName.trim()}`.trim(),
-          phone: maskPhone(formData.phone),
-          cpf: formData.cpf.trim(),
-          email: formData.email || user.email || "",
-          userId: user.uid,
-          updatedAt: serverTimestamp(),
-        },
-        { merge: true },
-      );
+      await syncCustomerIdentity(user, {
+        firstName: formData.firstName.trim(),
+        lastName: formData.lastName.trim(),
+        phone: formData.phone,
+        cpf: formData.cpf.trim(),
+        email: formData.email || user.email || "",
+      });
 
       showToast("Dados atualizados com sucesso!");
     } catch (error) {
@@ -7189,6 +7340,7 @@ function AuthModal({ close, showToast }) {
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Novos campos para cadastro
   const [firstName, setFirstName] = useState("");
@@ -7196,9 +7348,24 @@ function AuthModal({ close, showToast }) {
   const [phone, setPhone] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
 
+  const handleGoogleLogin = async () => {
+    try {
+      setIsSubmitting(true);
+      const userCredential = await signInWithPopup(auth, googleAuthProvider);
+      await syncCustomerIdentity(userCredential.user);
+      showToast("Login com Google realizado com sucesso!");
+      close();
+    } catch (error) {
+      showToast(getFriendlyAuthErrorMessage(error), "error");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
+      setIsSubmitting(true);
       if (isLogin) {
         const userCredential = await signInWithEmailAndPassword(
           auth,
@@ -7206,46 +7373,7 @@ function AuthModal({ close, showToast }) {
           password,
         );
         const loggedInUser = userCredential.user;
-
-        // Auto-migração: garante que clientes antigos aparecem no PDV
-        try {
-          const customerDocRef = doc(
-            db,
-            "artifacts",
-            appId,
-            "public",
-            "data",
-            "customers",
-            loggedInUser.uid,
-          );
-          const customerSnap = await getDoc(customerDocRef);
-          if (!customerSnap.exists()) {
-            const profileSnap = await getDoc(
-              doc(
-                db,
-                "artifacts",
-                appId,
-                "users",
-                loggedInUser.uid,
-                "profile",
-                "info",
-              ),
-            );
-            if (profileSnap.exists()) {
-              const pData = profileSnap.data();
-              await setDoc(customerDocRef, {
-                name: `${pData.firstName} ${pData.lastName}`.trim(),
-                phone: pData.phone || "",
-                email: pData.email || email,
-                document: "",
-                userId: loggedInUser.uid,
-                createdAt: serverTimestamp(),
-              });
-            }
-          }
-        } catch (e) {
-          console.error("Falha na auto-migração de cliente", e);
-        }
+        await syncCustomerIdentity(loggedInUser, { email });
 
         showToast("Login realizado com sucesso!");
         close();
@@ -7268,54 +7396,20 @@ function AuthModal({ close, showToast }) {
           password,
         );
         const newUser = userCredential.user;
-
-        // Salvar dados adicionais no banco de dados (Firestore) - Privado
-        await setDoc(
-          doc(db, "artifacts", appId, "users", newUser.uid, "profile", "info"),
-          {
-            firstName,
-            lastName,
-            phone,
-            email,
-            createdAt: serverTimestamp(),
-          },
-        );
-
-        // Sincronizar com a base pública de clientes para o PDV (Usando o UID para evitar duplicatas)
-        await setDoc(
-          doc(
-            db,
-            "artifacts",
-            appId,
-            "public",
-            "data",
-            "customers",
-            newUser.uid,
-          ),
-          {
-            name: `${firstName} ${lastName}`.trim(),
-            phone: maskPhone(phone),
-            email: email,
-            document: "",
-            userId: newUser.uid,
-            createdAt: serverTimestamp(),
-          },
-        );
+        await syncCustomerIdentity(newUser, {
+          firstName,
+          lastName,
+          phone,
+          email,
+        });
 
         showToast("Conta criada com sucesso!");
         close();
       }
     } catch (error) {
-      // Traduzir alguns erros comuns do Firebase
-      let msg = error.message;
-      if (error.code === "auth/email-already-in-use")
-        msg = "Este e-mail já está em uso.";
-      if (error.code === "auth/invalid-credential")
-        msg = "E-mail ou senha incorretos.";
-      if (error.code === "auth/operation-not-allowed")
-        msg =
-          "O login por e-mail não está habilitado no Firebase (Ative no painel).";
-      showToast(msg, "error");
+      showToast(getFriendlyAuthErrorMessage(error), "error");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -7333,6 +7427,21 @@ function AuthModal({ close, showToast }) {
             <X size={20} />
           </button>
         </div>
+        <div className="p-6 border-b border-slate-100 space-y-3">
+          <button
+            type="button"
+            onClick={handleGoogleLogin}
+            disabled={isSubmitting}
+            className="w-full inline-flex items-center justify-center gap-3 p-3 border border-slate-300 rounded-xl text-slate-700 font-semibold hover:bg-slate-50 transition disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            <GoogleBrandIcon />
+            <span>Continuar com Google</span>
+          </button>
+          <p className="text-xs text-slate-500 text-center">
+            Use sua conta Google para entrar ou criar o cadastro
+            automaticamente.
+          </p>
+        </div>
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
           {isLogin ? (
             // Form de Login
@@ -7346,6 +7455,7 @@ function AuthModal({ close, showToast }) {
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
+                  disabled={isSubmitting}
                   className="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
                   placeholder="seu@email.com"
                 />
@@ -7359,6 +7469,7 @@ function AuthModal({ close, showToast }) {
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
+                  disabled={isSubmitting}
                   className="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
                   placeholder="••••••••"
                 />
@@ -7377,6 +7488,7 @@ function AuthModal({ close, showToast }) {
                     type="text"
                     value={firstName}
                     onChange={(e) => setFirstName(e.target.value)}
+                    disabled={isSubmitting}
                     className="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
                     placeholder="João"
                   />
@@ -7390,6 +7502,7 @@ function AuthModal({ close, showToast }) {
                     type="text"
                     value={lastName}
                     onChange={(e) => setLastName(e.target.value)}
+                    disabled={isSubmitting}
                     className="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
                     placeholder="Silva"
                   />
@@ -7405,6 +7518,7 @@ function AuthModal({ close, showToast }) {
                   type="tel"
                   value={phone}
                   onChange={(e) => setPhone(maskPhone(e.target.value))}
+                  disabled={isSubmitting}
                   className="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
                   placeholder="(00) 00000-0000"
                   maxLength={15}
@@ -7420,6 +7534,7 @@ function AuthModal({ close, showToast }) {
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
+                  disabled={isSubmitting}
                   className="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
                   placeholder="seu@email.com"
                 />
@@ -7435,6 +7550,7 @@ function AuthModal({ close, showToast }) {
                     type="password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
+                    disabled={isSubmitting}
                     className="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
                     placeholder="Mínimo 6"
                     minLength={6}
@@ -7449,6 +7565,7 @@ function AuthModal({ close, showToast }) {
                     type="password"
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
+                    disabled={isSubmitting}
                     className="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
                     placeholder="Repita a senha"
                     minLength={6}
@@ -7465,9 +7582,12 @@ function AuthModal({ close, showToast }) {
             {isLogin ? "Entrar" : "Cadastrar"}
           </button>
         </form>
-
+        disabled={isSubmitting}
+        className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-3
+        rounded-lg font-semibold transition disabled:opacity-60
+        disabled:cursor-not-allowed"
         <div className="p-4 bg-slate-50 text-center text-sm rounded-b-2xl border-t">
-          {isLogin ? "Não tem conta? " : "Já tem conta? "}
+          {isSubmitting ? "Processando..." : isLogin ? "Entrar" : "Criar Conta"}
           <button
             type="button"
             onClick={() => setIsLogin(!isLogin)}

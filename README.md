@@ -18,6 +18,12 @@ Este projeto está configurado para:
 
 ## 1. Configurar Variáveis de Ambiente
 
+## Login de Clientes com Google
+
+- O frontend agora exibe o botão Continuar com Google no modal de cliente.
+- Para o recurso funcionar, habilite o provedor Google em Authentication > Sign-in method no painel do Firebase do projeto.
+- Garanta também que o domínio local/produção usado pelo site esteja autorizado em Authentication > Settings > Authorized domains.
+
 ### Frontend
 
 1. Crie `.env` na raiz com base em [.env.example](.env.example).
