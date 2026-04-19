@@ -4276,6 +4276,7 @@ function StoreFront({
           cartTotal={cartTotal}
           products={products}
           user={user}
+          userProfile={userProfile}
           storeSettings={storeSettings}
           coupons={coupons}
           close={() => setIsCheckoutOpen(false)}
@@ -7752,6 +7753,7 @@ function CheckoutFlow({
   cartTotal,
   products = [],
   user,
+  userProfile,
   storeSettings,
   coupons = [],
   close,
