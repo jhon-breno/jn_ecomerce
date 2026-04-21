@@ -110,6 +110,97 @@ npm run dev
 - `POST /api/checkout/preference`: cria preferência do Checkout Pro para pagamentos online.
 - `GET /api/health`: valida se backend está online e se token MP está configurado.
 
+## 4.1 WhatsApp Automático
+
+O projeto agora possui uma base de configuração no painel admin para conectar o WhatsApp da loja e preparar automações como:
+
+- carrinho abandonado após 24h
+- lead que demonstrou interesse e não comprou
+- confirmação após a compra
+- atualização de status do pedido
+- campanhas de recompra futura
+
+O desenho adotado segue o mesmo princípio do fluxo de pagamentos e e-mails:
+
+- o frontend só salva configuração operacional no Firestore
+- o token do WhatsApp fica apenas no backend
+- o backend expõe endpoints seguros para health-check e envio de teste
+
+Endpoints adicionados:
+
+- `GET /api/whatsapp/health`: informa se o backend está apto a falar com Z-API, BotBot ou WhatsApp Cloud API.
+- `POST /api/whatsapp/send-test`: envia uma mensagem de teste para validar a integração.
+
+Variáveis de ambiente do backend:
+
+```env
+# Z-API (opcional)
+ZAPI_INSTANCE_ID=
+ZAPI_TOKEN=
+ZAPI_CLIENT_TOKEN=
+
+# BotBot oficial (opcional)
+BOTBOT_API_BASE_URL=https://botbot.chat
+BOTBOT_APP_KEY=
+BOTBOT_AUTH_KEY=
+
+# Fallback custom webhook (opcional)
+WHATSAPP_CUSTOM_WEBHOOK_URL=
+WHATSAPP_CUSTOM_WEBHOOK_AUTH_HEADER_NAME=Authorization
+WHATSAPP_CUSTOM_WEBHOOK_AUTH_HEADER_VALUE=
+
+# WhatsApp Cloud API (opcional)
+WHATSAPP_ACCESS_TOKEN=
+WHATSAPP_API_VERSION=v23.0
+WHATSAPP_PHONE_NUMBER_ID=
+WHATSAPP_BUSINESS_ACCOUNT_ID=
+```
+
+Observação: quando o provider estiver como `custom_webhook` e `BOTBOT_APP_KEY` + `BOTBOT_AUTH_KEY` estiverem configurados, o backend envia diretamente para o endpoint oficial do BotBot (`POST /api/v2/sendText`).
+
+Limite atual da implementação:
+
+- o worker já está implementado no backend e pode disparar automaticamente:
+  - carrinho abandonado
+  - lead de interesse sem compra
+  - mensagem após criação do pedido
+  - mudança de status do pedido
+  - recompra futura (após X dias)
+
+Para ativar o worker no backend, configure em `loja-backend/.env`:
+
+```env
+WHATSAPP_WORKER_ENABLED=true
+WHATSAPP_WORKER_INTERVAL_MS=60000
+WHATSAPP_WORKER_LOOKBACK_DAYS=21
+WHATSAPP_WORKER_APP_ID=minha-loja-oficial
+```
+
+Além disso, configure credenciais do Firebase Admin SDK no backend (uma das opções):
+
+```env
+# Opção A: JSON da service account em linha única
+FIREBASE_SERVICE_ACCOUNT_JSON={...}
+
+# Opção B: credencial padrão do ambiente (GCP/Render com secret mount)
+FIREBASE_PROJECT_ID=seu-projeto-firebase
+```
+
+Endpoints administrativos do worker:
+
+- `GET /api/whatsapp/worker/status`
+- `POST /api/whatsapp/worker/run`
+
+Você pode proteger esses endpoints com:
+
+```env
+WHATSAPP_WORKER_ADMIN_TOKEN=seu-token-admin
+```
+
+e enviar no header:
+
+`x-worker-token: seu-token-admin`
+
 ## 5. Fluxos no App
 
 - Checkout online:

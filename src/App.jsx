@@ -99,6 +99,29 @@ const shouldUseImageProxy = () => {
   return Boolean(BACKEND_URL);
 };
 
+function LoadingOverlay({ isAdmin }) {
+  return (
+    <div className="loading-overlay" role="status" aria-live="polite">
+      <div className="loading-overlay__backdrop" />
+      <div className="loading-overlay__content">
+        <img
+          src="/logo-loading.png"
+          alt="Carregando loja"
+          className="loading-overlay__logo"
+        />
+        <h2 className="loading-overlay__title">
+          {isAdmin ? "Carregando dados do painel" : "Preparando seus produtos"}
+        </h2>
+        <p className="loading-overlay__text">
+          {isAdmin
+            ? "Estamos sincronizando os dados para você gerenciar tudo com tranquilidade. Aguarde um momento."
+            : "Estamos preparando tudo para melhorar sua experiencia. Aguarde um momento que seus produtos ja serao exibidos."}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 const normalizeExternalImageUrl = (value) => {
   const raw = String(value || "").trim();
   if (!raw) return "";
@@ -747,6 +770,168 @@ const normalizeStoreAddress = (value) => {
       .trim()
       .toUpperCase()
       .slice(0, 2),
+  };
+};
+
+const getDefaultWhatsAppAutomationConfig = () => ({
+  enabled: false,
+  provider: "zapi",
+  defaultCountryCode: "55",
+  businessPhoneNumber: "",
+  couponTag: "{{couponCode}}",
+  zapiInstanceId: "",
+  phoneNumberId: "",
+  businessAccountId: "",
+  sendOnlyWithCustomerConsent: true,
+  abandonedCart: {
+    enabled: true,
+    delayHours: 24,
+    template:
+      "Oi {{firstName}}, vi que você deixou produtos no carrinho da {{storeName}}. Se quiser, eu posso te ajudar a finalizar o pedido. Cupom especial: {{couponCode}}",
+  },
+  interestedLead: {
+    enabled: false,
+    delayHours: 6,
+    template:
+      "Oi {{firstName}}, percebi que você demonstrou interesse em alguns produtos da {{storeName}}. Quer que eu separe os detalhes para você?",
+  },
+  orderCreated: {
+    enabled: true,
+    template:
+      "Oi {{firstName}}, recebemos seu pedido {{orderNumber}} na {{storeName}}. Vou te avisar por aqui sempre que houver uma atualização importante.",
+  },
+  orderStatusChanged: {
+    enabled: true,
+    template:
+      "Oi {{firstName}}, seu pedido {{orderNumber}} foi atualizado para: {{status}}.",
+  },
+  postPurchaseFollowUp: {
+    enabled: false,
+    delayDays: 7,
+    template:
+      "Oi {{firstName}}, tudo certo com seu pedido {{orderNumber}}? Se precisar de reposição ou quiser ver novidades da {{storeName}}, me chama aqui. Cupom de retorno: {{couponCode}}",
+  },
+  manualAutomations: [],
+});
+
+const normalizeWhatsAppAutomationConfig = (value) => {
+  const source = value && typeof value === "object" ? value : {};
+  const defaults = getDefaultWhatsAppAutomationConfig();
+  const normalizeInteger = (rawValue, fallback, min, max) => {
+    const parsed = Number(rawValue);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.min(max, Math.max(min, Math.round(parsed)));
+  };
+  const normalizeRule = (ruleValue, defaultRule, delayKey, min, max) => {
+    const sourceRule =
+      ruleValue && typeof ruleValue === "object" ? ruleValue : {};
+    return {
+      enabled:
+        sourceRule.enabled === undefined
+          ? defaultRule.enabled
+          : Boolean(sourceRule.enabled),
+      [delayKey]: normalizeInteger(
+        sourceRule[delayKey],
+        defaultRule[delayKey],
+        min,
+        max,
+      ),
+      template: String(sourceRule.template || defaultRule.template).trim(),
+    };
+  };
+  const normalizeManualAutomation = (item, index) => {
+    const sourceItem = item && typeof item === "object" ? item : {};
+    const fallbackTemplate =
+      "Oi {{firstName}}, aqui e da {{storeName}}. Posso te ajudar com uma oferta especial: {{couponCode}}";
+
+    return {
+      id:
+        String(sourceItem.id || "").trim() ||
+        `manual-${Date.now()}-${index + 1}`,
+      name:
+        String(sourceItem.name || "").trim() || `Automacao manual ${index + 1}`,
+      enabled:
+        sourceItem.enabled === undefined ? true : Boolean(sourceItem.enabled),
+      triggerLabel:
+        String(sourceItem.triggerLabel || "").trim() ||
+        "Disparo manual pelo admin",
+      template: String(sourceItem.template || fallbackTemplate).trim(),
+    };
+  };
+
+  return {
+    enabled:
+      source.enabled === undefined ? defaults.enabled : Boolean(source.enabled),
+    provider: String(source.provider || defaults.provider).trim(),
+    defaultCountryCode:
+      String(source.defaultCountryCode || defaults.defaultCountryCode)
+        .replace(/\D/g, "")
+        .slice(0, 4) || defaults.defaultCountryCode,
+    businessPhoneNumber: String(
+      source.businessPhoneNumber || defaults.businessPhoneNumber,
+    ).trim(),
+    couponTag:
+      String(source.couponTag || defaults.couponTag)
+        .trim()
+        .slice(0, 60) || defaults.couponTag,
+    zapiInstanceId: String(
+      source.zapiInstanceId || defaults.zapiInstanceId,
+    ).trim(),
+    phoneNumberId: String(
+      source.phoneNumberId || defaults.phoneNumberId,
+    ).trim(),
+    businessAccountId: String(
+      source.businessAccountId || defaults.businessAccountId,
+    ).trim(),
+    sendOnlyWithCustomerConsent:
+      source.sendOnlyWithCustomerConsent === undefined
+        ? defaults.sendOnlyWithCustomerConsent
+        : Boolean(source.sendOnlyWithCustomerConsent),
+    abandonedCart: normalizeRule(
+      source.abandonedCart,
+      defaults.abandonedCart,
+      "delayHours",
+      1,
+      240,
+    ),
+    interestedLead: normalizeRule(
+      source.interestedLead,
+      defaults.interestedLead,
+      "delayHours",
+      1,
+      240,
+    ),
+    orderCreated: {
+      enabled:
+        source.orderCreated?.enabled === undefined
+          ? defaults.orderCreated.enabled
+          : Boolean(source.orderCreated?.enabled),
+      template: String(
+        source.orderCreated?.template || defaults.orderCreated.template,
+      ).trim(),
+    },
+    orderStatusChanged: {
+      enabled:
+        source.orderStatusChanged?.enabled === undefined
+          ? defaults.orderStatusChanged.enabled
+          : Boolean(source.orderStatusChanged?.enabled),
+      template: String(
+        source.orderStatusChanged?.template ||
+          defaults.orderStatusChanged.template,
+      ).trim(),
+    },
+    postPurchaseFollowUp: normalizeRule(
+      source.postPurchaseFollowUp,
+      defaults.postPurchaseFollowUp,
+      "delayDays",
+      1,
+      60,
+    ),
+    manualAutomations: Array.isArray(source.manualAutomations)
+      ? source.manualAutomations
+          .slice(0, 20)
+          .map((item, index) => normalizeManualAutomation(item, index))
+      : defaults.manualAutomations,
   };
 };
 
@@ -1628,6 +1813,7 @@ export default function App() {
       youtube: "",
       tiktok: "",
     },
+    whatsappAutomation: getDefaultWhatsAppAutomationConfig(),
     mpPublicKey: DEFAULT_MP_PUBLIC_KEY,
     pixKey: "",
     pickupMapUrl: "",
@@ -1656,6 +1842,8 @@ export default function App() {
     },
   });
   const [loading, setLoading] = useState(true);
+  const [publicDataReady, setPublicDataReady] = useState(false);
+  const [adminDataReady, setAdminDataReady] = useState(false);
   const [toast, setToast] = useState(null);
 
   // Inicializa o Mercado Pago Globalmente quando a chave estiver disponível (Apenas Localmente se descomentar os imports)
@@ -1731,7 +1919,27 @@ export default function App() {
 
   // Data Fetching (Public Data)
   useEffect(() => {
-    if (!user) return;
+    if (!user) {
+      setPublicDataReady(false);
+      return;
+    }
+
+    setPublicDataReady(false);
+    let productsReady = false;
+    let couponsReady = false;
+    let customerFeedbacksReady = false;
+    let settingsReady = false;
+
+    const markPublicReady = () => {
+      if (
+        productsReady &&
+        couponsReady &&
+        customerFeedbacksReady &&
+        settingsReady
+      ) {
+        setPublicDataReady(true);
+      }
+    };
 
     const productsRef = collection(
       db,
@@ -1747,8 +1955,14 @@ export default function App() {
         setProducts(
           snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })),
         );
+        productsReady = true;
+        markPublicReady();
       },
-      (err) => console.error(err),
+      (err) => {
+        console.error(err);
+        productsReady = true;
+        markPublicReady();
+      },
     );
 
     const couponsRef = collection(
@@ -1773,8 +1987,14 @@ export default function App() {
               (a.createdAt?.toMillis?.() || 0),
           ),
         );
+        couponsReady = true;
+        markPublicReady();
       },
-      (err) => console.error(err),
+      (err) => {
+        console.error(err);
+        couponsReady = true;
+        markPublicReady();
+      },
     );
 
     const customerFeedbacksRef = collection(
@@ -1799,8 +2019,14 @@ export default function App() {
               (a.createdAt?.toMillis?.() || 0),
           ),
         );
+        customerFeedbacksReady = true;
+        markPublicReady();
       },
-      (err) => console.error(err),
+      (err) => {
+        console.error(err);
+        customerFeedbacksReady = true;
+        markPublicReady();
+      },
     );
 
     const settingsRef = doc(
@@ -1815,10 +2041,24 @@ export default function App() {
     const unsubSettings = onSnapshot(
       settingsRef,
       (docSnap) => {
-        if (docSnap.exists())
-          setStoreSettings((prev) => ({ ...prev, ...docSnap.data() }));
+        if (docSnap.exists()) {
+          const nextData = docSnap.data() || {};
+          setStoreSettings((prev) => ({
+            ...prev,
+            ...nextData,
+            whatsappAutomation: normalizeWhatsAppAutomationConfig(
+              nextData.whatsappAutomation,
+            ),
+          }));
+        }
+        settingsReady = true;
+        markPublicReady();
       },
-      (err) => console.error(err),
+      (err) => {
+        console.error(err);
+        settingsReady = true;
+        markPublicReady();
+      },
     );
 
     return () => {
@@ -1832,12 +2072,25 @@ export default function App() {
   // Data Fetching (Admin Data)
   useEffect(() => {
     if (!user || !isAdminRoute || !isAdminAuthenticated) {
+      setAdminDataReady(false);
       setOrders([]);
       setAbandonedCarts([]);
       setProductInterestLeads([]);
       setProductNotFoundRequests([]);
       return;
     }
+
+    setAdminDataReady(false);
+    let ordersReady = false;
+    let cartsReady = false;
+    let leadsReady = false;
+    let productRequestsReady = false;
+
+    const markAdminReady = () => {
+      if (ordersReady && cartsReady && leadsReady && productRequestsReady) {
+        setAdminDataReady(true);
+      }
+    };
 
     const ordersRef = collection(
       db,
@@ -1860,8 +2113,14 @@ export default function App() {
               (b.createdAt?.toMillis() || 0) - (a.createdAt?.toMillis() || 0),
           ),
         );
+        ordersReady = true;
+        markAdminReady();
       },
-      (err) => console.error(err),
+      (err) => {
+        console.error(err);
+        ordersReady = true;
+        markAdminReady();
+      },
     );
 
     const cartsRef = collection(
@@ -1885,8 +2144,14 @@ export default function App() {
               (b.updatedAt?.toMillis() || 0) - (a.updatedAt?.toMillis() || 0),
           ),
         );
+        cartsReady = true;
+        markAdminReady();
       },
-      (err) => console.error(err),
+      (err) => {
+        console.error(err);
+        cartsReady = true;
+        markAdminReady();
+      },
     );
 
     const leadsRef = collection(
@@ -1912,8 +2177,14 @@ export default function App() {
               (a.lastClickedAt?.toMillis?.() || 0),
           ),
         );
+        leadsReady = true;
+        markAdminReady();
       },
-      (err) => console.error(err),
+      (err) => {
+        console.error(err);
+        leadsReady = true;
+        markAdminReady();
+      },
     );
 
     const productRequestsRef = collection(
@@ -1938,8 +2209,14 @@ export default function App() {
               (a.createdAt?.toMillis?.() || 0),
           ),
         );
+        productRequestsReady = true;
+        markAdminReady();
       },
-      (err) => console.error(err),
+      (err) => {
+        console.error(err);
+        productRequestsReady = true;
+        markAdminReady();
+      },
     );
 
     return () => {
@@ -1993,12 +2270,13 @@ export default function App() {
     showToast("Sessão administrativa encerrada.");
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
-      </div>
-    );
+  const shouldShowLoadingOverlay =
+    loading ||
+    (!isAdminRoute && Boolean(user) && !publicDataReady) ||
+    (isAdminRoute && isAdminAuthenticated && !adminDataReady);
+
+  if (shouldShowLoadingOverlay) {
+    return <LoadingOverlay isAdmin={isAdminRoute} />;
   }
 
   return (
@@ -9446,6 +9724,734 @@ function CheckoutFlow({
 // ==========================================
 // 2. ÁREA DE GESTÃO (ADMIN DASHBOARD)
 // ==========================================
+function AdminWhatsAppSettings({ showToast, storeSettings }) {
+  const [whatsappAutomation, setWhatsappAutomation] = useState(
+    getDefaultWhatsAppAutomationConfig(),
+  );
+  const [whatsappTestNumber, setWhatsappTestNumber] = useState("");
+  const [whatsappTestMessage, setWhatsappTestMessage] = useState("");
+  const [isCheckingWhatsAppHealth, setIsCheckingWhatsAppHealth] =
+    useState(false);
+  const [isSendingWhatsAppTest, setIsSendingWhatsAppTest] = useState(false);
+  const [isAutoSaving, setIsAutoSaving] = useState(false);
+  const lastPersistedRef = useRef("");
+  const storeName = storeSettings?.storeName || "loja";
+
+  useEffect(() => {
+    if (storeSettings?.whatsappAutomation) {
+      setWhatsappAutomation(
+        normalizeWhatsAppAutomationConfig(storeSettings.whatsappAutomation),
+      );
+    }
+  }, [storeSettings]);
+
+  useEffect(() => {
+    const normalized = normalizeWhatsAppAutomationConfig(whatsappAutomation);
+    const json = JSON.stringify(normalized);
+    if (json === lastPersistedRef.current) return;
+    const timer = setTimeout(async () => {
+      setIsAutoSaving(true);
+      try {
+        await setDoc(
+          doc(db, "artifacts", appId, "public", "data", "settings", "config"),
+          { whatsappAutomation: normalized },
+          { merge: true },
+        );
+        lastPersistedRef.current = json;
+      } catch {
+        showToast("Erro ao salvar automações de WhatsApp.", "error");
+      } finally {
+        setIsAutoSaving(false);
+      }
+    }, 700);
+    return () => clearTimeout(timer);
+  }, [whatsappAutomation, showToast]);
+
+  const updateWhatsAppAutomation = (updater) => {
+    setWhatsappAutomation((prev) => {
+      const current = normalizeWhatsAppAutomationConfig(prev);
+      const nextValue =
+        typeof updater === "function"
+          ? updater(current)
+          : { ...current, ...updater };
+      return normalizeWhatsAppAutomationConfig(nextValue);
+    });
+  };
+
+  const updateWhatsAppRule = (ruleKey, patch) => {
+    updateWhatsAppAutomation((current) => ({
+      ...current,
+      [ruleKey]: { ...current[ruleKey], ...patch },
+    }));
+  };
+
+  const addManualAutomation = () => {
+    updateWhatsAppAutomation((current) => ({
+      ...current,
+      manualAutomations: [
+        ...(Array.isArray(current.manualAutomations)
+          ? current.manualAutomations
+          : []),
+        {
+          id: `manual-${Date.now()}`,
+          name: "Nova automacao manual",
+          enabled: true,
+          triggerLabel: "Disparo manual pelo admin",
+          template:
+            "Oi {{firstName}}, aqui e da {{storeName}}. Tenho uma condicao especial para voce: {{couponCode}}",
+        },
+      ],
+    }));
+  };
+
+  const updateManualAutomation = (id, patch) => {
+    updateWhatsAppAutomation((current) => ({
+      ...current,
+      manualAutomations: (current.manualAutomations || []).map((item) =>
+        item.id === id ? { ...item, ...patch } : item,
+      ),
+    }));
+  };
+
+  const removeManualAutomation = (id) => {
+    updateWhatsAppAutomation((current) => ({
+      ...current,
+      manualAutomations: (current.manualAutomations || []).filter(
+        (item) => item.id !== id,
+      ),
+    }));
+  };
+
+  const handleCheckWhatsAppHealth = async () => {
+    setIsCheckingWhatsAppHealth(true);
+    try {
+      const response = await fetch(buildApiUrl("/api/whatsapp/health"));
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok)
+        throw new Error(data?.error || "Não foi possível validar o canal.");
+      if (!data?.configured) {
+        showToast(
+          "Backend online, mas as credenciais do WhatsApp ainda não foram configuradas no servidor.",
+          "error",
+        );
+        return;
+      }
+      showToast("Canal do WhatsApp validado no backend.");
+    } catch (error) {
+      showToast(error?.message || "Falha ao validar o canal.", "error");
+    } finally {
+      setIsCheckingWhatsAppHealth(false);
+    }
+  };
+
+  const handleSendWhatsAppTest = async () => {
+    if (!whatsappTestNumber.trim()) {
+      showToast("Informe um número para o teste do WhatsApp.", "error");
+      return;
+    }
+    setIsSendingWhatsAppTest(true);
+    try {
+      const response = await fetch(buildApiUrl("/api/whatsapp/send-test"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          to: whatsappTestNumber,
+          text:
+            whatsappTestMessage.trim() ||
+            `Teste de integração da ${storeName} via painel administrativo.`,
+          provider: whatsappAutomation.provider,
+          zapiInstanceId: whatsappAutomation.zapiInstanceId,
+          phoneNumberId: whatsappAutomation.phoneNumberId,
+          defaultCountryCode: whatsappAutomation.defaultCountryCode,
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok)
+        throw new Error(data?.error || "Falha ao enviar teste.");
+      showToast("Mensagem de teste enviada ao WhatsApp informado.");
+    } catch (error) {
+      showToast(error?.message || "Falha ao enviar teste.", "error");
+    } finally {
+      setIsSendingWhatsAppTest(false);
+    }
+  };
+
+  return (
+    <div className="max-w-5xl space-y-8">
+      <div className="flex items-center justify-between">
+        <h2 className="text-xl font-bold flex items-center gap-2 text-slate-800">
+          <Smartphone size={22} className="text-emerald-600" /> WhatsApp
+          Automático
+        </h2>
+        {isAutoSaving && (
+          <span className="text-xs text-slate-400 animate-pulse">
+            Salvando...
+          </span>
+        )}
+      </div>
+
+      <div className="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-4 text-sm text-emerald-900">
+        <p className="font-bold">Conexão recomendada: Z-API</p>
+        <p className="mt-1 leading-relaxed">
+          Crie sua conta em <strong>z-api.io</strong>, gere uma instância e
+          escaneie o QR Code com seu WhatsApp. Coloque o{" "}
+          <code>ZAPI_INSTANCE_ID</code>, <code>ZAPI_TOKEN</code> e{" "}
+          <code>ZAPI_CLIENT_TOKEN</code> no <code>.env</code> do backend. Nunca
+          exponha tokens no frontend.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+        <div className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={whatsappAutomation.enabled}
+              onChange={(e) =>
+                updateWhatsAppAutomation({ enabled: e.target.checked })
+              }
+              className="w-5 h-5 rounded border-slate-300 text-emerald-600"
+            />
+            <span className="font-semibold text-slate-700">
+              Ativar automações de WhatsApp
+            </span>
+          </label>
+
+          <div>
+            <label className="block text-sm font-bold mb-2 text-slate-700">
+              Provedor
+            </label>
+            <select
+              value={whatsappAutomation.provider}
+              onChange={(e) =>
+                updateWhatsAppAutomation({ provider: e.target.value })
+              }
+              className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+            >
+              <option value="zapi">Z-API (QR Code, recomendado Brasil)</option>
+              <option value="whatsapp_cloud_api">
+                WhatsApp Cloud API (Meta)
+              </option>
+              <option value="custom_webhook">Webhook próprio</option>
+              <option value="manual_only">Somente manual</option>
+            </select>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-bold mb-2 text-slate-700">
+                DDI padrão
+              </label>
+              <input
+                type="text"
+                inputMode="numeric"
+                value={whatsappAutomation.defaultCountryCode}
+                onChange={(e) =>
+                  updateWhatsAppAutomation({
+                    defaultCountryCode: e.target.value,
+                  })
+                }
+                placeholder="55"
+                className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-bold mb-2 text-slate-700">
+                Tag de cupom (variável)
+              </label>
+              <input
+                type="text"
+                value={whatsappAutomation.couponTag}
+                onChange={(e) =>
+                  updateWhatsAppAutomation({ couponTag: e.target.value })
+                }
+                placeholder="{{couponCode}}"
+                className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-bold mb-2 text-slate-700">
+                Número comercial exibido
+              </label>
+              <input
+                type="text"
+                value={whatsappAutomation.businessPhoneNumber}
+                onChange={(e) =>
+                  updateWhatsAppAutomation({
+                    businessPhoneNumber: e.target.value,
+                  })
+                }
+                placeholder="(11) 99999-9999"
+                className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+              />
+            </div>
+          </div>
+
+          {whatsappAutomation.provider === "zapi" && (
+            <div>
+              <label className="block text-sm font-bold mb-2 text-slate-700">
+                Z-API Instance ID
+              </label>
+              <input
+                type="text"
+                value={whatsappAutomation.zapiInstanceId}
+                onChange={(e) =>
+                  updateWhatsAppAutomation({ zapiInstanceId: e.target.value })
+                }
+                placeholder="Ex: 3A...sua-instancia"
+                className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+              />
+              <p className="text-xs text-slate-400 mt-1">
+                Token e Client-Token ficam apenas no <code>.env</code> do
+                backend (nunca aqui).
+              </p>
+            </div>
+          )}
+
+          {whatsappAutomation.provider === "whatsapp_cloud_api" && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm font-bold mb-2 text-slate-700">
+                  Phone Number ID
+                </label>
+                <input
+                  type="text"
+                  value={whatsappAutomation.phoneNumberId}
+                  onChange={(e) =>
+                    updateWhatsAppAutomation({ phoneNumberId: e.target.value })
+                  }
+                  placeholder="ID do número na Meta"
+                  className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold mb-2 text-slate-700">
+                  Business Account ID
+                </label>
+                <input
+                  type="text"
+                  value={whatsappAutomation.businessAccountId}
+                  onChange={(e) =>
+                    updateWhatsAppAutomation({
+                      businessAccountId: e.target.value,
+                    })
+                  }
+                  placeholder="Opcional, para governança"
+                  className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+                />
+              </div>
+            </div>
+          )}
+
+          <label className="flex items-start gap-3 cursor-pointer rounded-xl border border-slate-200 bg-white p-3">
+            <input
+              type="checkbox"
+              checked={whatsappAutomation.sendOnlyWithCustomerConsent}
+              onChange={(e) =>
+                updateWhatsAppAutomation({
+                  sendOnlyWithCustomerConsent: e.target.checked,
+                })
+              }
+              className="mt-1 w-4 h-4 rounded border-slate-300 text-emerald-600"
+            />
+            <span className="text-sm text-slate-600 leading-relaxed">
+              Enviar somente para clientes com consentimento. Isso ajuda a
+              manter o canal aderente às políticas da Meta e reduz risco de
+              bloqueio.
+            </span>
+          </label>
+        </div>
+
+        <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4">
+          <div>
+            <h4 className="font-bold text-slate-700">Validação e teste</h4>
+            <p className="text-sm text-slate-500 mt-1">
+              Use estas ações para verificar se o backend está pronto para
+              enviar mensagens.
+            </p>
+          </div>
+
+          <div className="flex flex-col sm:flex-row gap-3">
+            <button
+              type="button"
+              onClick={handleCheckWhatsAppHealth}
+              disabled={isCheckingWhatsAppHealth}
+              className="px-4 py-3 rounded-xl bg-slate-900 hover:bg-slate-700 disabled:opacity-60 text-white font-bold"
+            >
+              {isCheckingWhatsAppHealth
+                ? "Validando canal..."
+                : "Verificar conexão"}
+            </button>
+            <div className="text-xs text-slate-500 self-center">
+              Endpoint: /api/whatsapp/health
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-bold mb-2 text-slate-700">
+              Número para teste
+            </label>
+            <input
+              type="text"
+              value={whatsappTestNumber}
+              onChange={(e) => setWhatsappTestNumber(e.target.value)}
+              placeholder="11999999999"
+              className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-bold mb-2 text-slate-700">
+              Mensagem de teste
+            </label>
+            <textarea
+              rows={4}
+              value={whatsappTestMessage}
+              onChange={(e) => setWhatsappTestMessage(e.target.value)}
+              placeholder="Teste de integração do WhatsApp da loja."
+              className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+            />
+          </div>
+
+          <button
+            type="button"
+            onClick={handleSendWhatsAppTest}
+            disabled={isSendingWhatsAppTest}
+            className="px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-bold"
+          >
+            {isSendingWhatsAppTest
+              ? "Enviando teste..."
+              : "Enviar mensagem de teste"}
+          </button>
+
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 leading-relaxed">
+            Automação de carrinho abandonado, pós-compra e mudança de status
+            ainda depende de um scheduler no backend. Esta tela deixa a operação
+            preparada e salva automaticamente.
+          </div>
+
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-900 leading-relaxed">
+            Dica: inclua <strong>{"{{couponCode}}"}</strong> ou a tag definida
+            acima dentro dos templates para enviar cupom junto com a mensagem.
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <h3 className="font-semibold text-lg border-b pb-2 text-slate-700 mb-4">
+          Regras de automação
+        </h3>
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <h4 className="font-bold text-slate-700">Carrinho abandonado</h4>
+              <label className="flex items-center gap-2 text-sm font-semibold text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={whatsappAutomation.abandonedCart.enabled}
+                  onChange={(e) =>
+                    updateWhatsAppRule("abandonedCart", {
+                      enabled: e.target.checked,
+                    })
+                  }
+                  className="w-4 h-4 rounded border-slate-300 text-emerald-600"
+                />
+                Ativo
+              </label>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 mb-1">
+                Disparar após (horas)
+              </label>
+              <input
+                type="number"
+                min="1"
+                max="240"
+                value={whatsappAutomation.abandonedCart.delayHours}
+                onChange={(e) =>
+                  updateWhatsAppRule("abandonedCart", {
+                    delayHours: e.target.value,
+                  })
+                }
+                className="w-full p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+            </div>
+            <textarea
+              rows={4}
+              value={whatsappAutomation.abandonedCart.template}
+              onChange={(e) =>
+                updateWhatsAppRule("abandonedCart", {
+                  template: e.target.value,
+                })
+              }
+              className="w-full p-3 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
+            />
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <h4 className="font-bold text-slate-700">Interesse sem compra</h4>
+              <label className="flex items-center gap-2 text-sm font-semibold text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={whatsappAutomation.interestedLead.enabled}
+                  onChange={(e) =>
+                    updateWhatsAppRule("interestedLead", {
+                      enabled: e.target.checked,
+                    })
+                  }
+                  className="w-4 h-4 rounded border-slate-300 text-emerald-600"
+                />
+                Ativo
+              </label>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 mb-1">
+                Disparar após (horas)
+              </label>
+              <input
+                type="number"
+                min="1"
+                max="240"
+                value={whatsappAutomation.interestedLead.delayHours}
+                onChange={(e) =>
+                  updateWhatsAppRule("interestedLead", {
+                    delayHours: e.target.value,
+                  })
+                }
+                className="w-full p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+            </div>
+            <textarea
+              rows={4}
+              value={whatsappAutomation.interestedLead.template}
+              onChange={(e) =>
+                updateWhatsAppRule("interestedLead", {
+                  template: e.target.value,
+                })
+              }
+              className="w-full p-3 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
+            />
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <h4 className="font-bold text-slate-700">Após a compra</h4>
+              <label className="flex items-center gap-2 text-sm font-semibold text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={whatsappAutomation.orderCreated.enabled}
+                  onChange={(e) =>
+                    updateWhatsAppRule("orderCreated", {
+                      enabled: e.target.checked,
+                    })
+                  }
+                  className="w-4 h-4 rounded border-slate-300 text-emerald-600"
+                />
+                Ativo
+              </label>
+            </div>
+            <textarea
+              rows={4}
+              value={whatsappAutomation.orderCreated.template}
+              onChange={(e) =>
+                updateWhatsAppRule("orderCreated", { template: e.target.value })
+              }
+              className="w-full p-3 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
+            />
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <h4 className="font-bold text-slate-700">Mudança de status</h4>
+              <label className="flex items-center gap-2 text-sm font-semibold text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={whatsappAutomation.orderStatusChanged.enabled}
+                  onChange={(e) =>
+                    updateWhatsAppRule("orderStatusChanged", {
+                      enabled: e.target.checked,
+                    })
+                  }
+                  className="w-4 h-4 rounded border-slate-300 text-emerald-600"
+                />
+                Ativo
+              </label>
+            </div>
+            <textarea
+              rows={4}
+              value={whatsappAutomation.orderStatusChanged.template}
+              onChange={(e) =>
+                updateWhatsAppRule("orderStatusChanged", {
+                  template: e.target.value,
+                })
+              }
+              className="w-full p-3 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
+            />
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3 xl:col-span-2">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <h4 className="font-bold text-slate-700">Recompra futura</h4>
+              <label className="flex items-center gap-2 text-sm font-semibold text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={whatsappAutomation.postPurchaseFollowUp.enabled}
+                  onChange={(e) =>
+                    updateWhatsAppRule("postPurchaseFollowUp", {
+                      enabled: e.target.checked,
+                    })
+                  }
+                  className="w-4 h-4 rounded border-slate-300 text-emerald-600"
+                />
+                Ativo
+              </label>
+            </div>
+            <div className="max-w-xs">
+              <label className="block text-xs font-semibold text-slate-500 mb-1">
+                Disparar após (dias)
+              </label>
+              <input
+                type="number"
+                min="1"
+                max="60"
+                value={whatsappAutomation.postPurchaseFollowUp.delayDays}
+                onChange={(e) =>
+                  updateWhatsAppRule("postPurchaseFollowUp", {
+                    delayDays: e.target.value,
+                  })
+                }
+                className="w-full p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+            </div>
+            <textarea
+              rows={4}
+              value={whatsappAutomation.postPurchaseFollowUp.template}
+              onChange={(e) =>
+                updateWhatsAppRule("postPurchaseFollowUp", {
+                  template: e.target.value,
+                })
+              }
+              className="w-full p-3 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
+            />
+            <p className="text-xs text-slate-500">
+              Variáveis sugeridas: <span>{"{{firstName}}"}</span>,{" "}
+              <span>{"{{storeName}}"}</span>, <span>{"{{orderNumber}}"}</span>,{" "}
+              <span>{"{{status}}"}</span>, <span>{"{{couponCode}}"}</span>.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div className="flex items-center justify-between gap-3 border-b pb-2 mb-4">
+          <h3 className="font-semibold text-lg text-slate-700">
+            Automações manuais
+          </h3>
+          <button
+            type="button"
+            onClick={addManualAutomation}
+            className="px-3 py-2 rounded-lg bg-slate-900 hover:bg-slate-700 text-white text-sm font-bold"
+          >
+            + Nova automação manual
+          </button>
+        </div>
+
+        <div className="space-y-4">
+          {(whatsappAutomation.manualAutomations || []).length === 0 && (
+            <div className="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-500">
+              Nenhuma automação manual criada ainda.
+            </div>
+          )}
+
+          {(whatsappAutomation.manualAutomations || []).map((manual) => (
+            <div
+              key={manual.id}
+              className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3"
+            >
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <label className="flex items-center gap-2 text-sm font-semibold text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(manual.enabled)}
+                    onChange={(e) =>
+                      updateManualAutomation(manual.id, {
+                        enabled: e.target.checked,
+                      })
+                    }
+                    className="w-4 h-4 rounded border-slate-300 text-emerald-600"
+                  />
+                  Ativa
+                </label>
+                <button
+                  type="button"
+                  onClick={() => removeManualAutomation(manual.id)}
+                  className="px-3 py-2 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold"
+                >
+                  Remover
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 mb-1">
+                    Nome da automação
+                  </label>
+                  <input
+                    type="text"
+                    value={manual.name || ""}
+                    onChange={(e) =>
+                      updateManualAutomation(manual.id, {
+                        name: e.target.value,
+                      })
+                    }
+                    className="w-full p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 mb-1">
+                    Gatilho manual
+                  </label>
+                  <input
+                    type="text"
+                    value={manual.triggerLabel || ""}
+                    onChange={(e) =>
+                      updateManualAutomation(manual.id, {
+                        triggerLabel: e.target.value,
+                      })
+                    }
+                    placeholder="Ex: campanha de fim de semana"
+                    className="w-full p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 mb-1">
+                  Template da mensagem
+                </label>
+                <textarea
+                  rows={4}
+                  value={manual.template || ""}
+                  onChange={(e) =>
+                    updateManualAutomation(manual.id, {
+                      template: e.target.value,
+                    })
+                  }
+                  className="w-full p-3 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AdminDashboard({
   products,
   orders,
@@ -9476,6 +10482,7 @@ function AdminDashboard({
     },
     { id: "feedbacks", name: "Feedbacks", icon: <MessageCircle size={20} /> },
     { id: "coupons", name: "Cupons", icon: <Tag size={20} /> },
+    { id: "whatsapp", name: "WhatsApp", icon: <Smartphone size={20} /> },
     { id: "settings", name: "Configurações", icon: <Settings size={20} /> },
   ];
 
@@ -9659,6 +10666,14 @@ function AdminDashboard({
               coupons={coupons}
               showToast={showToast}
               products={products}
+            />
+          )}
+        </div>
+        <div className={activeTab !== "whatsapp" ? "print:hidden" : ""}>
+          {activeTab === "whatsapp" && (
+            <AdminWhatsAppSettings
+              showToast={showToast}
+              storeSettings={storeSettings}
             />
           )}
         </div>
@@ -15995,6 +17010,7 @@ function AdminSettings({ showToast, storeSettings }) {
       youtube: "",
       tiktok: "",
     },
+    whatsappAutomation: getDefaultWhatsAppAutomationConfig(),
     mpPublicKey: DEFAULT_MP_PUBLIC_KEY,
     pixKey: "",
     pickupMapUrl: "",
@@ -16088,6 +17104,9 @@ function AdminSettings({ showToast, storeSettings }) {
       ),
       contactPhones: normalizePhoneList(sourceConfig.contactPhones),
       socialLinks: normalizeSocialLinks(sourceConfig.socialLinks),
+      whatsappAutomation: normalizeWhatsAppAutomationConfig(
+        sourceConfig.whatsappAutomation,
+      ),
       faqItems: normalizeFaqItems(sourceConfig.faqItems),
       customerHighlights: normalizeCustomerHighlights(
         sourceConfig.customerHighlights,
@@ -16132,6 +17151,9 @@ function AdminSettings({ showToast, storeSettings }) {
           ),
           catalog: normalizeCatalog(storeSettings.catalog),
           socialLinks: normalizeSocialLinks(storeSettings.socialLinks),
+          whatsappAutomation: normalizeWhatsAppAutomationConfig(
+            storeSettings.whatsappAutomation,
+          ),
           contactPhones: normalizePhoneList(storeSettings.contactPhones),
           faqItems: normalizeFaqItems(storeSettings.faqItems),
           customerHighlights: normalizeCustomerHighlights(
