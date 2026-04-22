@@ -99,7 +99,43 @@ const shouldUseImageProxy = () => {
   return Boolean(BACKEND_URL);
 };
 
-function LoadingOverlay({ isAdmin }) {
+const STORE_LOADING_MESSAGES = [
+  "Separando os produtos mais pedidos para voce.",
+  "Organizando estoque e promocoes em tempo real.",
+  "Montando vitrine com fotos otimizadas para carregar mais rapido.",
+  "Conferindo cupons e destaques da loja.",
+  "Quase pronto! Seu catalogo ja esta sendo exibido.",
+];
+
+const ADMIN_LOADING_MESSAGES = [
+  "Conectando ao painel administrativo.",
+  "Sincronizando pedidos, carrinhos e leads.",
+  "Atualizando indicadores para sua gestao.",
+  "Aplicando configuracoes da loja com seguranca.",
+  "Quase pronto! Abrindo seu painel.",
+];
+
+function LoadingOverlay({ isAdmin, phase = "boot" }) {
+  const messages = isAdmin ? ADMIN_LOADING_MESSAGES : STORE_LOADING_MESSAGES;
+  const [messageIndex, setMessageIndex] = useState(0);
+
+  useEffect(() => {
+    const intervalId = setInterval(() => {
+      setMessageIndex((prev) => (prev + 1) % messages.length);
+    }, 2400);
+
+    return () => clearInterval(intervalId);
+  }, [messages, isAdmin]);
+
+  const phaseMeta =
+    phase === "auth"
+      ? { label: "Conectando com seguranca", progress: 28 }
+      : phase === "public-core"
+        ? { label: "Carregando vitrine principal", progress: 72 }
+        : phase === "admin-data"
+          ? { label: "Carregando dados do painel", progress: 84 }
+          : { label: "Preparando ambiente", progress: 52 };
+
   return (
     <div className="loading-overlay" role="status" aria-live="polite">
       <div className="loading-overlay__backdrop" />
@@ -108,15 +144,34 @@ function LoadingOverlay({ isAdmin }) {
           src="/logo-loading.webp"
           alt="Carregando loja"
           className="loading-overlay__logo"
+          fetchPriority="high"
+          decoding="async"
         />
         <h2 className="loading-overlay__title">
           {isAdmin ? "Carregando dados do painel" : "Preparando seus produtos"}
         </h2>
-        <p className="loading-overlay__text">
-          {isAdmin
-            ? "Estamos sincronizando os dados para você gerenciar tudo com tranquilidade. Aguarde um momento."
-            : "Estamos preparando tudo para melhorar sua experiencia. Aguarde um momento que seus produtos ja serao exibidos."}
+        <p className="loading-overlay__status">{phaseMeta.label}</p>
+        <div
+          className="loading-overlay__progress"
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={phaseMeta.progress}
+          aria-label="Andamento do carregamento"
+        >
+          <span
+            className="loading-overlay__progress-bar"
+            style={{ width: `${phaseMeta.progress}%` }}
+          />
+        </div>
+        <p className="loading-overlay__text loading-overlay__text--dynamic">
+          {messages[messageIndex]}
         </p>
+        <ul className="loading-overlay__hints" aria-hidden="true">
+          <li>Otimizando imagens para abrir mais rapido no seu celular.</li>
+          <li>Preparando categorias e filtros para facilitar sua busca.</li>
+          <li>Ajustando promocoes e novidades em segundo plano.</li>
+        </ul>
       </div>
     </div>
   );
@@ -1934,17 +1989,10 @@ export default function App() {
 
     setPublicDataReady(false);
     let productsReady = false;
-    let couponsReady = false;
-    let customerFeedbacksReady = false;
     let settingsReady = false;
 
     const markPublicReady = () => {
-      if (
-        productsReady &&
-        couponsReady &&
-        customerFeedbacksReady &&
-        settingsReady
-      ) {
+      if (productsReady && settingsReady) {
         setPublicDataReady(true);
       }
     };
@@ -1995,13 +2043,9 @@ export default function App() {
               (a.createdAt?.toMillis?.() || 0),
           ),
         );
-        couponsReady = true;
-        markPublicReady();
       },
       (err) => {
         console.error(err);
-        couponsReady = true;
-        markPublicReady();
       },
     );
 
@@ -2027,13 +2071,9 @@ export default function App() {
               (a.createdAt?.toMillis?.() || 0),
           ),
         );
-        customerFeedbacksReady = true;
-        markPublicReady();
       },
       (err) => {
         console.error(err);
-        customerFeedbacksReady = true;
-        markPublicReady();
       },
     );
 
@@ -2283,8 +2323,16 @@ export default function App() {
     (!isAdminRoute && Boolean(user) && !publicDataReady) ||
     (isAdminRoute && isAdminAuthenticated && !adminDataReady);
 
+  const loadingPhase = loading
+    ? "auth"
+    : !isAdminRoute
+      ? "public-core"
+      : isAdminAuthenticated && !adminDataReady
+        ? "admin-data"
+        : "boot";
+
   if (shouldShowLoadingOverlay) {
-    return <LoadingOverlay isAdmin={isAdminRoute} />;
+    return <LoadingOverlay isAdmin={isAdminRoute} phase={loadingPhase} />;
   }
 
   return (
