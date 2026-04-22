@@ -105,7 +105,7 @@ function LoadingOverlay({ isAdmin }) {
       <div className="loading-overlay__backdrop" />
       <div className="loading-overlay__content">
         <img
-          src="/logo-loading.png"
+          src="/logo-loading.webp"
           alt="Carregando loja"
           className="loading-overlay__logo"
         />
@@ -1274,6 +1274,14 @@ const getDescriptionPreviewText = (value, maxLength = 120) => {
 
 const isInlineDataImage = (value) => /^data:image\//i.test(String(value || ""));
 
+const exportCanvasToOptimizedDataUrl = (canvas, quality = 0.8) => {
+  const webpDataUrl = canvas.toDataURL("image/webp", quality);
+  if (String(webpDataUrl || "").startsWith("data:image/webp")) {
+    return webpDataUrl;
+  }
+  return canvas.toDataURL("image/jpeg", quality);
+};
+
 const recompressDataUrlImage = (dataUrl, maxWidth, quality) =>
   new Promise((resolve) => {
     if (!isInlineDataImage(dataUrl)) {
@@ -1302,7 +1310,7 @@ const recompressDataUrlImage = (dataUrl, maxWidth, quality) =>
       }
 
       ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
-      resolve(canvas.toDataURL("image/jpeg", quality));
+      resolve(exportCanvasToOptimizedDataUrl(canvas, quality));
     };
 
     img.onerror = () => resolve(dataUrl);
@@ -11041,7 +11049,7 @@ function ProductManager({ products, showToast, storeSettings }) {
             canvas.width = width;
             canvas.height = height;
             canvas.getContext("2d").drawImage(img, 0, 0, width, height);
-            resolve(canvas.toDataURL("image/jpeg", 0.8));
+            resolve(exportCanvasToOptimizedDataUrl(canvas, 0.8));
           };
           img.src = event.target.result;
         };
@@ -17239,7 +17247,7 @@ function AdminSettings({ showToast, storeSettings }) {
           canvas.width = width;
           canvas.height = height;
           canvas.getContext("2d").drawImage(img, 0, 0, width, height);
-          resolve(canvas.toDataURL("image/jpeg", quality));
+          resolve(exportCanvasToOptimizedDataUrl(canvas, quality));
         };
         img.src = event.target.result;
       };
