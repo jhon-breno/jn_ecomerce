@@ -73,6 +73,8 @@ import {
   collection,
   onSnapshot,
   query,
+  limit,
+  orderBy,
   where,
   addDoc,
   deleteDoc,
@@ -1980,7 +1982,7 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // Data Fetching (Public Data)
+  // Data Fetching (Public Core Data)
   useEffect(() => {
     if (!user) {
       setPublicDataReady(false);
@@ -1997,6 +1999,92 @@ export default function App() {
       }
     };
 
+    let cancelled = false;
+
+    const loadInitialPublicData = async () => {
+      try {
+        const productsRef = collection(
+          db,
+          "artifacts",
+          appId,
+          "public",
+          "data",
+          "products",
+        );
+
+        let initialProductsSnapshot;
+        try {
+          initialProductsSnapshot = await getDocs(
+            query(productsRef, orderBy("createdAt", "desc"), limit(20)),
+          );
+        } catch {
+          // Fallback para ambientes sem indice composto criado no Firestore.
+          initialProductsSnapshot = await getDocs(
+            query(productsRef, limit(20)),
+          );
+        }
+
+        if (!cancelled) {
+          setProducts(
+            initialProductsSnapshot.docs.map((productDoc) => ({
+              id: productDoc.id,
+              ...productDoc.data(),
+            })),
+          );
+        }
+      } catch (err) {
+        console.error(err);
+      } finally {
+        productsReady = true;
+        if (!cancelled) markPublicReady();
+      }
+
+      try {
+        const settingsRef = doc(
+          db,
+          "artifacts",
+          appId,
+          "public",
+          "data",
+          "settings",
+          "config",
+        );
+
+        const settingsSnapshot = await getDoc(settingsRef);
+        if (!cancelled && settingsSnapshot.exists()) {
+          const nextData = settingsSnapshot.data() || {};
+          const initialBanners = Array.isArray(nextData.banners)
+            ? nextData.banners.slice(0, 1)
+            : [];
+
+          setStoreSettings((prev) => ({
+            ...prev,
+            ...nextData,
+            banners: initialBanners,
+            whatsappAutomation: normalizeWhatsAppAutomationConfig(
+              nextData.whatsappAutomation,
+            ),
+          }));
+        }
+      } catch (err) {
+        console.error(err);
+      } finally {
+        settingsReady = true;
+        if (!cancelled) markPublicReady();
+      }
+    };
+
+    loadInitialPublicData();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
+
+  // Dados públicos secundários em background para não atrasar a primeira pintura da loja
+  useEffect(() => {
+    if (!user || !publicDataReady) return;
+
     const productsRef = collection(
       db,
       "artifacts",
@@ -2009,15 +2097,42 @@ export default function App() {
       productsRef,
       (snapshot) => {
         setProducts(
-          snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })),
+          snapshot.docs.map((productDoc) => ({
+            id: productDoc.id,
+            ...productDoc.data(),
+          })),
         );
-        productsReady = true;
-        markPublicReady();
       },
       (err) => {
         console.error(err);
-        productsReady = true;
-        markPublicReady();
+      },
+    );
+
+    const settingsRef = doc(
+      db,
+      "artifacts",
+      appId,
+      "public",
+      "data",
+      "settings",
+      "config",
+    );
+    const unsubSettings = onSnapshot(
+      settingsRef,
+      (docSnap) => {
+        if (docSnap.exists()) {
+          const nextData = docSnap.data() || {};
+          setStoreSettings((prev) => ({
+            ...prev,
+            ...nextData,
+            whatsappAutomation: normalizeWhatsAppAutomationConfig(
+              nextData.whatsappAutomation,
+            ),
+          }));
+        }
+      },
+      (err) => {
+        console.error(err);
       },
     );
 
@@ -2077,45 +2192,13 @@ export default function App() {
       },
     );
 
-    const settingsRef = doc(
-      db,
-      "artifacts",
-      appId,
-      "public",
-      "data",
-      "settings",
-      "config",
-    );
-    const unsubSettings = onSnapshot(
-      settingsRef,
-      (docSnap) => {
-        if (docSnap.exists()) {
-          const nextData = docSnap.data() || {};
-          setStoreSettings((prev) => ({
-            ...prev,
-            ...nextData,
-            whatsappAutomation: normalizeWhatsAppAutomationConfig(
-              nextData.whatsappAutomation,
-            ),
-          }));
-        }
-        settingsReady = true;
-        markPublicReady();
-      },
-      (err) => {
-        console.error(err);
-        settingsReady = true;
-        markPublicReady();
-      },
-    );
-
     return () => {
       unsubProducts();
+      unsubSettings();
       unsubCoupons();
       unsubCustomerFeedbacks();
-      unsubSettings();
     };
-  }, [user]);
+  }, [user, publicDataReady]);
 
   // Data Fetching (Admin Data)
   useEffect(() => {
