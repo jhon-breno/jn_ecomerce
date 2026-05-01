@@ -921,6 +921,7 @@ const getDefaultWhatsAppAutomationConfig = () => ({
       "Oi {{firstName}}, tudo certo com seu pedido {{orderNumber}}? Se precisar de reposição ou quiser ver novidades da {{storeName}}, me chama aqui. Cupom de retorno: {{couponCode}}",
   },
   manualAutomations: [],
+  massGroups: [],
 });
 
 const normalizeWhatsAppAutomationConfig = (value) => {
@@ -965,6 +966,25 @@ const normalizeWhatsAppAutomationConfig = (value) => {
         String(sourceItem.triggerLabel || "").trim() ||
         "Disparo manual pelo admin",
       template: String(sourceItem.template || fallbackTemplate).trim(),
+    };
+  };
+
+  const normalizeMassGroup = (item, index) => {
+    const sourceItem = item && typeof item === "object" ? item : {};
+    const rawContactIds = Array.isArray(sourceItem.contactIds)
+      ? sourceItem.contactIds
+      : [];
+
+    return {
+      id:
+        String(sourceItem.id || "").trim() ||
+        `group-${Date.now()}-${index + 1}`,
+      name: String(sourceItem.name || "").trim() || `Grupo ${index + 1}`,
+      contactIds: [
+        ...new Set(rawContactIds.map((id) => String(id || "").trim())),
+      ]
+        .filter(Boolean)
+        .slice(0, 1000),
     };
   };
 
@@ -1047,6 +1067,11 @@ const normalizeWhatsAppAutomationConfig = (value) => {
           .slice(0, 20)
           .map((item, index) => normalizeManualAutomation(item, index))
       : defaults.manualAutomations,
+    massGroups: Array.isArray(source.massGroups)
+      ? source.massGroups
+          .slice(0, 100)
+          .map((item, index) => normalizeMassGroup(item, index))
+      : defaults.massGroups,
   };
 };
 
@@ -10272,6 +10297,18 @@ function AdminWhatsAppSettings({ showToast, storeSettings }) {
   const [isCheckingWhatsAppHealth, setIsCheckingWhatsAppHealth] =
     useState(false);
   const [isSendingWhatsAppTest, setIsSendingWhatsAppTest] = useState(false);
+  const [contacts, setContacts] = useState([]);
+  const [contactSearchTerm, setContactSearchTerm] = useState("");
+  const [selectedContactIds, setSelectedContactIds] = useState([]);
+  const [bulkMessage, setBulkMessage] = useState(
+    "Oi {{firstName}}, aqui e da {{storeName}}. Tenho uma condicao especial para voce.",
+  );
+  const [bulkImageUrl, setBulkImageUrl] = useState("");
+  const [sendIntervalSeconds, setSendIntervalSeconds] = useState(30);
+  const [isSendingBulk, setIsSendingBulk] = useState(false);
+  const [groupName, setGroupName] = useState("");
+  const [groupContactIds, setGroupContactIds] = useState([]);
+  const [isSendingGroupId, setIsSendingGroupId] = useState("");
   const [isAutoSaving, setIsAutoSaving] = useState(false);
   const lastPersistedRef = useRef("");
   const storeName = storeSettings?.storeName || "loja";
@@ -10283,6 +10320,31 @@ function AdminWhatsAppSettings({ showToast, storeSettings }) {
       );
     }
   }, [storeSettings]);
+
+  useEffect(() => {
+    const unsub = onSnapshot(
+      collection(db, "artifacts", appId, "public", "data", "customers"),
+      (snap) => {
+        const nextContacts = snap.docs
+          .map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }))
+          .map((item) => ({
+            id: String(item?.id || "").trim(),
+            name: String(item?.name || "Cliente").trim() || "Cliente",
+            phone: String(item?.phone || "").trim(),
+          }))
+          .filter((item) => item.id && item.phone);
+        setContacts(nextContacts);
+      },
+      () => {
+        showToast(
+          "Não foi possível carregar os contatos para disparo.",
+          "error",
+        );
+      },
+    );
+
+    return () => unsub();
+  }, [showToast]);
 
   useEffect(() => {
     const normalized = normalizeWhatsAppAutomationConfig(whatsappAutomation);
@@ -10343,6 +10405,108 @@ function AdminWhatsAppSettings({ showToast, storeSettings }) {
     }));
   };
 
+  const filteredContacts = useMemo(() => {
+    const term = String(contactSearchTerm || "")
+      .trim()
+      .toLowerCase();
+    if (!term) return contacts;
+
+    return contacts.filter((contact) => {
+      const name = String(contact?.name || "")
+        .trim()
+        .toLowerCase();
+      const phone = String(contact?.phone || "").replace(/\D/g, "");
+      return name.includes(term) || phone.includes(term.replace(/\D/g, ""));
+    });
+  }, [contacts, contactSearchTerm]);
+
+  const toggleContactSelection = (contactId) => {
+    setSelectedContactIds((prev) => {
+      const exists = prev.includes(contactId);
+      if (exists) return prev.filter((id) => id !== contactId);
+      return [...prev, contactId];
+    });
+  };
+
+  const toggleGroupContactSelection = (contactId) => {
+    setGroupContactIds((prev) => {
+      const exists = prev.includes(contactId);
+      if (exists) return prev.filter((id) => id !== contactId);
+      return [...prev, contactId];
+    });
+  };
+
+  const selectAllFilteredContacts = () => {
+    setSelectedContactIds(filteredContacts.map((contact) => contact.id));
+  };
+
+  const clearFilteredSelection = () => {
+    setSelectedContactIds([]);
+  };
+
+  const buildContactsPayloadByIds = (ids) => {
+    const selectedSet = new Set(ids || []);
+    const payload = contacts
+      .filter((contact) => selectedSet.has(contact.id))
+      .map((contact) => ({
+        id: contact.id,
+        name: contact.name,
+        phone: String(contact.phone || "").replace(/\D/g, ""),
+      }))
+      .filter((contact) => contact.phone.length >= 10);
+
+    return payload;
+  };
+
+  const addMassGroup = () => {
+    const normalizedName = String(groupName || "").trim();
+    if (!normalizedName) {
+      showToast("Informe um nome para o grupo.", "error");
+      return;
+    }
+
+    if (!groupContactIds.length) {
+      showToast("Selecione pelo menos 1 contato para o grupo.", "error");
+      return;
+    }
+
+    const exists = (whatsappAutomation.massGroups || []).some(
+      (group) =>
+        String(group.name || "")
+          .trim()
+          .toLowerCase() === normalizedName.toLowerCase(),
+    );
+    if (exists) {
+      showToast("Já existe um grupo com esse nome.", "error");
+      return;
+    }
+
+    updateWhatsAppAutomation((current) => ({
+      ...current,
+      massGroups: [
+        ...(Array.isArray(current.massGroups) ? current.massGroups : []),
+        {
+          id: `group-${Date.now()}`,
+          name: normalizedName,
+          contactIds: [...new Set(groupContactIds)],
+        },
+      ],
+    }));
+
+    setGroupName("");
+    setGroupContactIds([]);
+    showToast("Grupo criado com sucesso.");
+  };
+
+  const removeMassGroup = (groupId) => {
+    updateWhatsAppAutomation((current) => ({
+      ...current,
+      massGroups: (current.massGroups || []).filter(
+        (group) => group.id !== groupId,
+      ),
+    }));
+  };
+
   const updateManualAutomation = (id, patch) => {
     updateWhatsAppAutomation((current) => ({
       ...current,
@@ -10398,6 +10562,7 @@ function AdminWhatsAppSettings({ showToast, storeSettings }) {
           text:
             whatsappTestMessage.trim() ||
             `Teste de integração da ${storeName} via painel administrativo.`,
+          appId,
           provider: "botbot",
           botbotAppKey:
             String(whatsappAutomation.botbotAppKey || "").trim() || undefined,
@@ -10414,6 +10579,111 @@ function AdminWhatsAppSettings({ showToast, storeSettings }) {
       showToast(error?.message || "Falha ao enviar teste.", "error");
     } finally {
       setIsSendingWhatsAppTest(false);
+    }
+  };
+
+  const handleSendBulk = async () => {
+    if (!bulkMessage.trim()) {
+      showToast("Digite a mensagem do envio em massa.", "error");
+      return;
+    }
+
+    const contactsPayload = buildContactsPayloadByIds(selectedContactIds);
+    if (!contactsPayload.length) {
+      showToast("Selecione contatos válidos para o envio em massa.", "error");
+      return;
+    }
+
+    const parsedInterval = Number(sendIntervalSeconds);
+    const intervalSeconds = Number.isFinite(parsedInterval)
+      ? Math.min(120, Math.max(0, Math.round(parsedInterval)))
+      : 30;
+
+    setIsSendingBulk(true);
+    try {
+      const response = await fetch(buildApiUrl("/api/whatsapp/bulk-send"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          appId,
+          text: bulkMessage,
+          imageUrl: String(bulkImageUrl || "").trim() || undefined,
+          contacts: contactsPayload,
+          mode: "bulk",
+          delayBetweenMs: intervalSeconds * 1000,
+          botbotAppKey:
+            String(whatsappAutomation.botbotAppKey || "").trim() || undefined,
+          botbotAuthKey:
+            String(whatsappAutomation.botbotAuthKey || "").trim() || undefined,
+          defaultCountryCode: whatsappAutomation.defaultCountryCode,
+        }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data?.error || "Falha no envio em massa.");
+      }
+
+      showToast(
+        `Envio em massa finalizado. Sucesso: ${data?.sentCount || 0}, falhas: ${data?.failedCount || 0}.`,
+      );
+    } catch (error) {
+      showToast(error?.message || "Falha no envio em massa.", "error");
+    } finally {
+      setIsSendingBulk(false);
+    }
+  };
+
+  const handleSendGroup = async (group) => {
+    if (!group?.id) return;
+    if (!bulkMessage.trim()) {
+      showToast("Digite a mensagem para envio do grupo.", "error");
+      return;
+    }
+
+    const contactsPayload = buildContactsPayloadByIds(group.contactIds || []);
+    if (!contactsPayload.length) {
+      showToast("Grupo sem contatos válidos para envio.", "error");
+      return;
+    }
+
+    const parsedInterval = Number(sendIntervalSeconds);
+    const intervalSeconds = Number.isFinite(parsedInterval)
+      ? Math.min(120, Math.max(0, Math.round(parsedInterval)))
+      : 30;
+
+    setIsSendingGroupId(group.id);
+    try {
+      const response = await fetch(buildApiUrl("/api/whatsapp/bulk-send"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          appId,
+          text: bulkMessage,
+          imageUrl: String(bulkImageUrl || "").trim() || undefined,
+          contacts: contactsPayload,
+          mode: "group",
+          delayBetweenMs: intervalSeconds * 1000,
+          botbotAppKey:
+            String(whatsappAutomation.botbotAppKey || "").trim() || undefined,
+          botbotAuthKey:
+            String(whatsappAutomation.botbotAuthKey || "").trim() || undefined,
+          defaultCountryCode: whatsappAutomation.defaultCountryCode,
+        }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data?.error || "Falha no envio para o grupo.");
+      }
+
+      showToast(
+        `Envio do grupo ${group.name} finalizado. Sucesso: ${data?.sentCount || 0}, falhas: ${data?.failedCount || 0}.`,
+      );
+    } catch (error) {
+      showToast(error?.message || "Falha no envio para o grupo.", "error");
+    } finally {
+      setIsSendingGroupId("");
     }
   };
 
@@ -10443,7 +10713,7 @@ function AdminWhatsAppSettings({ showToast, storeSettings }) {
           rel="noreferrer"
           className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-cyan-700 hover:bg-cyan-800 text-white font-bold"
         >
-          Abrir BotBot para login
+          Abrir BotBot
         </a>
       </div>
 
@@ -10646,6 +10916,277 @@ function AdminWhatsAppSettings({ showToast, storeSettings }) {
           <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-900 leading-relaxed">
             Dica: inclua <strong>{"{{couponCode}}"}</strong> ou a tag definida
             acima dentro dos templates para enviar cupom junto com a mensagem.
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-emerald-200 bg-emerald-50/50 p-5 space-y-5">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <h3 className="font-semibold text-lg text-emerald-900">
+            Envio em massa
+          </h3>
+          <span className="text-xs font-semibold text-emerald-700">
+            Contatos carregados do banco: {contacts.length}
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+          <div className="space-y-3 rounded-xl border border-emerald-200 bg-white p-4">
+            <label className="block text-xs font-semibold text-slate-500 mb-1">
+              Buscar contato (nome ou número)
+            </label>
+            <input
+              type="text"
+              value={contactSearchTerm}
+              onChange={(e) => setContactSearchTerm(e.target.value)}
+              placeholder="Ex: Maria ou 8599..."
+              className="w-full p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
+            />
+
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={selectAllFilteredContacts}
+                className="px-3 py-2 rounded-lg bg-slate-900 hover:bg-slate-700 text-white text-xs font-bold"
+              >
+                Selecionar filtrados
+              </button>
+              <button
+                type="button"
+                onClick={clearFilteredSelection}
+                className="px-3 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold"
+              >
+                Limpar seleção
+              </button>
+            </div>
+
+            <div className="max-h-64 overflow-auto rounded-lg border border-slate-200">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-100 text-slate-600 sticky top-0">
+                  <tr>
+                    <th className="p-2 text-left w-10">Sel.</th>
+                    <th className="p-2 text-left">Contato</th>
+                    <th className="p-2 text-left">Número</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredContacts.map((contact) => {
+                    const checked = selectedContactIds.includes(contact.id);
+                    return (
+                      <tr
+                        key={contact.id}
+                        className="border-t border-slate-100"
+                      >
+                        <td className="p-2 align-top">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleContactSelection(contact.id)}
+                            className="w-4 h-4 rounded border-slate-300 text-emerald-600"
+                          />
+                        </td>
+                        <td className="p-2 text-slate-800 font-medium">
+                          {contact.name}
+                        </td>
+                        <td className="p-2 text-slate-600">{contact.phone}</td>
+                      </tr>
+                    );
+                  })}
+                  {filteredContacts.length === 0 && (
+                    <tr>
+                      <td colSpan={3} className="p-3 text-xs text-slate-500">
+                        Nenhum contato encontrado com esse filtro.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <p className="text-xs text-slate-500">
+              Selecionados: <strong>{selectedContactIds.length}</strong>
+            </p>
+          </div>
+
+          <div className="space-y-3 rounded-xl border border-emerald-200 bg-white p-4">
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 mb-1">
+                Mensagem do envio em massa
+              </label>
+              <textarea
+                rows={5}
+                value={bulkMessage}
+                onChange={(e) => setBulkMessage(e.target.value)}
+                placeholder="Digite a mensagem que será enviada para todos os contatos selecionados."
+                className="w-full p-3 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 mb-1">
+                URL da imagem (opcional)
+              </label>
+              <input
+                type="url"
+                value={bulkImageUrl}
+                onChange={(e) => setBulkImageUrl(e.target.value)}
+                placeholder="https://..."
+                className="w-full p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+              <p className="mt-1 text-xs text-slate-500">
+                Se o provedor não aceitar mídia diretamente, a URL será enviada
+                junto da mensagem.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 mb-1">
+                Intervalo entre envios (segundos)
+              </label>
+              <input
+                type="number"
+                min="0"
+                max="120"
+                value={sendIntervalSeconds}
+                onChange={(e) => setSendIntervalSeconds(e.target.value)}
+                className="w-full p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+              <p className="mt-1 text-xs text-slate-500">
+                Esse intervalo é aplicado entre um contato e outro, tanto no
+                envio em massa quanto nos grupos.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={handleSendBulk}
+                disabled={isSendingBulk}
+                className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white text-sm font-bold"
+              >
+                {isSendingBulk
+                  ? "Enviando em massa..."
+                  : "Enviar para selecionados"}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-indigo-200 bg-indigo-50/40 p-5 space-y-4">
+        <h3 className="font-semibold text-lg text-indigo-900">
+          Grupos de contatos
+        </h3>
+        <p className="text-sm text-indigo-800">
+          Crie grupos para disparo automático. O intervalo entre contatos é
+          definido no campo de envio em massa.
+        </p>
+
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+          <div className="rounded-xl border border-indigo-200 bg-white p-4 space-y-3">
+            <label className="block text-xs font-semibold text-slate-500 mb-1">
+              Nome do grupo
+            </label>
+            <input
+              type="text"
+              value={groupName}
+              onChange={(e) => setGroupName(e.target.value)}
+              placeholder="Ex: Clientes VIP Fortaleza"
+              className="w-full p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+
+            <div className="max-h-52 overflow-auto rounded-lg border border-slate-200">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-100 text-slate-600 sticky top-0">
+                  <tr>
+                    <th className="p-2 text-left w-10">Sel.</th>
+                    <th className="p-2 text-left">Contato</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredContacts.map((contact) => {
+                    const checked = groupContactIds.includes(contact.id);
+                    return (
+                      <tr
+                        key={`group-${contact.id}`}
+                        className="border-t border-slate-100"
+                      >
+                        <td className="p-2 align-top">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() =>
+                              toggleGroupContactSelection(contact.id)
+                            }
+                            className="w-4 h-4 rounded border-slate-300 text-indigo-600"
+                          />
+                        </td>
+                        <td className="p-2 text-slate-700">
+                          {contact.name}{" "}
+                          <span className="text-slate-500">
+                            ({contact.phone})
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            <button
+              type="button"
+              onClick={addMassGroup}
+              className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold"
+            >
+              Salvar grupo
+            </button>
+          </div>
+
+          <div className="rounded-xl border border-indigo-200 bg-white p-4 space-y-3">
+            <h4 className="font-bold text-slate-700">Grupos criados</h4>
+            {(whatsappAutomation.massGroups || []).length === 0 && (
+              <div className="rounded-lg border border-dashed border-slate-300 p-3 text-sm text-slate-500">
+                Nenhum grupo criado ainda.
+              </div>
+            )}
+
+            <div className="space-y-2">
+              {(whatsappAutomation.massGroups || []).map((group) => (
+                <div
+                  key={group.id}
+                  className="rounded-lg border border-slate-200 p-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2"
+                >
+                  <div>
+                    <p className="font-semibold text-slate-800">{group.name}</p>
+                    <p className="text-xs text-slate-500">
+                      {Array.isArray(group.contactIds)
+                        ? group.contactIds.length
+                        : 0}{" "}
+                      contato(s)
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleSendGroup(group)}
+                      disabled={isSendingGroupId === group.id}
+                      className="px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white text-xs font-bold"
+                    >
+                      {isSendingGroupId === group.id
+                        ? "Enviando..."
+                        : "Enviar grupo"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => removeMassGroup(group.id)}
+                      className="px-3 py-2 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold"
+                    >
+                      Remover
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       </div>

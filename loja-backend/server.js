@@ -56,6 +56,8 @@ const botbotApiBaseUrl = String(
   .replace(/\/$/, "");
 const botbotAppKey = String(process.env.BOTBOT_APP_KEY || "").trim();
 const botbotAuthKey = String(process.env.BOTBOT_AUTH_KEY || "").trim();
+const whatsappTemplateDebug =
+  String(process.env.WHATSAPP_TEMPLATE_DEBUG || "").trim() === "1";
 const whatsappProviderEnv = String(process.env.WHATSAPP_PROVIDER || "")
   .trim()
   .toLowerCase();
@@ -301,6 +303,24 @@ const normalizeWhatsAppText = (value) => {
   if (!text) return null;
   return text.slice(0, 4096);
 };
+
+const normalizeImageUrl = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+
+  try {
+    const parsed = new URL(raw);
+    if (!["https:", "http:"].includes(parsed.protocol)) return "";
+    return parsed.toString();
+  } catch {
+    return "";
+  }
+};
+
+const waitMs = (ms) =>
+  new Promise((resolve) => {
+    setTimeout(resolve, Math.max(0, Number(ms) || 0));
+  });
 
 const isWhatsAppConfigured = () => Boolean(botbotAppKey && botbotAuthKey);
 
@@ -559,6 +579,116 @@ const sendBotBotTextMessage = async ({
   return payload;
 };
 
+const sendBotBotImageMessage = async ({
+  to,
+  text,
+  imageUrl,
+  defaultCountryCode,
+  appKey,
+  authKey,
+  baseUrl,
+}) => {
+  const resolvedAppKey = String(appKey || botbotAppKey || "").trim();
+  const resolvedAuthKey = String(authKey || botbotAuthKey || "").trim();
+  const resolvedBaseUrl = String(
+    baseUrl || botbotApiBaseUrl || "https://botbot.chat",
+  )
+    .trim()
+    .replace(/\/$/, "");
+
+  if (!resolvedAppKey || !resolvedAuthKey) {
+    throw new Error(
+      "BOTBOT_APP_KEY e BOTBOT_AUTH_KEY não configurados no backend.",
+    );
+  }
+
+  const recipient = normalizeWhatsAppRecipient(to, defaultCountryCode);
+  if (!recipient) {
+    throw new Error(
+      "Número de destino inválido. Use DDI + DDD + número, por exemplo 5511999999999.",
+    );
+  }
+
+  const resolvedImageUrl = normalizeImageUrl(imageUrl);
+  if (!resolvedImageUrl) {
+    throw new Error("URL de imagem inválida para envio no WhatsApp.");
+  }
+
+  const caption = normalizeWhatsAppText(text || "Imagem da campanha");
+
+  const url = `${resolvedBaseUrl}/api/v2/sendImage`;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      appKey: resolvedAppKey,
+      authKey: resolvedAuthKey,
+    },
+    body: JSON.stringify({
+      to: recipient,
+      image: resolvedImageUrl,
+      imageUrl: resolvedImageUrl,
+      caption,
+      typingDelay: 1,
+    }),
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const providerMessage =
+      payload?.error ||
+      payload?.message ||
+      "Falha ao enviar imagem via BotBot API.";
+    throw new Error(providerMessage);
+  }
+
+  return payload;
+};
+
+const sendBotBotMessageWithOptionalImage = async ({
+  to,
+  text,
+  imageUrl,
+  defaultCountryCode,
+  appKey,
+  authKey,
+  baseUrl,
+}) => {
+  const resolvedImageUrl = normalizeImageUrl(imageUrl);
+  if (!resolvedImageUrl) {
+    return sendBotBotTextMessage({
+      to,
+      text,
+      defaultCountryCode,
+      appKey,
+      authKey,
+      baseUrl,
+    });
+  }
+
+  try {
+    return await sendBotBotImageMessage({
+      to,
+      text,
+      imageUrl: resolvedImageUrl,
+      defaultCountryCode,
+      appKey,
+      authKey,
+      baseUrl,
+    });
+  } catch {
+    const fallbackText = `${String(text || "").trim()}\n\nImagem: ${resolvedImageUrl}`;
+    return sendBotBotTextMessage({
+      to,
+      text: fallbackText,
+      defaultCountryCode,
+      appKey,
+      authKey,
+      baseUrl,
+    });
+  }
+};
+
 const getAdminApp = () => {
   if (!getAdminApps().length) {
     if (firebaseServiceAccountJson) {
@@ -754,11 +884,14 @@ const normalizeWorkerConfig = (rawSettings) => {
   };
 };
 
-const pickCouponCode = async (db) => {
+const pickCouponCodeByAppId = async (db, targetAppId) => {
+  const resolvedAppId =
+    String(targetAppId || workerAppId).trim() || workerAppId;
+
   try {
     const couponsSnap = await db
       .collection("artifacts")
-      .doc(workerAppId)
+      .doc(resolvedAppId)
       .collection("public")
       .doc("data")
       .collection("coupons")
@@ -771,8 +904,9 @@ const pickCouponCode = async (db) => {
       .filter((coupon) => {
         if (coupon.active === false) return false;
         if (!coupon.code) return false;
-        if (!coupon.expiryDate) return true;
-        const expiryMs = toMillis(coupon.expiryDate);
+        const expiryValue = coupon.expiresAt || coupon.expiryDate;
+        if (!expiryValue) return true;
+        const expiryMs = toMillis(expiryValue);
         return !expiryMs || expiryMs >= now;
       })
       .sort((a, b) => toMillis(b.createdAt) - toMillis(a.createdAt));
@@ -780,6 +914,234 @@ const pickCouponCode = async (db) => {
     return String(validCoupons[0]?.code || "").trim();
   } catch {
     return "";
+  }
+};
+
+const pickCouponCode = async (db) => pickCouponCodeByAppId(db, workerAppId);
+
+const getCouponsByAppId = async (db, targetAppId) => {
+  const resolvedAppId =
+    String(targetAppId || workerAppId).trim() || workerAppId;
+
+  try {
+    const couponsSnap = await db
+      .collection("artifacts")
+      .doc(resolvedAppId)
+      .collection("public")
+      .doc("data")
+      .collection("coupons")
+      .limit(250)
+      .get();
+
+    return couponsSnap.docs.map((docSnap) => ({
+      id: docSnap.id,
+      ...docSnap.data(),
+    }));
+  } catch {
+    return [];
+  }
+};
+
+const findCouponByCode = (coupons, code) => {
+  const normalizedCode = String(code || "")
+    .trim()
+    .toUpperCase();
+  if (!normalizedCode) return null;
+
+  return (Array.isArray(coupons) ? coupons : []).find(
+    (coupon) =>
+      String(coupon?.code || "")
+        .trim()
+        .toUpperCase() === normalizedCode,
+  );
+};
+
+const formatCouponOfferMessage = (coupon) => {
+  const code = String(coupon?.code || "")
+    .trim()
+    .toUpperCase();
+  const type = String(coupon?.type || "percent")
+    .trim()
+    .toLowerCase();
+  const value = Number(coupon?.value || 0);
+  const firstPurchaseOnly = coupon?.firstPurchaseOnly === true;
+  const restrictedProductIds = Array.isArray(coupon?.restrictedProductIds)
+    ? coupon.restrictedProductIds
+    : [];
+  const hasRestrictedProducts = restrictedProductIds.length > 0;
+
+  const normalizedValue = Number.isFinite(value) && value > 0 ? value : 0;
+
+  let benefit = "desconto especial";
+  if (type === "free_shipping") {
+    return `${code} e tenha frete grátis.`;
+  }
+
+  if (type === "percent" || type === "percentage") {
+    benefit = `${normalizedValue}% OFF`;
+  } else if (type === "shipping_percent") {
+    benefit = `${normalizedValue}% OFF no frete`;
+  } else if (type === "shipping_fixed") {
+    benefit = `R$ ${normalizedValue.toFixed(2)} OFF no frete`;
+  } else {
+    benefit = `R$ ${normalizedValue.toFixed(2)} OFF`;
+  }
+
+  let scope = ".";
+  if (firstPurchaseOnly) {
+    scope = " na primeira compra.";
+  } else if (hasRestrictedProducts) {
+    scope = " em produtos selecionados.";
+  }
+
+  return `${code} e tenha ${benefit}${scope}`;
+};
+
+const extractTemplateTokens = (template) => {
+  const input = String(template || "");
+  const found = [];
+  let cursor = 0;
+
+  while (cursor < input.length) {
+    const open = input.indexOf("{{", cursor);
+    if (open === -1) break;
+
+    const close = input.indexOf("}}", open + 2);
+    if (close === -1) break;
+
+    const rawToken = input.slice(open + 2, close).trim();
+    if (rawToken) found.push(rawToken);
+
+    cursor = close + 2;
+  }
+
+  return [...new Set(found)];
+};
+
+const getCouponCodeTemplateTokens = (template) => {
+  const knownTokens = new Set([
+    "firstname",
+    "storename",
+    "ordernumber",
+    "status",
+    "couponcode",
+  ]);
+  const found = new Set();
+
+  for (const token of extractTemplateTokens(template)) {
+    const rawToken = String(token || "").trim();
+    const normalizedToken = rawToken.toLowerCase();
+    if (!knownTokens.has(normalizedToken)) {
+      found.add(rawToken);
+    }
+  }
+
+  return [...found];
+};
+
+const getTemplateTokens = (template) => extractTemplateTokens(template);
+
+const ensureNoUnresolvedTemplateTokens = (text) => {
+  const unresolved = getTemplateTokens(text);
+  if (!unresolved.length) {
+    const raw = String(text || "");
+    if (raw.includes("{{") || raw.includes("}}")) {
+      throw new Error(
+        "A mensagem ainda contém placeholders malformados ({{ ou }}).",
+      );
+    }
+    return;
+  }
+
+  throw new Error(
+    `Ainda existem placeholders sem substituição na mensagem: ${unresolved
+      .map((token) => `{{${token}}}`)
+      .join(", ")}.`,
+  );
+};
+
+const escapeRegExp = (value) =>
+  String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const replaceNamedCouponTemplateTokens = ({ text, coupons, tokens }) => {
+  let output = String(text || "");
+  const now = Date.now();
+
+  for (const token of tokens) {
+    const tokenCode = String(token || "")
+      .trim()
+      .toUpperCase();
+    const coupon = findCouponByCode(coupons, tokenCode);
+
+    if (!coupon) {
+      throw new Error(
+        `Cupom ${tokenCode} não encontrado para substituir {{${tokenCode}}}.`,
+      );
+    }
+
+    if (coupon.active === false) {
+      throw new Error(
+        `Cupom ${tokenCode} está inativo e não pode ser usado na mensagem.`,
+      );
+    }
+
+    const expiresMs = toMillis(coupon.expiresAt || coupon.expiryDate);
+    if (expiresMs > 0 && expiresMs < now) {
+      throw new Error(
+        `Cupom ${tokenCode} está expirado e não pode ser usado na mensagem.`,
+      );
+    }
+
+    const usageLimit = Number(coupon.usageLimit || 0);
+    const usageCount = Number(coupon.usageCount || 0);
+    if (usageLimit > 0 && usageCount >= usageLimit) {
+      throw new Error(
+        `Cupom ${tokenCode} está esgotado e não pode ser usado na mensagem.`,
+      );
+    }
+
+    const placeholderRegex = new RegExp(
+      `\\{\\{\\s*${escapeRegExp(token)}\\s*\\}\\}`,
+      "gi",
+    );
+    output = output.replace(placeholderRegex, formatCouponOfferMessage(coupon));
+  }
+
+  return output;
+};
+
+const containsTemplateToken = (template, token) =>
+  String(template || "").includes(`{{${token}}}`);
+
+const resolveCustomerFirstNameByPhone = async ({ db, targetAppId, phone }) => {
+  const candidates = buildPhoneLookupCandidates(phone);
+  if (!candidates.length) return "";
+
+  const customerSnap = await db
+    .collection("artifacts")
+    .doc(String(targetAppId || workerAppId).trim() || workerAppId)
+    .collection("public")
+    .doc("data")
+    .collection("customers")
+    .where("phone", "in", candidates)
+    .limit(1)
+    .get();
+
+  if (customerSnap.empty) return "";
+
+  const customerData = customerSnap.docs[0].data() || {};
+  const fullName = String(customerData.name || "").trim();
+  return extractFirstName(fullName);
+};
+
+const resolveStoreNameByAppId = async (db, targetAppId) => {
+  try {
+    const settingsSnap = await getAppSettingsRef(db, targetAppId).get();
+    if (!settingsSnap.exists) return "loja";
+    const settings = settingsSnap.data() || {};
+    return String(settings.storeName || "loja").trim() || "loja";
+  } catch {
+    return "loja";
   }
 };
 
@@ -853,6 +1215,29 @@ const runWhatsAppWorkerTick = async ({ source = "interval" } = {}) => {
     }
 
     const couponCode = await pickCouponCode(db);
+    let couponsCache = null;
+
+    const getCouponsCache = async () => {
+      if (couponsCache) return couponsCache;
+      couponsCache = await getCouponsByAppId(db, workerAppId);
+      return couponsCache;
+    };
+
+    const resolveNamedCouponTokensInText = async (text) => {
+      const tokens = getCouponCodeTemplateTokens(text);
+      if (!tokens.length) {
+        ensureNoUnresolvedTemplateTokens(text);
+        return text;
+      }
+      const coupons = await getCouponsCache();
+      const replaced = replaceNamedCouponTemplateTokens({
+        text,
+        coupons,
+        tokens,
+      });
+      ensureNoUnresolvedTemplateTokens(replaced);
+      return replaced;
+    };
 
     const saveSuccess = async (docRef, key, extra = {}) => {
       await docRef.set(
@@ -917,14 +1302,16 @@ const runWhatsAppWorkerTick = async ({ source = "interval" } = {}) => {
           continue;
 
         const phone = resolveCustomerPhone(data);
-        const text = applyTemplate(
-          config.abandonedCart.template,
-          {
-            firstName: extractFirstName(data.customerName),
-            storeName: config.storeName,
-            couponCode,
-          },
-          config.couponTag,
+        const text = await resolveNamedCouponTokensInText(
+          applyTemplate(
+            config.abandonedCart.template,
+            {
+              firstName: extractFirstName(data.customerName),
+              storeName: config.storeName,
+              couponCode,
+            },
+            config.couponTag,
+          ),
         );
 
         try {
@@ -976,14 +1363,16 @@ const runWhatsAppWorkerTick = async ({ source = "interval" } = {}) => {
           continue;
 
         const phone = resolveCustomerPhone(data);
-        const text = applyTemplate(
-          config.interestedLead.template,
-          {
-            firstName: extractFirstName(data.customerName),
-            storeName: config.storeName,
-            couponCode,
-          },
-          config.couponTag,
+        const text = await resolveNamedCouponTokensInText(
+          applyTemplate(
+            config.interestedLead.template,
+            {
+              firstName: extractFirstName(data.customerName),
+              storeName: config.storeName,
+              couponCode,
+            },
+            config.couponTag,
+          ),
         );
 
         try {
@@ -1028,16 +1417,18 @@ const runWhatsAppWorkerTick = async ({ source = "interval" } = {}) => {
         config.orderCreated.enabled &&
         !data?.whatsappWorker?.orderCreated?.sentAt
       ) {
-        const text = applyTemplate(
-          config.orderCreated.template,
-          {
-            firstName: extractFirstName(data.customerName),
-            storeName: config.storeName,
-            orderNumber: data.orderNumber || orderDoc.id,
-            status: data.status || "pendente_pagamento",
-            couponCode,
-          },
-          config.couponTag,
+        const text = await resolveNamedCouponTokensInText(
+          applyTemplate(
+            config.orderCreated.template,
+            {
+              firstName: extractFirstName(data.customerName),
+              storeName: config.storeName,
+              orderNumber: data.orderNumber || orderDoc.id,
+              status: data.status || "pendente_pagamento",
+              couponCode,
+            },
+            config.couponTag,
+          ),
         );
 
         try {
@@ -1064,16 +1455,18 @@ const runWhatsAppWorkerTick = async ({ source = "interval" } = {}) => {
         ).trim();
 
         if (currentStatus && currentStatus !== previousStatus) {
-          const text = applyTemplate(
-            config.orderStatusChanged.template,
-            {
-              firstName: extractFirstName(data.customerName),
-              storeName: config.storeName,
-              orderNumber: data.orderNumber || orderDoc.id,
-              status: currentStatus,
-              couponCode,
-            },
-            config.couponTag,
+          const text = await resolveNamedCouponTokensInText(
+            applyTemplate(
+              config.orderStatusChanged.template,
+              {
+                firstName: extractFirstName(data.customerName),
+                storeName: config.storeName,
+                orderNumber: data.orderNumber || orderDoc.id,
+                status: currentStatus,
+                couponCode,
+              },
+              config.couponTag,
+            ),
           );
 
           try {
@@ -1123,16 +1516,18 @@ const runWhatsAppWorkerTick = async ({ source = "interval" } = {}) => {
           config.postPurchaseFollowUp.delayDays * 24 * 60 * 60 * 1000;
         if (!base || now - base < delayMs) continue;
 
-        const text = applyTemplate(
-          config.postPurchaseFollowUp.template,
-          {
-            firstName: extractFirstName(data.customerName),
-            storeName: config.storeName,
-            orderNumber: data.orderNumber || orderDoc.id,
-            status,
-            couponCode,
-          },
-          config.couponTag,
+        const text = await resolveNamedCouponTokensInText(
+          applyTemplate(
+            config.postPurchaseFollowUp.template,
+            {
+              firstName: extractFirstName(data.customerName),
+              storeName: config.storeName,
+              orderNumber: data.orderNumber || orderDoc.id,
+              status,
+              couponCode,
+            },
+            config.couponTag,
+          ),
         );
 
         try {
@@ -1305,9 +1700,126 @@ app.post("/api/whatsapp/send-test", async (req, res) => {
       });
     }
 
+    const rawTemplate = String(req.body?.text || "").trim();
+    if (!rawTemplate) {
+      return res.status(400).json({
+        error: "Informe uma mensagem para o envio de teste.",
+      });
+    }
+
+    const resolvedAppId =
+      String(req.body?.appId || workerAppId).trim() || workerAppId;
+    const db = getFirebaseAdminDb();
+    const requiresFirstName = containsTemplateToken(rawTemplate, "firstName");
+    const requiresCouponCode = containsTemplateToken(rawTemplate, "couponCode");
+    const couponCodeTokens = getCouponCodeTemplateTokens(rawTemplate);
+
+    if (whatsappTemplateDebug) {
+      console.log("[whatsapp-template-debug] rawTemplate:", rawTemplate);
+      console.log(
+        "[whatsapp-template-debug] couponCodeTokens:",
+        couponCodeTokens,
+      );
+    }
+
+    let firstName = "cliente";
+    if (requiresFirstName) {
+      if (!db) {
+        return res.status(503).json({
+          error:
+            "Firebase Admin indisponível para resolver {{firstName}}. Configure FIREBASE_SERVICE_ACCOUNT_JSON.",
+        });
+      }
+
+      firstName = await resolveCustomerFirstNameByPhone({
+        db,
+        targetAppId: resolvedAppId,
+        phone: req.body?.to,
+      });
+
+      if (!firstName) {
+        return res.status(400).json({
+          error:
+            "Nenhum cliente encontrado no banco para o número informado. Não foi possível substituir {{firstName}}.",
+        });
+      }
+    }
+
+    let couponCode = "";
+    if (requiresCouponCode) {
+      if (!db) {
+        return res.status(503).json({
+          error:
+            "Firebase Admin indisponível para resolver {{couponCode}}. Configure FIREBASE_SERVICE_ACCOUNT_JSON.",
+        });
+      }
+
+      couponCode = await pickCouponCodeByAppId(db, resolvedAppId);
+      if (!couponCode) {
+        return res.status(400).json({
+          error:
+            "Nenhum cupom ativo encontrado para substituir {{couponCode}}.",
+        });
+      }
+    }
+
+    const storeName = db
+      ? await resolveStoreNameByAppId(db, resolvedAppId)
+      : "loja";
+
+    const resolvedText = applyTemplate(
+      rawTemplate,
+      {
+        firstName,
+        storeName,
+        couponCode,
+      },
+      "{{couponCode}}",
+    );
+
+    let finalText = resolvedText;
+
+    if (couponCodeTokens.length > 0) {
+      if (!db) {
+        return res.status(503).json({
+          error:
+            "Firebase Admin indisponível para resolver cupons por código. Configure FIREBASE_SERVICE_ACCOUNT_JSON.",
+        });
+      }
+
+      const coupons = await getCouponsByAppId(db, resolvedAppId);
+      try {
+        finalText = replaceNamedCouponTemplateTokens({
+          text: finalText,
+          coupons,
+          tokens: couponCodeTokens,
+        });
+      } catch (error) {
+        return res.status(400).json({
+          error:
+            error?.message ||
+            "Não foi possível substituir os cupons no template.",
+        });
+      }
+    }
+
+    try {
+      ensureNoUnresolvedTemplateTokens(finalText);
+    } catch (error) {
+      return res.status(400).json({
+        error:
+          error?.message ||
+          "Ainda existem placeholders sem substituição na mensagem.",
+      });
+    }
+
+    if (whatsappTemplateDebug) {
+      console.log("[whatsapp-template-debug] finalText:", finalText);
+    }
+
     const result = await sendBotBotTextMessage({
       to: req.body?.to,
-      text: req.body?.text,
+      text: finalText,
       defaultCountryCode: req.body?.defaultCountryCode,
       appKey: req.body?.botbotAppKey,
       authKey: req.body?.botbotAuthKey,
@@ -1317,6 +1829,7 @@ app.post("/api/whatsapp/send-test", async (req, res) => {
     return res.json({
       ok: true,
       provider: "botbot",
+      resolvedText: finalText,
       messageId:
         result?.data?.messageId || result?.messageId || result?.id || null,
     });
@@ -1327,6 +1840,196 @@ app.post("/api/whatsapp/send-test", async (req, res) => {
     );
     return res.status(502).json({
       error: error?.message || "Não foi possível enviar a mensagem de teste.",
+    });
+  }
+});
+
+app.post("/api/whatsapp/bulk-send", async (req, res) => {
+  try {
+    if (!req.body || typeof req.body !== "object" || Array.isArray(req.body)) {
+      return res
+        .status(400)
+        .json({ error: "Payload inválido para envio em massa." });
+    }
+
+    const rawTemplate = String(req.body?.text || "").trim();
+    if (!rawTemplate) {
+      return res
+        .status(400)
+        .json({ error: "Informe uma mensagem para o envio em massa." });
+    }
+
+    const inputContacts = Array.isArray(req.body?.contacts)
+      ? req.body.contacts
+      : [];
+    if (!inputContacts.length) {
+      return res
+        .status(400)
+        .json({ error: "Nenhum contato informado para envio." });
+    }
+
+    const mode = String(req.body?.mode || "bulk")
+      .trim()
+      .toLowerCase();
+
+    const resolvedAppId =
+      String(req.body?.appId || workerAppId).trim() || workerAppId;
+    const db = getFirebaseAdminDb();
+    const storeName = db
+      ? await resolveStoreNameByAppId(db, resolvedAppId)
+      : "loja";
+
+    const rawDelayBetweenMs = Number(req.body?.delayBetweenMs);
+    let delayBetweenMs = Number.isFinite(rawDelayBetweenMs)
+      ? rawDelayBetweenMs
+      : mode === "group"
+        ? 30000
+        : 0;
+    delayBetweenMs = Math.min(Math.max(0, Math.round(delayBetweenMs)), 120000);
+
+    const uniqueContacts = [];
+    const dedupe = new Set();
+
+    for (const item of inputContacts.slice(0, 1000)) {
+      const phone = String(item?.phone || "").replace(/\D/g, "");
+      if (!phone) continue;
+      const dedupeKey = phone;
+      if (dedupe.has(dedupeKey)) continue;
+      dedupe.add(dedupeKey);
+      uniqueContacts.push({
+        id: String(item?.id || "").trim(),
+        name: String(item?.name || "Cliente").trim() || "Cliente",
+        phone,
+      });
+    }
+
+    if (!uniqueContacts.length) {
+      return res
+        .status(400)
+        .json({ error: "Nenhum contato válido encontrado para envio." });
+    }
+
+    const imageUrl = normalizeImageUrl(req.body?.imageUrl);
+    let couponsCache = null;
+
+    const replaceNamedCouponsIfNeeded = (text) => {
+      const couponCodeTokens = getCouponCodeTemplateTokens(text);
+      if (!couponCodeTokens.length) {
+        ensureNoUnresolvedTemplateTokens(text);
+        return text;
+      }
+
+      if (!db) {
+        throw new Error(
+          "Firebase Admin indisponível para resolver cupons no envio em massa.",
+        );
+      }
+
+      if (!couponsCache) {
+        throw new Error("COUPONS_CACHE_NOT_READY");
+      }
+
+      const replacedText = replaceNamedCouponTemplateTokens({
+        text,
+        coupons: couponsCache,
+        tokens: couponCodeTokens,
+      });
+      ensureNoUnresolvedTemplateTokens(replacedText);
+      return replacedText;
+    };
+
+    if (db) {
+      couponsCache = await getCouponsByAppId(db, resolvedAppId);
+    }
+
+    const results = [];
+    let sentCount = 0;
+    let failedCount = 0;
+
+    for (let index = 0; index < uniqueContacts.length; index += 1) {
+      const contact = uniqueContacts[index];
+
+      try {
+        const textWithBasicTokens = applyTemplate(
+          rawTemplate,
+          {
+            firstName: extractFirstName(contact.name),
+            storeName,
+            orderNumber: "",
+            status: "",
+            couponCode: "",
+          },
+          "{{couponCode}}",
+        );
+
+        let finalText;
+        try {
+          finalText = replaceNamedCouponsIfNeeded(textWithBasicTokens);
+        } catch (tokenError) {
+          if (tokenError?.message === "COUPONS_CACHE_NOT_READY") {
+            return res.status(503).json({
+              error:
+                "Firebase Admin indisponível para resolver cupons no envio em massa.",
+            });
+          }
+          throw tokenError;
+        }
+
+        const providerResult = await sendBotBotMessageWithOptionalImage({
+          to: contact.phone,
+          text: finalText,
+          imageUrl,
+          defaultCountryCode: req.body?.defaultCountryCode,
+          appKey: req.body?.botbotAppKey,
+          authKey: req.body?.botbotAuthKey,
+          baseUrl: req.body?.botbotApiBaseUrl,
+        });
+
+        sentCount += 1;
+        results.push({
+          ok: true,
+          contactId: contact.id || null,
+          contactName: contact.name,
+          phone: contact.phone,
+          messageId:
+            providerResult?.data?.messageId ||
+            providerResult?.messageId ||
+            providerResult?.id ||
+            null,
+        });
+      } catch (error) {
+        failedCount += 1;
+        results.push({
+          ok: false,
+          contactId: contact.id || null,
+          contactName: contact.name,
+          phone: contact.phone,
+          error: String(error?.message || "Falha no envio para o contato."),
+        });
+      }
+
+      const hasNextContact = index < uniqueContacts.length - 1;
+      if (hasNextContact && delayBetweenMs > 0) {
+        await waitMs(delayBetweenMs);
+      }
+    }
+
+    return res.json({
+      ok: true,
+      mode,
+      totalContacts: uniqueContacts.length,
+      sentCount,
+      failedCount,
+      delayBetweenMs,
+      results,
+    });
+  } catch (error) {
+    console.error(
+      "Erro no envio em massa do WhatsApp:",
+      error?.message || error,
+    );
+    return res.status(502).json({
+      error: error?.message || "Não foi possível concluir o envio em massa.",
     });
   }
 });
