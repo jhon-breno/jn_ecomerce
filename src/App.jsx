@@ -882,10 +882,12 @@ const normalizeStoreAddress = (value) => {
 
 const getDefaultWhatsAppAutomationConfig = () => ({
   enabled: false,
-  provider: "zapi",
+  provider: "botbot",
   defaultCountryCode: "55",
   businessPhoneNumber: "",
   couponTag: "{{couponCode}}",
+  botbotAppKey: "",
+  botbotAuthKey: "",
   zapiInstanceId: "",
   phoneNumberId: "",
   businessAccountId: "",
@@ -969,7 +971,7 @@ const normalizeWhatsAppAutomationConfig = (value) => {
   return {
     enabled:
       source.enabled === undefined ? defaults.enabled : Boolean(source.enabled),
-    provider: String(source.provider || defaults.provider).trim(),
+    provider: "botbot",
     defaultCountryCode:
       String(source.defaultCountryCode || defaults.defaultCountryCode)
         .replace(/\D/g, "")
@@ -981,6 +983,12 @@ const normalizeWhatsAppAutomationConfig = (value) => {
       String(source.couponTag || defaults.couponTag)
         .trim()
         .slice(0, 60) || defaults.couponTag,
+    botbotAppKey: String(source.botbotAppKey || defaults.botbotAppKey)
+      .trim()
+      .slice(0, 120),
+    botbotAuthKey: String(source.botbotAuthKey || defaults.botbotAuthKey)
+      .trim()
+      .slice(0, 220),
     zapiInstanceId: String(
       source.zapiInstanceId || defaults.zapiInstanceId,
     ).trim(),
@@ -6013,8 +6021,8 @@ function CustomerAccountModal({
                               className="w-full p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-indigo-400"
                             />
                             <p className="text-[11px] text-slate-500 sm:col-span-2 -mt-1">
-                              Informe o nome completo do recebedor exatamente como
-                              consta no CPF para questoes fiscais.
+                              Informe o nome completo do recebedor exatamente
+                              como consta no CPF para questoes fiscais.
                             </p>
                             <input
                               placeholder="Telefone"
@@ -7893,11 +7901,14 @@ function BannerCarousel({ banners }) {
 function AuthModal({ close, showToast }) {
   const [isLogin, setIsLogin] = useState(true);
   const [isRecoveringPassword, setIsRecoveringPassword] = useState(false);
+  const [recoveryMethod, setRecoveryMethod] = useState("email");
   const [email, setEmail] = useState("");
   const [recoveryEmail, setRecoveryEmail] = useState("");
+  const [recoveryPhone, setRecoveryPhone] = useState("");
   const [password, setPassword] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSendingReset, setIsSendingReset] = useState(false);
+  const [isSendingPhoneReset, setIsSendingPhoneReset] = useState(false);
 
   // Novos campos para cadastro
   const [firstName, setFirstName] = useState("");
@@ -8005,7 +8016,9 @@ function AuthModal({ close, showToast }) {
   const handleForgotPassword = async (e) => {
     if (e?.preventDefault) e.preventDefault();
 
-    const normalizedEmail = String(recoveryEmail || "").trim().toLowerCase();
+    const normalizedEmail = String(recoveryEmail || "")
+      .trim()
+      .toLowerCase();
 
     if (!normalizedEmail) {
       showToast("Informe seu e-mail para recuperar a senha.", "error");
@@ -8042,13 +8055,83 @@ function AuthModal({ close, showToast }) {
       showToast(
         `Enviamos o e-mail de redefinição para ${normalizedEmail}. Se não encontrar, verifique Spam/Lixo eletrônico e Promoções.`,
         "success",
-        8000
+        8000,
       );
     } catch (error) {
       showToast(getFriendlyAuthErrorMessage(error), "error");
     } finally {
       setIsSendingReset(false);
     }
+  };
+
+  const handleForgotPasswordByPhone = async (e) => {
+    if (e?.preventDefault) e.preventDefault();
+
+    const normalizedPhone = maskPhone(recoveryPhone || "");
+    const phoneDigits = normalizePhoneDigits(normalizedPhone);
+
+    if (phoneDigits.length < 10) {
+      showToast("Informe um telefone válido com DDD.", "error");
+      return;
+    }
+
+    try {
+      setIsSendingPhoneReset(true);
+
+      const response = await fetch(
+        buildApiUrl("/api/auth/password-reset-phone"),
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            phone: normalizedPhone,
+            appId,
+          }),
+        },
+      );
+
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        if (response.status === 404) {
+          throw new Error(
+            "Recuperação por telefone ainda não está disponível neste servidor. Atualize o backend e tente novamente.",
+          );
+        }
+
+        throw new Error(
+          payload?.error ||
+            "Não foi possível iniciar a recuperação por telefone.",
+        );
+      }
+
+      showToast(
+        payload?.message ||
+          "Se houver conta vinculada a este telefone, enviaremos as instruções via WhatsApp.",
+        "success",
+        8000,
+      );
+    } catch (error) {
+      const isNetworkError = /failed to fetch/i.test(
+        String(error?.message || ""),
+      );
+      showToast(
+        isNetworkError
+          ? "Não foi possível conectar ao backend. Verifique se a API está online e liberada no CORS."
+          : error?.message || "Erro ao recuperar senha por telefone.",
+        "error",
+      );
+    } finally {
+      setIsSendingPhoneReset(false);
+    }
+  };
+
+  const handleRecoverySubmit = async (e) => {
+    if (recoveryMethod === "phone") {
+      await handleForgotPasswordByPhone(e);
+      return;
+    }
+
+    await handleForgotPassword(e);
   };
 
   return (
@@ -8087,34 +8170,93 @@ function AuthModal({ close, showToast }) {
           </div>
         )}
         <form
-          onSubmit={isRecoveringPassword ? handleForgotPassword : handleSubmit}
+          onSubmit={isRecoveringPassword ? handleRecoverySubmit : handleSubmit}
           className="p-6 space-y-4"
         >
           {isRecoveringPassword ? (
             <>
               <p className="text-sm text-slate-600">
-                Informe seu e-mail para receber o link de redefinição de senha.
+                Escolha como deseja recuperar sua senha.
               </p>
-              <div>
-                <label className="block text-sm font-medium mb-1 text-slate-700">
-                  E-mail de recuperação
-                </label>
-                <input
-                  required
-                  type="email"
-                  value={recoveryEmail}
-                  onChange={(e) => setRecoveryEmail(e.target.value)}
-                  disabled={isSendingReset}
-                  className="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
-                  placeholder="seu@email.com"
-                />
+
+              <div className="grid grid-cols-2 gap-2 p-1 rounded-xl bg-slate-100 border border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setRecoveryMethod("email")}
+                  disabled={isSendingReset || isSendingPhoneReset}
+                  className={`px-3 py-2 text-sm font-bold rounded-lg transition ${
+                    recoveryMethod === "email"
+                      ? "bg-white text-indigo-700 shadow-sm"
+                      : "text-slate-600 hover:text-slate-800"
+                  }`}
+                >
+                  E-mail
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRecoveryMethod("phone")}
+                  disabled={isSendingReset || isSendingPhoneReset}
+                  className={`px-3 py-2 text-sm font-bold rounded-lg transition ${
+                    recoveryMethod === "phone"
+                      ? "bg-white text-indigo-700 shadow-sm"
+                      : "text-slate-600 hover:text-slate-800"
+                  }`}
+                >
+                  Telefone
+                </button>
               </div>
+
+              {recoveryMethod === "email" ? (
+                <div>
+                  <label className="block text-sm font-medium mb-1 text-slate-700">
+                    E-mail de recuperação
+                  </label>
+                  <input
+                    required
+                    type="email"
+                    value={recoveryEmail}
+                    onChange={(e) => setRecoveryEmail(e.target.value)}
+                    disabled={isSendingReset || isSendingPhoneReset}
+                    className="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                    placeholder="seu@email.com"
+                  />
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div>
+                    <label className="block text-sm font-medium mb-1 text-slate-700">
+                      Telefone com DDD
+                    </label>
+                    <input
+                      required
+                      type="tel"
+                      value={recoveryPhone}
+                      onChange={(e) =>
+                        setRecoveryPhone(maskPhone(e.target.value))
+                      }
+                      disabled={isSendingReset || isSendingPhoneReset}
+                      className="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                      placeholder="(00) 00000-0000"
+                      maxLength={15}
+                    />
+                  </div>
+                  <p className="text-xs text-slate-500">
+                    Enviaremos um link de redefinição para este número via
+                    WhatsApp, se houver conta vinculada.
+                  </p>
+                </div>
+              )}
+
               <button
                 type="submit"
-                disabled={isSendingReset}
+                disabled={isSendingReset || isSendingPhoneReset}
                 className="w-full bg-indigo-600 hover:bg-indigo-700 transition text-white font-bold py-3 rounded-xl mt-6 shadow-md cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
               >
-                {isSendingReset ? "Enviando..." : "Enviar link de recuperação"}
+                {isSendingReset || isSendingPhoneReset
+                  ? "Enviando..."
+                  : recoveryMethod === "phone"
+                    ? "Enviar recuperação por WhatsApp"
+                    : "Enviar link de recuperação"}
               </button>
             </>
           ) : isLogin ? (
@@ -8152,9 +8294,12 @@ function AuthModal({ close, showToast }) {
                     type="button"
                     onClick={() => {
                       setRecoveryEmail(String(email || "").trim());
+                      setRecoveryMethod("email");
                       setIsRecoveringPassword(true);
                     }}
-                    disabled={isSubmitting || isSendingReset}
+                    disabled={
+                      isSubmitting || isSendingReset || isSendingPhoneReset
+                    }
                     className="text-xs text-indigo-600 font-semibold hover:underline cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
                   >
                     Esqueceu sua senha?
@@ -8265,7 +8410,7 @@ function AuthModal({ close, showToast }) {
           {!isRecoveringPassword && (
             <button
               type="submit"
-              disabled={isSubmitting || isSendingReset}
+              disabled={isSubmitting || isSendingReset || isSendingPhoneReset}
               className="w-full bg-indigo-600 hover:bg-indigo-700 transition text-white font-bold py-3 rounded-xl mt-6 shadow-md cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
             >
               {isLogin ? "Entrar" : "Cadastrar"}
@@ -10253,9 +10398,11 @@ function AdminWhatsAppSettings({ showToast, storeSettings }) {
           text:
             whatsappTestMessage.trim() ||
             `Teste de integração da ${storeName} via painel administrativo.`,
-          provider: whatsappAutomation.provider,
-          zapiInstanceId: whatsappAutomation.zapiInstanceId,
-          phoneNumberId: whatsappAutomation.phoneNumberId,
+          provider: "botbot",
+          botbotAppKey:
+            String(whatsappAutomation.botbotAppKey || "").trim() || undefined,
+          botbotAuthKey:
+            String(whatsappAutomation.botbotAuthKey || "").trim() || undefined,
           defaultCountryCode: whatsappAutomation.defaultCountryCode,
         }),
       });
@@ -10284,15 +10431,20 @@ function AdminWhatsAppSettings({ showToast, storeSettings }) {
         )}
       </div>
 
-      <div className="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-4 text-sm text-emerald-900">
-        <p className="font-bold">Conexão recomendada: Z-API</p>
-        <p className="mt-1 leading-relaxed">
-          Crie sua conta em <strong>z-api.io</strong>, gere uma instância e
-          escaneie o QR Code com seu WhatsApp. Coloque o{" "}
-          <code>ZAPI_INSTANCE_ID</code>, <code>ZAPI_TOKEN</code> e{" "}
-          <code>ZAPI_CLIENT_TOKEN</code> no <code>.env</code> do backend. Nunca
-          exponha tokens no frontend.
+      <div className="rounded-2xl border border-cyan-200 bg-cyan-50/70 p-4 text-sm text-cyan-900 space-y-3">
+        <p className="font-bold">Conexão ativa: BotBot</p>
+        <p className="leading-relaxed">
+          Este painel está configurado para trabalhar somente com BotBot no
+          envio automático de WhatsApp.
         </p>
+        <a
+          href="https://botbot.chat/"
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-cyan-700 hover:bg-cyan-800 text-white font-bold"
+        >
+          Abrir BotBot para login
+        </a>
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
@@ -10311,24 +10463,8 @@ function AdminWhatsAppSettings({ showToast, storeSettings }) {
             </span>
           </label>
 
-          <div>
-            <label className="block text-sm font-bold mb-2 text-slate-700">
-              Provedor
-            </label>
-            <select
-              value={whatsappAutomation.provider}
-              onChange={(e) =>
-                updateWhatsAppAutomation({ provider: e.target.value })
-              }
-              className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
-            >
-              <option value="zapi">Z-API (QR Code, recomendado Brasil)</option>
-              <option value="whatsapp_cloud_api">
-                WhatsApp Cloud API (Meta)
-              </option>
-              <option value="custom_webhook">Webhook próprio</option>
-              <option value="manual_only">Somente manual</option>
-            </select>
+          <div className="rounded-xl border border-cyan-200 bg-cyan-50 p-3 text-xs text-cyan-900">
+            Provedor fixo: <strong>BotBot</strong>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -10383,62 +10519,42 @@ function AdminWhatsAppSettings({ showToast, storeSettings }) {
             </div>
           </div>
 
-          {whatsappAutomation.provider === "zapi" && (
+          <div className="rounded-xl border border-slate-200 bg-white p-3 space-y-3">
+            <h4 className="font-bold text-slate-700">Credenciais BotBot</h4>
+            <p className="text-xs text-slate-500 leading-relaxed">
+              Preencha para testar envio manual agora. Para produção e
+              automações, configure as mesmas credenciais no backend (arquivo
+              .env / Render Environment).
+            </p>
             <div>
               <label className="block text-sm font-bold mb-2 text-slate-700">
-                Z-API Instance ID
+                Chave do App
               </label>
               <input
-                type="text"
-                value={whatsappAutomation.zapiInstanceId}
+                type="password"
+                value={whatsappAutomation.botbotAppKey || ""}
                 onChange={(e) =>
-                  updateWhatsAppAutomation({ zapiInstanceId: e.target.value })
+                  updateWhatsAppAutomation({ botbotAppKey: e.target.value })
                 }
-                placeholder="Ex: 3A...sua-instancia"
+                placeholder="Ex: 8393edec-9178-4edc-b6c1-8b8232550751"
                 className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
               />
-              <p className="text-xs text-slate-400 mt-1">
-                Token e Client-Token ficam apenas no <code>.env</code> do
-                backend (nunca aqui).
-              </p>
             </div>
-          )}
-
-          {whatsappAutomation.provider === "whatsapp_cloud_api" && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-sm font-bold mb-2 text-slate-700">
-                  Phone Number ID
-                </label>
-                <input
-                  type="text"
-                  value={whatsappAutomation.phoneNumberId}
-                  onChange={(e) =>
-                    updateWhatsAppAutomation({ phoneNumberId: e.target.value })
-                  }
-                  placeholder="ID do número na Meta"
-                  className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-bold mb-2 text-slate-700">
-                  Business Account ID
-                </label>
-                <input
-                  type="text"
-                  value={whatsappAutomation.businessAccountId}
-                  onChange={(e) =>
-                    updateWhatsAppAutomation({
-                      businessAccountId: e.target.value,
-                    })
-                  }
-                  placeholder="Opcional, para governança"
-                  className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
-                />
-              </div>
+            <div>
+              <label className="block text-sm font-bold mb-2 text-slate-700">
+                Chave de Autenticação
+              </label>
+              <input
+                type="password"
+                value={whatsappAutomation.botbotAuthKey || ""}
+                onChange={(e) =>
+                  updateWhatsAppAutomation({ botbotAuthKey: e.target.value })
+                }
+                placeholder="Ex: JdiSLlML5AR9bMly..."
+                className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+              />
             </div>
-          )}
+          </div>
 
           <label className="flex items-start gap-3 cursor-pointer rounded-xl border border-slate-200 bg-white p-3">
             <input

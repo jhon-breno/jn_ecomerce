@@ -11,6 +11,7 @@ const {
   applicationDefault,
   getApps: getAdminApps,
 } = require("firebase-admin/app");
+const { getAuth: getAdminAuth } = require("firebase-admin/auth");
 const {
   getFirestore: getAdminFirestore,
   FieldValue,
@@ -55,6 +56,9 @@ const botbotApiBaseUrl = String(
   .replace(/\/$/, "");
 const botbotAppKey = String(process.env.BOTBOT_APP_KEY || "").trim();
 const botbotAuthKey = String(process.env.BOTBOT_AUTH_KEY || "").trim();
+const whatsappProviderEnv = String(process.env.WHATSAPP_PROVIDER || "")
+  .trim()
+  .toLowerCase();
 const workerEnabled = ["1", "true", "yes", "on"].includes(
   String(process.env.WHATSAPP_WORKER_ENABLED || "false")
     .trim()
@@ -78,6 +82,10 @@ const firebaseServiceAccountJson = String(
   process.env.FIREBASE_SERVICE_ACCOUNT_JSON || "",
 ).trim();
 const firebaseProjectId = String(process.env.FIREBASE_PROJECT_ID || "").trim();
+
+const PASSWORD_RESET_PHONE_WINDOW_MS = 15 * 60 * 1000;
+const PASSWORD_RESET_PHONE_MAX_ATTEMPTS = 3;
+const passwordResetPhoneAttempts = new Map();
 
 const detectMercadoPagoMode = (token) => {
   if (!token) return "unconfigured";
@@ -223,23 +231,106 @@ const normalizeWhatsAppRecipient = (value, defaultCountryCode = "55") => {
   return null;
 };
 
+const normalizePhoneDigits = (value) => String(value || "").replace(/\D/g, "");
+
+const normalizePhoneDigitsForLookup = (value) => {
+  let digits = normalizePhoneDigits(value);
+  if (digits.startsWith("55") && digits.length > 11) {
+    digits = digits.slice(2);
+  }
+  if (digits.length > 11) {
+    digits = digits.slice(-11);
+  }
+  return digits;
+};
+
+const formatBrazilianPhone = (digits) => {
+  if (digits.length === 11) {
+    return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7, 11)}`;
+  }
+  if (digits.length === 10) {
+    return `(${digits.slice(0, 2)}) ${digits.slice(2, 6)}-${digits.slice(6, 10)}`;
+  }
+  return digits;
+};
+
+const buildPhoneLookupCandidates = (rawPhone) => {
+  const localDigits = normalizePhoneDigitsForLookup(rawPhone);
+  if (localDigits.length < 10) return [];
+
+  const candidates = new Set([
+    localDigits,
+    formatBrazilianPhone(localDigits),
+    `55${localDigits}`,
+    `+55${localDigits}`,
+  ]);
+
+  if (localDigits.length === 11 && localDigits[2] === "9") {
+    const withoutNine = `${localDigits.slice(0, 2)}${localDigits.slice(3)}`;
+    candidates.add(withoutNine);
+    candidates.add(formatBrazilianPhone(withoutNine));
+    candidates.add(`55${withoutNine}`);
+    candidates.add(`+55${withoutNine}`);
+  }
+
+  return [...candidates].filter(Boolean).slice(0, 10);
+};
+
+const registerPhoneResetAttempt = (phoneDigits) => {
+  const now = Date.now();
+  const key = String(phoneDigits || "").trim();
+  if (!key) return { blocked: false };
+
+  const previous = passwordResetPhoneAttempts.get(key) || [];
+  const active = previous.filter(
+    (ts) => Number(ts) > now - PASSWORD_RESET_PHONE_WINDOW_MS,
+  );
+
+  if (active.length >= PASSWORD_RESET_PHONE_MAX_ATTEMPTS) {
+    passwordResetPhoneAttempts.set(key, active);
+    return { blocked: true };
+  }
+
+  active.push(now);
+  passwordResetPhoneAttempts.set(key, active);
+  return { blocked: false };
+};
+
 const normalizeWhatsAppText = (value) => {
   const text = String(value || "").trim();
   if (!text) return null;
   return text.slice(0, 4096);
 };
 
-const isWhatsAppConfigured = () =>
-  Boolean(
-    (whatsappAccessToken && whatsappDefaultPhoneNumberId) ||
-    (zapiInstanceId && zapiToken) ||
-    (botbotAppKey && botbotAuthKey) ||
-    customWebhookUrl,
-  );
+const isWhatsAppConfigured = () => Boolean(botbotAppKey && botbotAuthKey);
 
 const isZApiConfigured = () => Boolean(zapiInstanceId && zapiToken);
 const isBotBotConfigured = () => Boolean(botbotAppKey && botbotAuthKey);
 const isCustomWebhookConfigured = () => Boolean(customWebhookUrl);
+const isCloudApiConfigured = () =>
+  Boolean(whatsappAccessToken && whatsappDefaultPhoneNumberId);
+
+const normalizeProviderName = (value) => {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+
+  if (["botbot", "manual_only"].includes(normalized)) {
+    return normalized;
+  }
+
+  return "";
+};
+
+const resolvePreferredProvider = (value) => {
+  const explicitProvider = normalizeProviderName(value);
+  if (explicitProvider) return explicitProvider;
+
+  const envProvider = normalizeProviderName(whatsappProviderEnv);
+  if (envProvider) return envProvider;
+
+  return "botbot";
+};
 
 const sendZApiTextMessage = async ({ to, text, defaultCountryCode }) => {
   if (!zapiInstanceId || !zapiToken) {
@@ -407,8 +498,23 @@ const sendCustomWebhookMessage = async ({ to, text, defaultCountryCode }) => {
   return payload;
 };
 
-const sendBotBotTextMessage = async ({ to, text, defaultCountryCode }) => {
-  if (!botbotAppKey || !botbotAuthKey) {
+const sendBotBotTextMessage = async ({
+  to,
+  text,
+  defaultCountryCode,
+  appKey,
+  authKey,
+  baseUrl,
+}) => {
+  const resolvedAppKey = String(appKey || botbotAppKey || "").trim();
+  const resolvedAuthKey = String(authKey || botbotAuthKey || "").trim();
+  const resolvedBaseUrl = String(
+    baseUrl || botbotApiBaseUrl || "https://botbot.chat",
+  )
+    .trim()
+    .replace(/\/$/, "");
+
+  if (!resolvedAppKey || !resolvedAuthKey) {
     throw new Error(
       "BOTBOT_APP_KEY e BOTBOT_AUTH_KEY não configurados no backend.",
     );
@@ -426,13 +532,13 @@ const sendBotBotTextMessage = async ({ to, text, defaultCountryCode }) => {
     throw new Error("Mensagem vazia. Informe um texto para o disparo.");
   }
 
-  const url = `${botbotApiBaseUrl}/api/v2/sendText`;
+  const url = `${resolvedBaseUrl}/api/v2/sendText`;
   const response = await fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      appKey: botbotAppKey,
-      authKey: botbotAuthKey,
+      appKey: resolvedAppKey,
+      authKey: resolvedAuthKey,
     },
     body: JSON.stringify({
       to: recipient,
@@ -453,26 +559,42 @@ const sendBotBotTextMessage = async ({ to, text, defaultCountryCode }) => {
   return payload;
 };
 
-const getFirebaseAdminDb = () => {
-  if (!workerEnabled) return null;
-
-  try {
-    if (!getAdminApps().length) {
-      if (firebaseServiceAccountJson) {
-        const credentials = JSON.parse(firebaseServiceAccountJson);
-        initializeAdminApp({ credential: cert(credentials) });
-      } else {
-        initializeAdminApp({
-          credential: applicationDefault(),
-          ...(firebaseProjectId ? { projectId: firebaseProjectId } : {}),
-        });
-      }
+const getAdminApp = () => {
+  if (!getAdminApps().length) {
+    if (firebaseServiceAccountJson) {
+      const credentials = JSON.parse(firebaseServiceAccountJson);
+      initializeAdminApp({ credential: cert(credentials) });
+    } else {
+      initializeAdminApp({
+        credential: applicationDefault(),
+        ...(firebaseProjectId ? { projectId: firebaseProjectId } : {}),
+      });
     }
+  }
 
+  return getAdminApps()[0];
+};
+
+const getFirebaseAdminDb = () => {
+  try {
+    getAdminApp();
     return getAdminFirestore();
   } catch (error) {
     console.error(
-      "Erro ao inicializar Firebase Admin para o worker:",
+      "Erro ao inicializar Firebase Admin:",
+      error?.message || error,
+    );
+    return null;
+  }
+};
+
+const getFirebaseAdminAuth = () => {
+  try {
+    const adminApp = getAdminApp();
+    return getAdminAuth(adminApp);
+  } catch (error) {
+    console.error(
+      "Erro ao inicializar Firebase Admin Auth:",
       error?.message || error,
     );
     return null;
@@ -539,6 +661,15 @@ const getWorkerSettingsRef = (db) =>
     .collection("settings")
     .doc("config");
 
+const getAppSettingsRef = (db, targetAppId) =>
+  db
+    .collection("artifacts")
+    .doc(String(targetAppId || workerAppId).trim() || workerAppId)
+    .collection("public")
+    .doc("data")
+    .collection("settings")
+    .doc("config");
+
 const normalizeWorkerConfig = (rawSettings) => {
   const automation = rawSettings?.whatsappAutomation || {};
 
@@ -550,7 +681,7 @@ const normalizeWorkerConfig = (rawSettings) => {
 
   return {
     enabled: Boolean(automation.enabled),
-    provider: String(automation.provider || "zapi").trim(),
+    provider: resolvePreferredProvider(automation.provider),
     defaultCountryCode: String(automation.defaultCountryCode || "55").trim(),
     sendOnlyWithCustomerConsent:
       automation.sendOnlyWithCustomerConsent === undefined
@@ -653,43 +784,12 @@ const pickCouponCode = async (db) => {
 };
 
 const sendAutomatedMessage = async ({ config, to, text }) => {
-  const provider = String(config.provider || "zapi").trim();
+  const provider = resolvePreferredProvider(config.provider);
 
   if (provider === "manual_only") {
     throw new Error(
       "Provider em modo manual_only. Nenhum envio automático será feito.",
     );
-  }
-
-  if (provider === "custom_webhook") {
-    const result = isBotBotConfigured()
-      ? await sendBotBotTextMessage({
-          to,
-          text,
-          defaultCountryCode: config.defaultCountryCode,
-        })
-      : await sendCustomWebhookMessage({
-          to,
-          text,
-          defaultCountryCode: config.defaultCountryCode,
-        });
-    return {
-      provider: "custom_webhook",
-      messageId:
-        result?.data?.messageId || result?.messageId || result?.id || null,
-    };
-  }
-
-  if ((provider === "zapi" || isZApiConfigured()) && isZApiConfigured()) {
-    const result = await sendZApiTextMessage({
-      to,
-      text,
-      defaultCountryCode: config.defaultCountryCode,
-    });
-    return {
-      provider: "zapi",
-      messageId: result?.messageId || result?.zaapId || result?.id || null,
-    };
   }
 
   const result = await sendWhatsAppTextMessage({
@@ -699,8 +799,9 @@ const sendAutomatedMessage = async ({ config, to, text }) => {
   });
 
   return {
-    provider: "whatsapp_cloud_api",
-    messageId: result?.messages?.[0]?.id || null,
+    provider: "botbot",
+    messageId:
+      result?.data?.messageId || result?.messageId || result?.id || null,
   };
 };
 
@@ -1136,30 +1237,18 @@ app.get("/api/health", (req, res) => {
 });
 
 app.get("/api/whatsapp/health", (req, res) => {
+  const preferredProvider = "botbot";
+
   res.json({
     ok: true,
     configured: isWhatsAppConfigured(),
-    zapiConfigured: isZApiConfigured(),
     botbotConfigured: isBotBotConfigured(),
-    customWebhookConfigured: isCustomWebhookConfigured(),
-    cloudApiConfigured: Boolean(
-      whatsappAccessToken && whatsappDefaultPhoneNumberId,
-    ),
-    provider: isZApiConfigured()
-      ? "zapi"
-      : isBotBotConfigured()
-        ? "custom_webhook"
-        : isCustomWebhookConfigured()
-          ? "custom_webhook"
-          : "whatsapp_cloud_api",
-    apiVersion: whatsappApiVersion,
-    zapiInstanceIdConfigured: Boolean(zapiInstanceId),
-    phoneNumberIdConfigured: Boolean(whatsappDefaultPhoneNumberId),
-    businessAccountIdConfigured: Boolean(whatsappBusinessAccountId),
-    customWebhookUrlConfigured: Boolean(customWebhookUrl),
+    provider: preferredProvider,
+    providerFromEnv: normalizeProviderName(whatsappProviderEnv) || null,
     botbotApiBaseUrl,
     botbotAppKeyConfigured: Boolean(botbotAppKey),
     botbotAuthKeyConfigured: Boolean(botbotAuthKey),
+    loginUrl: "https://botbot.chat/",
   });
 });
 
@@ -1216,61 +1305,20 @@ app.post("/api/whatsapp/send-test", async (req, res) => {
       });
     }
 
-    const provider = String(req.body?.provider || "zapi").trim();
-    if (provider === "manual_only") {
-      return res.status(400).json({
-        error:
-          "O modo selecionado está como manual_only. Troque para Z-API ou WhatsApp Cloud API para testar envios automáticos.",
-      });
-    }
-
-    let result;
-    if (provider === "custom_webhook") {
-      result = isBotBotConfigured()
-        ? await sendBotBotTextMessage({
-            to: req.body?.to,
-            text: req.body?.text,
-            defaultCountryCode: req.body?.defaultCountryCode,
-          })
-        : await sendCustomWebhookMessage({
-            to: req.body?.to,
-            text: req.body?.text,
-            defaultCountryCode: req.body?.defaultCountryCode,
-          });
-      return res.json({
-        ok: true,
-        provider: "custom_webhook",
-        messageId:
-          result?.data?.messageId || result?.messageId || result?.id || null,
-      });
-    }
-
-    if (provider === "zapi" || isZApiConfigured()) {
-      result = await sendZApiTextMessage({
-        to: req.body?.to,
-        text: req.body?.text,
-        defaultCountryCode: req.body?.defaultCountryCode,
-      });
-      return res.json({
-        ok: true,
-        provider: "zapi",
-        messageId: result?.messageId || result?.zaapId || result?.id || null,
-      });
-    }
-
-    result = await sendWhatsAppTextMessage({
+    const result = await sendBotBotTextMessage({
       to: req.body?.to,
       text: req.body?.text,
-      phoneNumberId: req.body?.phoneNumberId,
       defaultCountryCode: req.body?.defaultCountryCode,
+      appKey: req.body?.botbotAppKey,
+      authKey: req.body?.botbotAuthKey,
+      baseUrl: req.body?.botbotApiBaseUrl,
     });
 
     return res.json({
       ok: true,
-      provider: "whatsapp_cloud_api",
-      messageId: result?.messages?.[0]?.id || null,
-      contactWaId: result?.contacts?.[0]?.wa_id || null,
-      businessAccountId: whatsappBusinessAccountId || null,
+      provider: "botbot",
+      messageId:
+        result?.data?.messageId || result?.messageId || result?.id || null,
     });
   } catch (error) {
     console.error(
@@ -1279,6 +1327,148 @@ app.post("/api/whatsapp/send-test", async (req, res) => {
     );
     return res.status(502).json({
       error: error?.message || "Não foi possível enviar a mensagem de teste.",
+    });
+  }
+});
+
+app.post("/api/auth/password-reset-phone", async (req, res) => {
+  const genericSuccessMessage =
+    "Se houver conta vinculada a este telefone, enviaremos as instrucoes de redefinicao via WhatsApp.";
+
+  try {
+    if (!req.body || typeof req.body !== "object" || Array.isArray(req.body)) {
+      return res.status(400).json({ error: "Payload invalido." });
+    }
+
+    const rawPhone = String(req.body?.phone || "").trim();
+    const phoneCandidates = buildPhoneLookupCandidates(rawPhone);
+    const normalizedLookupPhone = normalizePhoneDigitsForLookup(rawPhone);
+    const resolvedAppId =
+      String(req.body?.appId || workerAppId).trim() || workerAppId;
+
+    if (phoneCandidates.length === 0 || normalizedLookupPhone.length < 10) {
+      return res.status(400).json({
+        error: "Informe um telefone valido com DDD.",
+      });
+    }
+
+    const attemptStatus = registerPhoneResetAttempt(normalizedLookupPhone);
+    if (attemptStatus.blocked) {
+      return res.status(429).json({
+        error:
+          "Voce fez muitas tentativas em pouco tempo. Aguarde alguns minutos e tente novamente.",
+      });
+    }
+
+    const db = getFirebaseAdminDb();
+    const adminAuth = getFirebaseAdminAuth();
+
+    if (!db || !adminAuth) {
+      return res.status(503).json({
+        error:
+          "Servico de recuperacao por telefone indisponivel no momento. Tente recuperar por e-mail.",
+      });
+    }
+
+    if (!isWhatsAppConfigured()) {
+      return res.status(503).json({
+        error:
+          "WhatsApp nao configurado no servidor. Use a recuperacao por e-mail.",
+      });
+    }
+
+    let matchedUid = "";
+    let matchedEmail = "";
+
+    const customersRef = db
+      .collection("artifacts")
+      .doc(resolvedAppId)
+      .collection("public")
+      .doc("data")
+      .collection("customers");
+
+    const customerSnap = await customersRef
+      .where("phone", "in", phoneCandidates)
+      .limit(1)
+      .get();
+
+    if (!customerSnap.empty) {
+      const firstDoc = customerSnap.docs[0];
+      matchedUid = firstDoc.id;
+      matchedEmail = String(firstDoc.data()?.email || "")
+        .trim()
+        .toLowerCase();
+    }
+
+    if (!matchedUid || !isValidEmail(matchedEmail)) {
+      const profileSnap = await db
+        .collectionGroup("profile")
+        .where("phone", "in", phoneCandidates)
+        .limit(15)
+        .get();
+
+      if (!profileSnap.empty) {
+        const matchedProfileDoc = profileSnap.docs.find((docSnap) => {
+          const path = String(docSnap.ref.path || "");
+          return path.startsWith(`artifacts/${resolvedAppId}/users/`);
+        });
+
+        if (matchedProfileDoc) {
+          const pathParts = String(matchedProfileDoc.ref.path || "").split("/");
+          const usersIndex = pathParts.indexOf("users");
+          if (usersIndex >= 0 && pathParts[usersIndex + 1]) {
+            matchedUid = pathParts[usersIndex + 1];
+          }
+
+          matchedEmail = String(matchedProfileDoc.data()?.email || "")
+            .trim()
+            .toLowerCase();
+        }
+      }
+    }
+
+    if (!matchedUid || !isValidEmail(matchedEmail)) {
+      return res.json({ ok: true, message: genericSuccessMessage });
+    }
+
+    const resetLink = await adminAuth.generatePasswordResetLink(matchedEmail, {
+      url: `${buildFrontendBaseUrl()}/`,
+      handleCodeInApp: false,
+    });
+
+    const settingsSnap = await getAppSettingsRef(db, resolvedAppId).get();
+    const settings = settingsSnap.exists ? settingsSnap.data() || {} : {};
+    const automationConfig = normalizeWorkerConfig(settings);
+    const defaultCountryCode = String(
+      automationConfig.defaultCountryCode || "55",
+    ).trim();
+
+    const message = [
+      "Pedido de recuperacao de senha recebido.",
+      "Use este link seguro para redefinir sua senha:",
+      resetLink,
+      "Se voce nao solicitou esta acao, ignore esta mensagem.",
+    ].join("\n\n");
+
+    await sendAutomatedMessage({
+      config: {
+        provider: automationConfig.provider,
+        defaultCountryCode,
+      },
+      to: normalizedLookupPhone,
+      text: message,
+    });
+
+    return res.json({ ok: true, message: genericSuccessMessage });
+  } catch (error) {
+    console.error(
+      "Erro ao processar recuperacao de senha por telefone:",
+      error?.message || error,
+    );
+
+    return res.status(502).json({
+      error:
+        "Nao foi possivel enviar a recuperacao por telefone agora. Tente novamente ou use a recuperacao por e-mail.",
     });
   }
 });
