@@ -2601,7 +2601,7 @@ function AdminAuthGate({ onLogin, storeName, logo }) {
           <button
             type="submit"
             disabled={isSubmitting}
-            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-3 rounded-xl font-bold transition disabled:opacity-60 disabled:cursor-not-allowed"
+            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-3 rounded-xl font-bold transition cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
           >
             {isSubmitting ? "Entrando..." : "Entrar no Painel"}
           </button>
@@ -7872,7 +7872,7 @@ function AuthModal({ close, showToast }) {
           </h2>
           <button
             onClick={close}
-            className="p-1 hover:bg-slate-100 rounded-full"
+            className="p-1 hover:bg-slate-100 rounded-full cursor-pointer"
           >
             <X size={20} />
           </button>
@@ -7882,7 +7882,7 @@ function AuthModal({ close, showToast }) {
             type="button"
             onClick={handleGoogleLogin}
             disabled={isSubmitting}
-            className="w-full inline-flex items-center justify-center gap-3 p-3 border border-slate-300 rounded-xl text-slate-700 font-semibold hover:bg-slate-50 transition disabled:opacity-60 disabled:cursor-not-allowed"
+            className="w-full inline-flex items-center justify-center gap-3 p-3 border border-slate-300 rounded-xl text-slate-700 font-semibold hover:bg-slate-50 transition cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
           >
             <GoogleBrandIcon />
             <span>Continuar com Google</span>
@@ -8027,21 +8027,18 @@ function AuthModal({ close, showToast }) {
 
           <button
             type="submit"
-            className="w-full bg-indigo-600 hover:bg-indigo-700 transition text-white font-bold py-3 rounded-xl mt-6 shadow-md"
+            disabled={isSubmitting}
+            className="w-full bg-indigo-600 hover:bg-indigo-700 transition text-white font-bold py-3 rounded-xl mt-6 shadow-md cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
           >
             {isLogin ? "Entrar" : "Cadastrar"}
           </button>
         </form>
-        disabled={isSubmitting}
-        className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-3
-        rounded-lg font-semibold transition disabled:opacity-60
-        disabled:cursor-not-allowed"
         <div className="p-4 bg-slate-50 text-center text-sm rounded-b-2xl border-t">
           {isSubmitting ? "Processando..." : isLogin ? "Entrar" : "Criar Conta"}
           <button
             type="button"
             onClick={() => setIsLogin(!isLogin)}
-            className="text-indigo-600 font-bold hover:underline"
+            className="text-indigo-600 font-bold hover:underline cursor-pointer"
           >
             {isLogin ? "Crie uma agora" : "Faça login"}
           </button>
