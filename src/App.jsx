@@ -64,6 +64,8 @@ import {
   signInWithCustomToken,
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
+  fetchSignInMethodsForEmail,
+  sendPasswordResetEmail,
   GoogleAuthProvider,
   signInWithPopup,
   signOut,
@@ -362,13 +364,61 @@ const splitFullName = (value) => {
   };
 };
 
+const getCachedProfileKey = (uid) => `customer_profile_cache:${uid}`;
+
+const readCachedProfile = (uid) => {
+  if (!uid || typeof window === "undefined") return null;
+
+  try {
+    const raw = window.localStorage.getItem(getCachedProfileKey(uid));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
+const writeCachedProfile = (uid, payload = {}) => {
+  if (!uid || typeof window === "undefined") return;
+
+  try {
+    const safePayload = {
+      firstName: String(payload.firstName || "").trim(),
+      lastName: String(payload.lastName || "").trim(),
+      phone: maskPhone(String(payload.phone || "")),
+      cpf: String(payload.cpf || "").trim(),
+      email: String(payload.email || "").trim(),
+      updatedAt: Date.now(),
+    };
+    window.localStorage.setItem(
+      getCachedProfileKey(uid),
+      JSON.stringify(safePayload),
+    );
+  } catch {
+    // Ignora falhas de storage (modo privado/quota)
+  }
+};
+
 const getFriendlyAuthErrorMessage = (error) => {
   if (error?.code === "auth/email-already-in-use") {
     return "Este e-mail já está em uso.";
   }
 
+  if (error?.code === "auth/invalid-email") {
+    return "O e-mail informado é inválido.";
+  }
+
   if (error?.code === "auth/invalid-credential") {
     return "E-mail ou senha incorretos.";
+  }
+
+  if (error?.code === "auth/user-not-found") {
+    return "Não encontramos uma conta com este e-mail.";
+  }
+
+  if (error?.code === "auth/too-many-requests") {
+    return "Muitas tentativas em pouco tempo. Aguarde alguns minutos e tente novamente.";
   }
 
   if (error?.code === "auth/popup-closed-by-user") {
@@ -4767,14 +4817,37 @@ function CustomerAccountModal({
   const [isSettingPrimaryId, setIsSettingPrimaryId] = useState("");
 
   useEffect(() => {
+    const cachedProfile = readCachedProfile(user?.uid);
+    const displayNameParts = splitFullName(user?.displayName || "");
+
     setFormData({
-      firstName: userProfile?.firstName || "",
-      lastName: userProfile?.lastName || "",
-      phone: userProfile?.phone || "",
-      cpf: userProfile?.cpf || "",
-      email: user?.email || userProfile?.email || "",
+      firstName:
+        userProfile?.firstName ||
+        cachedProfile?.firstName ||
+        displayNameParts.firstName ||
+        "",
+      lastName:
+        userProfile?.lastName ||
+        cachedProfile?.lastName ||
+        displayNameParts.lastName ||
+        "",
+      phone: userProfile?.phone || cachedProfile?.phone || "",
+      cpf: userProfile?.cpf || cachedProfile?.cpf || "",
+      email: user?.email || userProfile?.email || cachedProfile?.email || "",
     });
   }, [userProfile, user]);
+
+  useEffect(() => {
+    if (!user?.uid || !userProfile) return;
+
+    writeCachedProfile(user.uid, {
+      firstName: userProfile.firstName,
+      lastName: userProfile.lastName,
+      phone: userProfile.phone,
+      cpf: userProfile.cpf,
+      email: userProfile.email || user?.email || "",
+    });
+  }, [user?.uid, user?.email, userProfile]);
 
   useEffect(() => {
     if (!user?.uid) return;
@@ -5543,15 +5616,39 @@ function CustomerAccountModal({
 
     setIsSaving(true);
     try {
-      await syncCustomerIdentity(user, {
+      writeCachedProfile(user?.uid, {
         firstName: formData.firstName.trim(),
         lastName: formData.lastName.trim(),
         phone: formData.phone,
         cpf: formData.cpf.trim(),
-        email: formData.email || user.email || "",
+        email: formData.email || user?.email || "",
       });
 
-      showToast("Dados atualizados com sucesso!");
+      let syncError = null;
+
+      try {
+        await syncCustomerIdentity(user, {
+          firstName: formData.firstName.trim(),
+          lastName: formData.lastName.trim(),
+          phone: formData.phone,
+          cpf: formData.cpf.trim(),
+          email: formData.email || user.email || "",
+        });
+      } catch (error) {
+        syncError = error;
+        console.warn(
+          "Sincronizacao de perfil bloqueada no Firestore:",
+          error?.code || error?.message || error,
+        );
+      }
+
+      if (syncError) {
+        showToast(
+          "Dados salvos neste navegador. A sincronizacao com o banco esta bloqueada pelas regras atuais.",
+        );
+      } else {
+        showToast("Dados atualizados com sucesso!");
+      }
     } catch (error) {
       console.error("Erro ao atualizar perfil do cliente:", error);
       showToast("Erro ao atualizar seus dados.", "error");
@@ -5738,7 +5835,7 @@ function CustomerAccountModal({
                   disabled={
                     isSaving || (!!formData.cpf && !validateCpf(formData.cpf))
                   }
-                  className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white py-3 rounded-xl font-bold transition"
+                  className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white py-3 rounded-xl font-bold transition cursor-pointer"
                 >
                   {isSaving ? "Salvando..." : "Salvar Dados"}
                 </button>
@@ -5916,6 +6013,10 @@ function CustomerAccountModal({
                               }
                               className="w-full p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-indigo-400"
                             />
+                            <p className="text-[11px] text-slate-500 sm:col-span-2 -mt-1">
+                              Informe o nome completo do recebedor exatamente como
+                              consta no CPF para questoes fiscais.
+                            </p>
                             <input
                               placeholder="Telefone"
                               maxLength={15}
@@ -6118,6 +6219,10 @@ function CustomerAccountModal({
                           }
                           className="w-full p-3 border rounded-lg outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 transition-all"
                         />
+                        <p className="text-[11px] text-slate-500 sm:col-span-2 -mt-1">
+                          Informe o nome completo do recebedor exatamente como
+                          consta no CPF para questoes fiscais.
+                        </p>
                       </div>
                       <div>
                         <label className="block text-xs font-semibold text-slate-500 mb-1">
@@ -7788,9 +7893,12 @@ function BannerCarousel({ banners }) {
 // 1.1 Auth Modal
 function AuthModal({ close, showToast }) {
   const [isLogin, setIsLogin] = useState(true);
+  const [isRecoveringPassword, setIsRecoveringPassword] = useState(false);
   const [email, setEmail] = useState("");
+  const [recoveryEmail, setRecoveryEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSendingReset, setIsSendingReset] = useState(false);
 
   // Novos campos para cadastro
   const [firstName, setFirstName] = useState("");
@@ -7798,11 +7906,43 @@ function AuthModal({ close, showToast }) {
   const [phone, setPhone] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
 
+  const syncIdentitySafely = async (firebaseUser, profileOverrides = {}) => {
+    if (firebaseUser?.uid) {
+      const displayNameParts = splitFullName(firebaseUser.displayName || "");
+      writeCachedProfile(firebaseUser.uid, {
+        firstName: profileOverrides.firstName || displayNameParts.firstName,
+        lastName: profileOverrides.lastName || displayNameParts.lastName,
+        phone: profileOverrides.phone || "",
+        cpf: profileOverrides.cpf || "",
+        email: profileOverrides.email || firebaseUser.email || "",
+      });
+    }
+
+    try {
+      await syncCustomerIdentity(firebaseUser, profileOverrides);
+
+      if (firebaseUser?.uid) {
+        writeCachedProfile(firebaseUser.uid, {
+          firstName: profileOverrides.firstName,
+          lastName: profileOverrides.lastName,
+          phone: profileOverrides.phone,
+          cpf: profileOverrides.cpf,
+          email: profileOverrides.email || firebaseUser.email || "",
+        });
+      }
+    } catch (error) {
+      console.warn(
+        "Nao foi possivel sincronizar perfil no Firestore durante autenticacao:",
+        error?.code || error?.message || error,
+      );
+    }
+  };
+
   const handleGoogleLogin = async () => {
     try {
       setIsSubmitting(true);
       const userCredential = await signInWithPopup(auth, googleAuthProvider);
-      await syncCustomerIdentity(userCredential.user);
+      await syncIdentitySafely(userCredential.user);
       showToast("Login com Google realizado com sucesso!");
       close();
     } catch (error) {
@@ -7823,7 +7963,7 @@ function AuthModal({ close, showToast }) {
           password,
         );
         const loggedInUser = userCredential.user;
-        await syncCustomerIdentity(loggedInUser, { email });
+        await syncIdentitySafely(loggedInUser, { email });
 
         showToast("Login realizado com sucesso!");
         close();
@@ -7846,7 +7986,7 @@ function AuthModal({ close, showToast }) {
           password,
         );
         const newUser = userCredential.user;
-        await syncCustomerIdentity(newUser, {
+        await syncIdentitySafely(newUser, {
           firstName,
           lastName,
           phone,
@@ -7863,12 +8003,61 @@ function AuthModal({ close, showToast }) {
     }
   };
 
+  const handleForgotPassword = async (e) => {
+    if (e?.preventDefault) e.preventDefault();
+
+    const normalizedEmail = String(recoveryEmail || "").trim().toLowerCase();
+
+    if (!normalizedEmail) {
+      showToast("Informe seu e-mail para recuperar a senha.", "error");
+      return;
+    }
+
+    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailPattern.test(normalizedEmail)) {
+      showToast("Digite um e-mail válido.", "error");
+      return;
+    }
+
+    try {
+      setIsSendingReset(true);
+      let signInMethods = [];
+
+      try {
+        signInMethods = await fetchSignInMethodsForEmail(auth, normalizedEmail);
+      } catch {
+        // Fallback: algumas configuracoes de seguranca podem ocultar metodos.
+      }
+
+      if (!signInMethods.includes("password")) {
+        if (signInMethods.includes("google.com")) {
+          showToast(
+            "Este e-mail usa login com Google. Use o botão Continuar com Google.",
+            "error",
+          );
+          return;
+        }
+      }
+
+      await sendPasswordResetEmail(auth, normalizedEmail);
+      showToast(`Enviamos o e-mail de redefinição para ${normalizedEmail}.`);
+    } catch (error) {
+      showToast(getFriendlyAuthErrorMessage(error), "error");
+    } finally {
+      setIsSendingReset(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm overflow-y-auto print:hidden">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-md my-8 animate-slide-up">
         <div className="p-6 border-b flex justify-between items-center">
           <h2 className="text-xl font-bold">
-            {isLogin ? "Entrar" : "Criar Conta"}
+            {isRecoveringPassword
+              ? "Recuperar Senha"
+              : isLogin
+                ? "Entrar"
+                : "Criar Conta"}
           </h2>
           <button
             onClick={close}
@@ -7877,23 +8066,55 @@ function AuthModal({ close, showToast }) {
             <X size={20} />
           </button>
         </div>
-        <div className="p-6 border-b border-slate-100 space-y-3">
-          <button
-            type="button"
-            onClick={handleGoogleLogin}
-            disabled={isSubmitting}
-            className="w-full inline-flex items-center justify-center gap-3 p-3 border border-slate-300 rounded-xl text-slate-700 font-semibold hover:bg-slate-50 transition cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
-          >
-            <GoogleBrandIcon />
-            <span>Continuar com Google</span>
-          </button>
-          <p className="text-xs text-slate-500 text-center">
-            Use sua conta Google para entrar ou criar o cadastro
-            automaticamente.
-          </p>
-        </div>
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          {isLogin ? (
+        {!isRecoveringPassword && (
+          <div className="p-6 border-b border-slate-100 space-y-3">
+            <button
+              type="button"
+              onClick={handleGoogleLogin}
+              disabled={isSubmitting}
+              className="w-full inline-flex items-center justify-center gap-3 p-3 border border-slate-300 rounded-xl text-slate-700 font-semibold hover:bg-slate-50 transition cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              <GoogleBrandIcon />
+              <span>Continuar com Google</span>
+            </button>
+            <p className="text-xs text-slate-500 text-center">
+              Use sua conta Google para entrar ou criar o cadastro
+              automaticamente.
+            </p>
+          </div>
+        )}
+        <form
+          onSubmit={isRecoveringPassword ? handleForgotPassword : handleSubmit}
+          className="p-6 space-y-4"
+        >
+          {isRecoveringPassword ? (
+            <>
+              <p className="text-sm text-slate-600">
+                Informe seu e-mail para receber o link de redefinição de senha.
+              </p>
+              <div>
+                <label className="block text-sm font-medium mb-1 text-slate-700">
+                  E-mail de recuperação
+                </label>
+                <input
+                  required
+                  type="email"
+                  value={recoveryEmail}
+                  onChange={(e) => setRecoveryEmail(e.target.value)}
+                  disabled={isSendingReset}
+                  className="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                  placeholder="seu@email.com"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={isSendingReset}
+                className="w-full bg-indigo-600 hover:bg-indigo-700 transition text-white font-bold py-3 rounded-xl mt-6 shadow-md cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {isSendingReset ? "Enviando..." : "Enviar link de recuperação"}
+              </button>
+            </>
+          ) : isLogin ? (
             // Form de Login
             <>
               <div>
@@ -7923,6 +8144,19 @@ function AuthModal({ close, showToast }) {
                   className="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
                   placeholder="••••••••"
                 />
+                <div className="mt-2 text-right">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRecoveryEmail(String(email || "").trim());
+                      setIsRecoveringPassword(true);
+                    }}
+                    disabled={isSubmitting || isSendingReset}
+                    className="text-xs text-indigo-600 font-semibold hover:underline cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    Esqueceu sua senha?
+                  </button>
+                </div>
               </div>
             </>
           ) : (
@@ -8025,23 +8259,44 @@ function AuthModal({ close, showToast }) {
             </div>
           )}
 
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="w-full bg-indigo-600 hover:bg-indigo-700 transition text-white font-bold py-3 rounded-xl mt-6 shadow-md cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
-          >
-            {isLogin ? "Entrar" : "Cadastrar"}
-          </button>
+          {!isRecoveringPassword && (
+            <button
+              type="submit"
+              disabled={isSubmitting || isSendingReset}
+              className="w-full bg-indigo-600 hover:bg-indigo-700 transition text-white font-bold py-3 rounded-xl mt-6 shadow-md cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              {isLogin ? "Entrar" : "Cadastrar"}
+            </button>
+          )}
         </form>
         <div className="p-4 bg-slate-50 text-center text-sm rounded-b-2xl border-t">
-          {isSubmitting ? "Processando..." : isLogin ? "Entrar" : "Criar Conta"}
-          <button
-            type="button"
-            onClick={() => setIsLogin(!isLogin)}
-            className="text-indigo-600 font-bold hover:underline cursor-pointer"
-          >
-            {isLogin ? "Crie uma agora" : "Faça login"}
-          </button>
+          {isRecoveringPassword ? (
+            <>
+              Lembrou sua senha?{" "}
+              <button
+                type="button"
+                onClick={() => setIsRecoveringPassword(false)}
+                className="text-indigo-600 font-bold hover:underline cursor-pointer"
+              >
+                Voltar para entrar
+              </button>
+            </>
+          ) : (
+            <>
+              {isSubmitting
+                ? "Processando..."
+                : isLogin
+                  ? "Não tem conta? "
+                  : "Já tem conta? "}
+              <button
+                type="button"
+                onClick={() => setIsLogin(!isLogin)}
+                className="text-indigo-600 font-bold hover:underline cursor-pointer"
+              >
+                {isLogin ? "Crie uma agora" : "Faça login"}
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>
