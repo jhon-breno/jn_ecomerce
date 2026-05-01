@@ -3709,8 +3709,6 @@ function StoreFront({
 
     if (!productId && !categoryFromUrl && !subcategoryFromUrl) return;
 
-    hasAppliedSharedLinkRef.current = true;
-
     if (categoryFromUrl) {
       setSelectedCategory(categoryFromUrl);
       setSelectedSubcategory("Todas");
@@ -3722,10 +3720,11 @@ function StoreFront({
 
     if (productId) {
       const product = products.find((item) => String(item?.id) === productId);
-      if (product) {
-        openProductWithTracking(product);
-      }
+      if (!product) return; // produtos ainda carregando, tenta novamente no próximo update
+      openProductWithTracking(product);
     }
+
+    hasAppliedSharedLinkRef.current = true;
   }, [products, openProductWithTracking]);
 
   useEffect(() => {
