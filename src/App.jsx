@@ -2408,9 +2408,9 @@ export default function App() {
     };
   }, [user, isAdminRoute, isAdminAuthenticated]);
 
-  const showToast = (message, type = "success") => {
+  const showToast = (message, type = "success", duration = 3000) => {
     setToast({ message, type });
-    setTimeout(() => setToast(null), 3000);
+    setTimeout(() => setToast(null), duration);
   };
 
   const handleAdminLogin = async (email, password) => {
@@ -8040,7 +8040,11 @@ function AuthModal({ close, showToast }) {
       }
 
       await sendPasswordResetEmail(auth, normalizedEmail);
-      showToast(`Enviamos o e-mail de redefinição para ${normalizedEmail}.`);
+      showToast(
+        `Enviamos o e-mail de redefinição para ${normalizedEmail}. Se não encontrar, verifique Spam/Lixo eletrônico e Promoções.`,
+        "success",
+        8000
+      );
     } catch (error) {
       showToast(getFriendlyAuthErrorMessage(error), "error");
     } finally {
