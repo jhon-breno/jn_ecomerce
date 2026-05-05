@@ -8797,12 +8797,9 @@ function CheckoutFlow({
     if (!selectedAddress) return [];
     const options = [];
     const config = storeSettings?.shipping || {};
-    const separationDays = Number(config.separationDays) || 2;
 
     const fmtTime = (deliveryTime, unit = "dias úteis") => {
-      const sep =
-        separationDays === 1 ? "1 dia útil" : `${separationDays} dias úteis`;
-      return `${sep} p/ separação + ${deliveryTime} ${unit} p/ entrega`;
+      return `${deliveryTime} ${unit} p/ entrega`;
     };
 
     if (
@@ -8832,7 +8829,7 @@ function CheckoutFlow({
             " p/ entrega",
             " p/ entrega local",
           ),
-          separationInfo: `${separationDays} dia(s) útil(is) para separação/postagem, entrega ${localTime}`,
+          separationInfo: `Entrega ${localTime}`,
           icon: <Truck size={20} />,
         });
       } else {
@@ -8844,7 +8841,7 @@ function CheckoutFlow({
             name: "Correios (PAC)",
             price: pacRate,
             time: fmtTime(pacDays),
-            separationInfo: `${separationDays} dia(s) útil(is) para separação/postagem + ${pacDays} dias úteis para entrega pelos Correios`,
+            separationInfo: `${pacDays} dias úteis para entrega pelos Correios`,
             icon: <Package size={20} />,
           });
         }
@@ -8856,7 +8853,7 @@ function CheckoutFlow({
             name: "Correios (Sedex)",
             price: sedexRate,
             time: fmtTime(sedexDays),
-            separationInfo: `${separationDays} dia(s) útil(is) para separação/postagem + ${sedexDays} dias úteis para entrega pelos Correios`,
+            separationInfo: `${sedexDays} dias úteis para entrega pelos Correios`,
             icon: <Package size={20} />,
           });
         }
