@@ -302,12 +302,73 @@ const parsePaymentReturnParams = () => {
   };
 };
 
+const PAYMENT_RETURN_QUERY_KEYS = [
+  "payment_id",
+  "collection_id",
+  "external_reference",
+  "externalReference",
+  "status",
+  "collection_status",
+];
+
+const removeQueryKeysFromParams = (params, keys) => {
+  let changed = false;
+
+  keys.forEach((key) => {
+    if (params.has(key)) {
+      params.delete(key);
+      changed = true;
+    }
+  });
+
+  return changed;
+};
+
+const parseBooleanQueryParam = (value) => {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+
+  return (
+    normalized === "1" ||
+    normalized === "true" ||
+    normalized === "yes" ||
+    normalized === "sim" ||
+    normalized === "on"
+  );
+};
+
 const clearPaymentReturnParamsFromUrl = () => {
   if (typeof window === "undefined") return;
 
-  const { pathname, hash } = window.location;
-  const cleanHash = hash.includes("?") ? hash.split("?")[0] : hash;
-  const target = `${pathname}${cleanHash}`;
+  const currentUrl = new URL(window.location.href);
+  let changed = removeQueryKeysFromParams(
+    currentUrl.searchParams,
+    PAYMENT_RETURN_QUERY_KEYS,
+  );
+
+  const hash = String(currentUrl.hash || "");
+  if (hash.includes("?")) {
+    const withoutSharp = hash.slice(1);
+    const [hashPath, hashQuery = ""] = withoutSharp.split("?");
+    const hashParams = new URLSearchParams(hashQuery);
+    const hashChanged = removeQueryKeysFromParams(
+      hashParams,
+      PAYMENT_RETURN_QUERY_KEYS,
+    );
+
+    if (hashChanged) {
+      const nextHashQuery = hashParams.toString();
+      currentUrl.hash = nextHashQuery
+        ? `#${hashPath}?${nextHashQuery}`
+        : `#${hashPath}`;
+      changed = true;
+    }
+  }
+
+  if (!changed) return;
+
+  const target = `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`;
   window.history.replaceState({}, document.title, target);
 };
 
@@ -2746,6 +2807,7 @@ function StoreFront({
     typeof window !== "undefined" ? window.innerWidth : 1280,
   );
   const hasAppliedSharedLinkRef = useRef(false);
+  const isApplyingUrlFiltersRef = useRef(false);
   const resultsAnchorRef = useRef(null);
   const shouldScrollToResultsRef = useRef(false);
   const searchTerm = String(search || "").trim();
@@ -3697,15 +3759,81 @@ function StoreFront({
     [trackProductInterest],
   );
 
+  const buildStorefrontShareUrl = useCallback(
+    (overrides = {}) => {
+      if (typeof window === "undefined") return "";
+
+      const params = new URLSearchParams(window.location.search || "");
+      PAYMENT_RETURN_QUERY_KEYS.forEach((key) => params.delete(key));
+      const paramState = {
+        q: searchTerm,
+        category: selectedCategory !== "Todas" ? selectedCategory : "",
+        subcategory:
+          effectiveSubcategory !== "Todas" ? effectiveSubcategory : "",
+        sort: sortBy !== "relevancia" ? sortBy : "",
+        price: priceRange !== "todos" ? priceRange : "",
+        inStock: onlyInStock ? "1" : "",
+        withVariations: onlyWithVariations ? "1" : "",
+        ...overrides,
+      };
+
+      Object.entries(paramState).forEach(([key, value]) => {
+        const normalized = String(value || "").trim();
+        if (normalized) {
+          params.set(key, normalized);
+        } else {
+          params.delete(key);
+        }
+      });
+
+      const queryString = params.toString();
+      return `${window.location.origin}${window.location.pathname}${queryString ? `?${queryString}` : ""}${window.location.hash || ""}`;
+    },
+    [
+      effectiveSubcategory,
+      onlyInStock,
+      onlyWithVariations,
+      priceRange,
+      searchTerm,
+      selectedCategory,
+      sortBy,
+    ],
+  );
+
+  const handleShareCurrentFilters = useCallback(async () => {
+    const shareUrl = buildStorefrontShareUrl({ productId: "" });
+
+    try {
+      if (navigator.share) {
+        await navigator.share({
+          title: String(storeSettings?.storeName || "Vitrine"),
+          text: "Confira estes produtos com os filtros já aplicados.",
+          url: shareUrl,
+        });
+        return;
+      }
+
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(shareUrl);
+        showToast("Link com os filtros copiado para compartilhar!");
+        return;
+      }
+
+      showToast(`Link com filtros: ${shareUrl}`);
+    } catch (error) {
+      console.error("Erro ao compartilhar filtros:", error);
+      showToast("Não foi possível compartilhar os filtros.", "error");
+    }
+  }, [buildStorefrontShareUrl, showToast, storeSettings?.storeName]);
+
   const handleShareProduct = useCallback(
     async (product) => {
-      const params = new URLSearchParams();
-      params.set("productId", String(product?.id || ""));
-      if (product?.category) params.set("category", String(product.category));
-      if (product?.subcategory)
-        params.set("subcategory", String(product.subcategory));
-
-      const shareUrl = `${window.location.origin}${window.location.pathname}?${params.toString()}${window.location.hash || ""}`;
+      const fallbackSubcategory = getProductSubcategories(product)[0] || "";
+      const shareUrl = buildStorefrontShareUrl({
+        productId: String(product?.id || ""),
+        category: String(product?.category || ""),
+        subcategory: String(product?.subcategory || fallbackSubcategory),
+      });
 
       try {
         if (navigator.share) {
@@ -3729,36 +3857,176 @@ function StoreFront({
         showToast("Não foi possível compartilhar este produto.", "error");
       }
     },
-    [showToast],
+    [buildStorefrontShareUrl, showToast],
   );
 
   useEffect(() => {
     if (!products.length || hasAppliedSharedLinkRef.current) return;
 
     const params = new URLSearchParams(window.location.search || "");
+    const searchFromUrl = String(
+      params.get("q") || params.get("search") || "",
+    ).trim();
     const productId = String(params.get("productId") || "").trim();
     const categoryFromUrl = String(params.get("category") || "").trim();
     const subcategoryFromUrl = String(params.get("subcategory") || "").trim();
+    const sortFromUrl = String(params.get("sort") || "").trim();
+    const priceFromUrl = String(params.get("price") || "").trim();
+    const inStockFromUrl = parseBooleanQueryParam(params.get("inStock"));
+    const withVariationsFromUrl = parseBooleanQueryParam(
+      params.get("withVariations"),
+    );
 
-    if (!productId && !categoryFromUrl && !subcategoryFromUrl) return;
+    hasAppliedSharedLinkRef.current = true;
 
-    if (categoryFromUrl) {
-      setSelectedCategory(categoryFromUrl);
-      setSelectedSubcategory("Todas");
+    if (
+      !searchFromUrl &&
+      !productId &&
+      !categoryFromUrl &&
+      !subcategoryFromUrl &&
+      !sortFromUrl &&
+      !priceFromUrl &&
+      !inStockFromUrl &&
+      !withVariationsFromUrl
+    ) {
+      return;
     }
 
-    if (subcategoryFromUrl) {
-      setSelectedSubcategory(subcategoryFromUrl);
+    isApplyingUrlFiltersRef.current = true;
+
+    if (searchFromUrl) {
+      setSearch(searchFromUrl);
+    }
+
+    const validSortOptions = [
+      "relevancia",
+      "menor_preco",
+      "maior_preco",
+      "nome_az",
+    ];
+    if (validSortOptions.includes(sortFromUrl)) {
+      setSortBy(sortFromUrl);
+    }
+
+    const validPriceRanges = [
+      "todos",
+      "ate_99",
+      "100_199",
+      "200_399",
+      "400_plus",
+    ];
+    if (validPriceRanges.includes(priceFromUrl)) {
+      setPriceRange(priceFromUrl);
+    }
+
+    setOnlyInStock(inStockFromUrl);
+    setOnlyWithVariations(withVariationsFromUrl);
+
+    const availableCategories = new Set([
+      "Todas",
+      ...products.map((item) => String(item?.category || "").trim()),
+    ]);
+
+    const nextCategory =
+      categoryFromUrl && availableCategories.has(categoryFromUrl)
+        ? categoryFromUrl
+        : "Todas";
+
+    const availableSubcategories = new Set([
+      "Todas",
+      ...products
+        .filter((item) =>
+          nextCategory === "Todas"
+            ? true
+            : String(item?.category || "") === nextCategory,
+        )
+        .flatMap((item) => getProductSubcategories(item))
+        .filter(Boolean),
+    ]);
+
+    const nextSubcategory =
+      subcategoryFromUrl && availableSubcategories.has(subcategoryFromUrl)
+        ? subcategoryFromUrl
+        : "Todas";
+
+    setSelectedCategory(nextCategory);
+    setSelectedSubcategory(nextSubcategory);
+
+    if (
+      searchFromUrl ||
+      nextCategory !== "Todas" ||
+      nextSubcategory !== "Todas" ||
+      sortFromUrl ||
+      priceFromUrl ||
+      inStockFromUrl ||
+      withVariationsFromUrl
+    ) {
+      queueResultsScroll();
     }
 
     if (productId) {
       const product = products.find((item) => String(item?.id) === productId);
-      if (!product) return; // produtos ainda carregando, tenta novamente no próximo update
-      openProductWithTracking(product);
+      if (product) {
+        openProductWithTracking(product);
+      }
     }
 
-    hasAppliedSharedLinkRef.current = true;
-  }, [products, openProductWithTracking]);
+    window.setTimeout(() => {
+      isApplyingUrlFiltersRef.current = false;
+    }, 0);
+  }, [openProductWithTracking, products, queueResultsScroll]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!hasAppliedSharedLinkRef.current || isApplyingUrlFiltersRef.current) {
+      return;
+    }
+
+    const params = new URLSearchParams(window.location.search || "");
+
+    if (searchTerm) params.set("q", searchTerm);
+    else params.delete("q");
+
+    if (selectedCategory !== "Todas") params.set("category", selectedCategory);
+    else params.delete("category");
+
+    if (effectiveSubcategory !== "Todas") {
+      params.set("subcategory", effectiveSubcategory);
+    } else {
+      params.delete("subcategory");
+    }
+
+    if (sortBy !== "relevancia") params.set("sort", sortBy);
+    else params.delete("sort");
+
+    if (priceRange !== "todos") params.set("price", priceRange);
+    else params.delete("price");
+
+    if (onlyInStock) params.set("inStock", "1");
+    else params.delete("inStock");
+
+    if (onlyWithVariations) params.set("withVariations", "1");
+    else params.delete("withVariations");
+
+    const nextQuery = params.toString();
+    const currentQuery = String(window.location.search || "").replace(
+      /^\?/,
+      "",
+    );
+
+    if (nextQuery === currentQuery) return;
+
+    const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}${window.location.hash || ""}`;
+    window.history.replaceState({}, document.title, nextUrl);
+  }, [
+    effectiveSubcategory,
+    onlyInStock,
+    onlyWithVariations,
+    priceRange,
+    searchTerm,
+    selectedCategory,
+    sortBy,
+  ]);
 
   useEffect(() => {
     const previousUser = previousAuthUserRef.current;
@@ -4230,6 +4498,16 @@ function StoreFront({
                     : "Abaixo fica o catálogo completo com os filtros atuais."}
                 </p>
               </div>
+
+              <button
+                type="button"
+                onClick={handleShareCurrentFilters}
+                className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs md:text-sm font-black transition cursor-pointer"
+                title="Compartilhar filtros atuais"
+              >
+                <Share2 size={16} />
+                Compartilhar filtro
+              </button>
             </div>
 
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 sm:gap-5 md:gap-8">
